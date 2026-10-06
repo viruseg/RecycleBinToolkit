@@ -1,0 +1,9 @@
+﻿IFileOperation
+FileOperation
+SHCreateItemFromParsingName
+IShellItem
+FILEOPERATION_FLAGS
+CoCreateInstance
+CLSCTX
+CoInitializeEx
+CoUninitialize
