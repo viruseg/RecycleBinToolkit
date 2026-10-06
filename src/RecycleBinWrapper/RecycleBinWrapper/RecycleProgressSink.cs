@@ -43,17 +43,6 @@ internal sealed unsafe class RecycleProgressSink : IFileOperationProgressSink
     }
 
     /// <summary>
-    /// Clears recorded outcomes so the same sink can serve the next attempt round.
-    /// </summary>
-    internal void BeginRound()
-    {
-        foreach (var path in _pathsInQueueOrder)
-        {
-            _outcomes[path] = default;
-        }
-    }
-
-    /// <summary>
     /// Reads the Shell result for one queued path.
     /// </summary>
     /// <param name="path">Full path as it was queued.</param>
