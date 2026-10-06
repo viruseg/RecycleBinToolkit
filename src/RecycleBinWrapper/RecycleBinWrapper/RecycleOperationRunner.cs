@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Runtime.Versioning;
+using Windows.Win32.UI.Shell;
 
 namespace Utils;
 
@@ -6,19 +8,25 @@ namespace Utils;
 /// Runs a batch against the Shell, retrying only the items that actually failed.
 /// </summary>
 /// <remarks>
-/// One round queues every unfinished target and performs once. An item counts as recycled when the
-/// Shell cleared the failure bit on <c>hrDelete</c> and the file is gone from disk; when the Shell
-/// also reported where the file went, that location has to be inside the Recycle Bin. Everything
-/// else is re-queued on the next round, so a single locked file in a large batch does not cost the
-/// other files their first attempt.
+/// One round builds Shell items for the unfinished targets, queues them against a sink keyed on
+/// exactly those paths, and performs once. An item counts as recycled when the Shell cleared the
+/// failure bit on <c>hrDelete</c> and the file is gone from disk; when the Shell also reported where
+/// the file went, that location has to be inside the Recycle Bin. Everything else is re-queued on
+/// the next round, so a single locked file in a large batch does not cost the other files their
+/// first attempt.
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal sealed class RecycleOperationRunner
 {
     private const int SuccessSeverityMask = unchecked((int)0x80000000);
     private const double MaxJitterFraction = 0.25;
+    private const double MaxDelayMilliseconds = 9.0e12;
+
+    /// <summary>Value meaning "this item has no verdict yet". Never a real Shell code.</summary>
+    private const int NoVerdict = 0;
 
     private readonly ShellOperationContext _context;
+    private readonly Stopwatch _stopwatch = new();
 
     internal RecycleOperationRunner(ShellOperationContext context)
     {
@@ -46,11 +54,11 @@ internal sealed class RecycleOperationRunner
         ArgumentNullException.ThrowIfNull(targets);
         ArgumentNullException.ThrowIfNull(options);
 
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        _stopwatch.Restart();
 
         if (targets.Count == 0)
         {
-            return RecycleBinResult.Create([], [], stopwatch.Elapsed);
+            return RecycleBinResult.Create([], [], _stopwatch.Elapsed);
         }
 
         var pending = Deduplicate(targets);
@@ -59,7 +67,7 @@ internal sealed class RecycleOperationRunner
         var attempts = new int[pending.Count];
         var lastHResult = new int[pending.Count];
         var lastStage = new RecycleFailureStage[pending.Count];
-        var deadline = stopwatch.Elapsed + options.OverallTimeout;
+        var deadline = _stopwatch.Elapsed + options.OverallTimeout;
 
         for (var round = 1; round <= options.MaxAttempts && pending.Count > 0; round++)
         {
@@ -69,15 +77,12 @@ internal sealed class RecycleOperationRunner
 
             for (var i = 0; i < pending.Count; i++)
             {
-                var target = pending[i];
                 attempts[i] = round;
 
-                if (!outcome.Succeeded[i])
+                if (outcome.Succeeded[i])
                 {
-                    continue;
+                    recycled.Add(pending[i].InputPath);
                 }
-
-                recycled.Add(target.InputPath);
             }
 
             var stillPending = new List<RecycleTarget>(pending.Count);
@@ -91,12 +96,15 @@ internal sealed class RecycleOperationRunner
 
             pending = stillPending;
 
-            if (pending.Count == 0 || round == options.MaxAttempts || stopwatch.Elapsed >= deadline)
+            if (pending.Count == 0 || round == options.MaxAttempts)
             {
                 break;
             }
 
-            WaitBeforeRetry(options, round, deadline, cancellationToken);
+            if (!WaitBeforeRetry(options, round, deadline, cancellationToken))
+            {
+                break;
+            }
         }
 
         for (var i = 0; i < pending.Count; i++)
@@ -104,7 +112,7 @@ internal sealed class RecycleOperationRunner
             failures.Add(new RecycleFailure(pending[i].InputPath, lastHResult[i], attempts[i], lastStage[i]));
         }
 
-        return RecycleBinResult.Create(recycled, failures, stopwatch.Elapsed);
+        return RecycleBinResult.Create(recycled, failures, _stopwatch.Elapsed);
     }
 
     private RoundOutcome RunRound(
@@ -114,35 +122,45 @@ internal sealed class RecycleOperationRunner
         RecycleFailureStage[] lastStage)
     {
         var succeeded = new bool[targets.Count];
-        var paths = new string[targets.Count];
-        var queueable = new List<int>(targets.Count);
+        var buildable = new List<int>(targets.Count);
+        var items = new IShellItem?[targets.Count];
 
         for (var i = 0; i < targets.Count; i++)
         {
-            paths[i] = targets[i].FullPath;
+            if (_context.TryCreateShellItem(targets[i].FullPath, out var item, out var itemHResult))
+            {
+                items[i] = item;
+                buildable.Add(i);
+            }
+            else
+            {
+                RecordVerdict(lastHResult, lastStage, i, itemHResult, RecycleFailureStage.ShellItemCreation);
+            }
         }
+
+        // Keyed on exactly the paths that can reach the Shell. Including a path whose Shell item
+        // could not be built would let the sink's queue-position fallback hand its slot to a
+        // different item's result.
+        var queuedPaths = new string[buildable.Count];
+        for (var i = 0; i < buildable.Count; i++)
+        {
+            queuedPaths[i] = targets[buildable[i]].FullPath;
+        }
+
+        var sink = new RecycleProgressSink(queuedPaths);
+        var queueable = new List<int>(buildable.Count);
 
         _context.SetFlags();
 
-        var sink = new RecycleProgressSink(paths);
-
-        for (var i = 0; i < targets.Count; i++)
+        foreach (var i in buildable)
         {
-            if (!_context.TryCreateShellItem(targets[i].FullPath, out var item, out var itemHResult))
-            {
-                lastHResult[i] = itemHResult;
-                lastStage[i] = RecycleFailureStage.ShellItemCreation;
-                continue;
-            }
-
-            if (_context.TryQueue(item!, sink, out var queueHResult))
+            if (_context.TryQueue(items[i]!, sink, out var queueHResult))
             {
                 queueable.Add(i);
             }
             else
             {
-                lastHResult[i] = queueHResult;
-                lastStage[i] = RecycleFailureStage.Queueing;
+                RecordVerdict(lastHResult, lastStage, i, queueHResult, RecycleFailureStage.Queueing);
             }
         }
 
@@ -151,22 +169,18 @@ internal sealed class RecycleOperationRunner
             _context.Perform();
         }
 
-        for (var position = 0; position < queueable.Count; position++)
+        foreach (var i in queueable)
         {
-            var i = queueable[position];
             var target = targets[i];
 
             if (!sink.TryGetOutcome(target.FullPath, out var hResult, out var newItemPath))
             {
-                // Queued but the Shell never reported on it: treat as unfinished rather than
-                // inventing a success.
-                lastHResult[i] = hResult;
-                lastStage[i] = RecycleFailureStage.Performing;
+                // Queued but the Shell never reported on it: unfinished, not a success.
+                RecordVerdict(lastHResult, lastStage, i, hResult, RecycleFailureStage.Performing);
                 continue;
             }
 
-            lastHResult[i] = hResult;
-            lastStage[i] = RecycleFailureStage.Performing;
+            RecordVerdict(lastHResult, lastStage, i, hResult, RecycleFailureStage.Performing);
 
             if ((hResult & SuccessSeverityMask) != 0)
             {
@@ -182,7 +196,7 @@ internal sealed class RecycleOperationRunner
             {
                 // The Shell reported success and where the file went, and that was not the Recycle
                 // Bin: the file was removed permanently.
-                lastStage[i] = RecycleFailureStage.ReceiptVerification;
+                RecordVerdict(lastHResult, lastStage, i, hResult, RecycleFailureStage.ReceiptVerification);
                 continue;
             }
 
@@ -192,28 +206,57 @@ internal sealed class RecycleOperationRunner
         return new RoundOutcome(succeeded);
     }
 
-    private static void WaitBeforeRetry(
-        RecycleBinOptions options,
-        int round,
-        TimeSpan elapsed,
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// Keeps the first verdict that carries a real Shell code. A file the Shell already refused
+    /// often disappears before the next round — removed by another process, quarantined by
+    /// Defender — and the follow-up "file not found" is a consequence of the refusal, not its
+    /// cause, so reporting it would send an integrator looking for the wrong problem.
+    /// </summary>
+    private static void RecordVerdict(
+        int[] lastHResult,
+        RecycleFailureStage[] lastStage,
+        int index,
+        int hResult,
+        RecycleFailureStage stage)
     {
-        var exponential = options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, round - 1);
-        var jittered = exponential * (1 + ((Random.Shared.NextDouble() * 2 - 1) * MaxJitterFraction));
-        var delay = TimeSpan.FromMilliseconds(Math.Max(0, jittered));
-
-        var remaining = elapsed - System.Diagnostics.Stopwatch.StartNew().Elapsed;
-        if (remaining <= TimeSpan.Zero)
+        var existing = lastHResult[index];
+        if (existing != NoVerdict && existing != RecycleProgressSink.Unreported)
         {
             return;
         }
 
-        if (delay > remaining)
+        lastHResult[index] = hResult;
+        lastStage[index] = stage;
+    }
+
+    /// <summary>
+    /// Waits out the backoff for the round that just finished.
+    /// </summary>
+    /// <returns>
+    /// <see langword="false"/> when no further round may start: either the overall budget is spent,
+    /// or the backoff does not fit in what is left of it. Sleeping the remainder and then running
+    /// an over-budget round is the one thing <see cref="RecycleBinOptions.OverallTimeout"/> exists to
+    /// prevent, and deciding that up front also keeps the choice off the boundary: clamping the sleep
+    /// to the remaining budget makes "have we reached the deadline" a coin flip.
+    /// </returns>
+    private bool WaitBeforeRetry(
+        RecycleBinOptions options,
+        int round,
+        TimeSpan deadline,
+        CancellationToken cancellationToken)
+    {
+        var exponential = options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, round - 1);
+        var jittered = exponential * (1 + ((Random.Shared.NextDouble() * 2 - 1) * MaxJitterFraction));
+        var delay = TimeSpan.FromMilliseconds(Math.Clamp(jittered, 0, MaxDelayMilliseconds));
+
+        var remaining = deadline - _stopwatch.Elapsed;
+        if (remaining <= TimeSpan.Zero || delay >= remaining)
         {
-            delay = remaining;
+            return false;
         }
 
         cancellationToken.WaitHandle.WaitOne(delay);
+        return true;
     }
 
     private static IReadOnlyList<RecycleTarget> Deduplicate(IReadOnlyList<RecycleTarget> targets)
@@ -234,10 +277,8 @@ internal sealed class RecycleOperationRunner
 
     private static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
 
-    private readonly struct RoundOutcome
+    private readonly struct RoundOutcome(bool[] succeeded)
     {
-        internal RoundOutcome(bool[] succeeded) => Succeeded = succeeded;
-
-        internal bool[] Succeeded { get; }
+        internal bool[] Succeeded { get; } = succeeded;
     }
 }

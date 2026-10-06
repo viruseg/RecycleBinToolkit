@@ -130,6 +130,14 @@ internal static class RecycleBinWorker
             // Block until the apartment is warm, so the first caller never races Shell
             // initialisation and thread startup is paid exactly once.
             _warm.Wait();
+
+            if (StartupFailure is not null)
+            {
+                // Leaving a dead worker in the cache would make every later call in the process fail
+                // the same way forever, even ones the Shell would now accept. Not caching it means
+                // the next submit builds a fresh worker and can succeed.
+                RecycleBinThrowHelper.ThrowWorkerUnavailable(StartupFailure);
+            }
         }
 
         internal int ThreadId { get; }

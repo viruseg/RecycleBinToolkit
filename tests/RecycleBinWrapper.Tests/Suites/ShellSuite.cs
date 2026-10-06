@@ -13,7 +13,33 @@ internal static class ShellSuite
         new TestCase("ShellSuite." + nameof(LockedFileReportsFailureHResult), LockedFileReportsFailureHResult),
         new TestCase("ShellSuite." + nameof(ShellItemCreationReportsFailureForGarbagePath), ShellItemCreationReportsFailureForGarbagePath),
         new TestCase("ShellSuite." + nameof(RecycleBinVolumeTracksCountAndSizeSeparately), RecycleBinVolumeTracksCountAndSizeSeparately),
+        new TestCase("ShellSuite." + nameof(UnreportedItemsAreNotReportedAsSuccess), UnreportedItemsAreNotReportedAsSuccess),
     ];
+
+    /// <summary>
+    /// A path the Shell never reported on must read as "no outcome", not as a success. The Shell
+    /// reports a successful delete as <c>0x00270008</c>; handing back a fabricated <c>0</c> would
+    /// let an item the Shell silently skipped pass as recycled.
+    /// </summary>
+    private static Task UnreportedItemsAreNotReportedAsSuccess(TestContext context)
+    {
+        var sink = new RecycleProgressSink([@"E:\RC\Test\never-reported-a.bin", @"E:\RC\Test\never-reported-b.bin"]);
+
+        Check.False(
+            sink.TryGetOutcome(@"E:\RC\Test\never-reported-a.bin", out var hresult, out var binPath),
+            "an item the Shell never reported on has no outcome");
+
+        Check.True(
+            (hresult & unchecked((int)0x80000000)) != 0,
+            $"the missing outcome is not mistaken for a success code (got 0x{hresult:X8})");
+        Check.True(binPath is null, "a missing outcome carries no Recycle Bin path");
+
+        Check.False(
+            sink.TryGetOutcome(@"E:\RC\Test\never-reported-b.bin", out _, out _),
+            "every unreported path stays unreported");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// Pins which field of <c>SHQUERYRBINFO</c> is the item count and which is the byte total.
@@ -46,7 +72,11 @@ internal static class ShellSuite
 
         Console.WriteLine($"        count {countBefore} -> {countAfter}, size {sizeBefore} -> {sizeAfter}");
 
-        Check.Equal(countBefore + 1, countAfter, "recycling one file adds exactly one tracked item");
+        // The bin is shared, externally mutable state, so the deltas are bounded below rather than
+        // matched exactly; anything else could recycle or purge on this volume mid-run. Both fields
+        // are still pinned: with the two 64-bit fields swapped, the count would absorb the byte
+        // growth and the size check below would come up short.
+        Check.True(countAfter - countBefore >= 1, "recycling one file adds at least one tracked item");
         Check.True(sizeAfter - sizeBefore >= fileSize, $"recycling one {fileSize}-byte file grows the size by at least {fileSize} bytes");
 
         workspace.Dispose();

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using RecycleBinWrapper.Tests.Host;
 using RecycleBinWrapper.Tests.Infrastructure;
 using Utils;
@@ -12,7 +13,109 @@ internal static class RunnerSuite
         new TestCase("RunnerSuite." + nameof(PermanentlyLockedFileIsReportedNotThrown), PermanentlyLockedFileIsReportedNotThrown),
         new TestCase("RunnerSuite." + nameof(DuplicatePathsAreNotReportedAsFailures), DuplicatePathsAreNotReportedAsFailures),
         new TestCase("RunnerSuite." + nameof(ReceiptRecognisesOnlyRecycleBinPaths), ReceiptRecognisesOnlyRecycleBinPaths),
+        new TestCase("RunnerSuite." + nameof(OverallTimeoutStopsFurtherRounds), OverallTimeoutStopsFurtherRounds),
+        new TestCase("RunnerSuite." + nameof(FirstShellVerdictSurvivesALaterMissingPath), FirstShellVerdictSurvivesALaterMissingPath),
     ];
+
+    /// <summary>
+    /// <see cref="RecycleBinOptions.OverallTimeout"/> is documented as an upper bound on the
+    /// wall-clock time. With a first backoff far longer than the timeout, the runner must not sleep
+    /// past the deadline and then start another full round.
+    /// </summary>
+    private static Task OverallTimeoutStopsFurtherRounds(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        var files = workspace.CreateRandomFiles(1, 4096);
+        var targets = Targets(files);
+
+        // The budget is generous so round one reliably finishes inside it, and the backoff is far
+        // longer, so what crosses the deadline is always the wait. A budget a single round could
+        // straddle would make the expected attempt count depend on machine load.
+        var options = new RecycleBinOptions
+        {
+            MaxAttempts = 6,
+            InitialRetryDelay = TimeSpan.FromSeconds(60),
+            OverallTimeout = TimeSpan.FromSeconds(1)
+        };
+
+        var sw = Stopwatch.StartNew();
+
+        using (new FileStream(files[0], FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var result = StaThread.Run(() =>
+            {
+                using var shell = ShellOperationContext.Create();
+                return new RecycleOperationRunner(shell).Run(targets, options, context.CancellationToken);
+            });
+
+            sw.Stop();
+
+            Check.False(result.Succeeded, "the locked file is still reported as a failure");
+            Check.Equal(1, result.Failures.Count, "one failure is reported");
+            Check.True(sw.Elapsed < TimeSpan.FromSeconds(30), $"the timeout stops the loop instead of sleeping through the 60 s backoff (took {sw.ElapsedMilliseconds} ms)");
+            Check.Equal(
+                1,
+                result.FirstFailure!.Attempts,
+                "no round starts after the deadline, even when the backoff ran right up to it");
+        }
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// When a file the Shell already refused disappears before the next round, the recorded failure
+    /// must stay the Shell's verdict. Replacing it with "file not found" points an integrator at
+    /// the wrong problem.
+    /// </summary>
+    private static Task FirstShellVerdictSurvivesALaterMissingPath(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        var files = workspace.CreateRandomFiles(1, 4096);
+        var targets = Targets(files);
+
+        var options = new RecycleBinOptions
+        {
+            MaxAttempts = 4,
+            InitialRetryDelay = TimeSpan.FromMilliseconds(60),
+            OverallTimeout = TimeSpan.FromSeconds(20)
+        };
+
+        RecycleBinResult result;
+
+        // Hold the file so round 1 is refused by the Shell, then remove it entirely so the next
+        // round cannot even build a Shell item for it.
+        using (var holder = new FileStream(files[0], FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var remover = Task.Run(() =>
+            {
+                Thread.Sleep(TimeSpan.FromMilliseconds(120));
+                holder.Dispose();
+                File.Delete(files[0]);
+            });
+
+            result = StaThread.Run(() =>
+            {
+                using var shell = ShellOperationContext.Create();
+                return new RecycleOperationRunner(shell).Run(targets, options, context.CancellationToken);
+            });
+
+            remover.Wait(TimeSpan.FromSeconds(30));
+        }
+
+        Check.False(result.Succeeded, "the item is reported as a failure");
+        Check.NotNull(result.FirstFailure, "a failure is recorded");
+        Check.Equal(
+            RecycleFailureStage.Performing,
+            result.FirstFailure!.Stage,
+            $"the Shell's original verdict is kept, not the later missing-path one (got {result.FirstFailure.Stage} 0x{result.FirstFailure.HResult:X8})");
+        Check.Equal(unchecked((int)0x80270027), result.FirstFailure.HResult, "the Shell refusal code is preserved");
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
 
     private static Task TransientLockIsRetriedUntilSuccess(TestContext context)
     {
@@ -21,31 +124,32 @@ internal static class RunnerSuite
         var files = workspace.CreateRandomFiles(1, 4096);
         var targets = Targets(files);
 
-// Stands in for a search indexer, a preview handler or Defender holding the file for a moment:
-// the lock is already there when the first attempt runs and clears shortly after. The holder opens
-// the file before the runner starts, so the first attempt genuinely sees a blocked file.
-var opened = new ManualResetEventSlim(false);
-var holder = Task.Run(() =>
-{
-    using var stream = new FileStream(files[0], FileMode.Open, FileAccess.Read, FileShare.Read);
-    opened.Set();
-    Thread.Sleep(TimeSpan.FromMilliseconds(300));
-});
+// Stands in for a search indexer, a preview handler or Defender holding the file for a
+        // moment: the lock is already there when the first attempt runs and clears shortly after.
+        // The holder opens the file before the runner starts, so the first attempt genuinely sees a
+        // blocked file.
+        var opened = new ManualResetEventSlim(false);
+        var holder = Task.Run(() =>
+        {
+            using var stream = new FileStream(files[0], FileMode.Open, FileAccess.Read, FileShare.Read);
+            opened.Set();
+            Thread.Sleep(TimeSpan.FromMilliseconds(300));
+        });
 
-if (!opened.Wait(TimeSpan.FromSeconds(30)))
-{
-    throw new TimeoutException("the holder thread never opened the file");
-}
+        if (!opened.Wait(TimeSpan.FromSeconds(30)))
+        {
+            throw new TimeoutException("the holder thread never opened the file");
+        }
 
-var sw = System.Diagnostics.Stopwatch.StartNew();
-var result = StaThread.Run(() =>
-{
-    using var shell = ShellOperationContext.Create();
-    return new RecycleOperationRunner(shell).Run(targets, RecycleBinOptions.Default, context.CancellationToken);
-});
-sw.Stop();
+        var sw = Stopwatch.StartNew();
+        var result = StaThread.Run(() =>
+        {
+            using var shell = ShellOperationContext.Create();
+            return new RecycleOperationRunner(shell).Run(targets, RecycleBinOptions.Default, context.CancellationToken);
+        });
+        sw.Stop();
 
-holder.Wait(TimeSpan.FromSeconds(30));
+        holder.Wait(TimeSpan.FromSeconds(30));
 
         Console.WriteLine($"        retried for {sw.ElapsedMilliseconds} ms");
 

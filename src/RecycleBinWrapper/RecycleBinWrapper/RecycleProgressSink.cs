@@ -19,7 +19,12 @@ namespace Utils;
 internal sealed unsafe class RecycleProgressSink : IFileOperationProgressSink
 {
     /// <summary>Sentinel stored for a path the Shell has not reported on yet.</summary>
-    private const int Unreported = int.MinValue;
+    /// <remarks>
+    /// Deliberately <see cref="int.MinValue"/> rather than zero: the Shell reports a successful
+    /// delete as <c>0x00270008</c> but never as <c>0</c>, so zero would read as a success and turn
+    /// a silently skipped item into a reported recycle.
+    /// </remarks>
+    internal const int Unreported = int.MinValue;
 
     private readonly string[] _pathsInQueueOrder;
     private readonly Dictionary<string, (int HResult, string? RecycleBinPath)> _outcomes;
@@ -38,7 +43,7 @@ internal sealed unsafe class RecycleProgressSink : IFileOperationProgressSink
         for (var i = 0; i < pathsInQueueOrder.Count; i++)
         {
             _pathsInQueueOrder[i] = pathsInQueueOrder[i];
-            _outcomes[pathsInQueueOrder[i]] = default;
+            _outcomes[pathsInQueueOrder[i]] = (Unreported, null);
         }
     }
 
@@ -73,18 +78,27 @@ internal sealed unsafe class RecycleProgressSink : IFileOperationProgressSink
 
     public void PostDeleteItem(uint dwFlags, IShellItem psiItem, HRESULT hrDelete, IShellItem psiNewlyCreated)
     {
-        var path = ResolvePath(psiItem);
-        if (path is null || !_outcomes.ContainsKey(path))
+        try
         {
-            path = NextUnrecordedPath();
-        }
+            var path = ResolvePath(psiItem);
+            if (path is null || !_outcomes.ContainsKey(path))
+            {
+                path = NextUnrecordedPath();
+            }
 
-        if (path is null)
+            if (path is null)
+            {
+                return;
+            }
+
+            _outcomes[path] = (hrDelete.Value, ResolvePath(psiNewlyCreated));
+        }
+        catch (Exception)
         {
-            return;
+            // This runs as a COM callback. Letting anything escape crosses the interop boundary,
+            // where the runtime's handling is not ours to choose, so the item is simply left
+            // unreported: the caller sees no outcome, retries it, and fails it with a real code.
         }
-
-        _outcomes[path] = (hrDelete.Value, ResolvePath(psiNewlyCreated));
     }
 
     public void StartOperations()

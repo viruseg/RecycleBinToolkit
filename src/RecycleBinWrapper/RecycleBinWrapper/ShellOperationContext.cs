@@ -21,6 +21,8 @@ internal sealed unsafe class ShellOperationContext : IDisposable
 {
     private const int Success = 0;
 
+    private const int ChangedModeHResult = unchecked((int)0x80010106);
+
     private const FILEOPERATION_FLAGS RecycleFlags =
         FILEOPERATION_FLAGS.FOF_ALLOWUNDO |
         FILEOPERATION_FLAGS.FOFX_RECYCLEONDELETE |
@@ -52,19 +54,21 @@ internal sealed unsafe class ShellOperationContext : IDisposable
         try
         {
             var coInit = PInvoke.CoInitializeEx(COINIT.COINIT_APARTMENTTHREADED);
-            if (coInit.Value == Success)
-            {
-                context._uninitializeRequired = true;
-            }
-            else if (coInit.Failed)
+            if (coInit.Failed)
             {
                 // RPC_E_CHANGED_MODE means COM is already up in another mode on this thread, which
                 // is still usable; anything else is fatal.
-                if (coInit.Value != unchecked((int)0x80010106))
+                if (coInit.Value != ChangedModeHResult)
                 {
                     RecycleBinThrowHelper.ThrowWorkerUnavailable(
                         new COMException($"CoInitializeEx failed with 0x{coInit.Value:X8}.", coInit.Value));
                 }
+            }
+            else
+            {
+                // S_OK and S_FALSE both increment the apartment count, and both need a matching
+                // CoUninitialize. Only a changed mode or a hard failure leaves nothing to undo.
+                context._uninitializeRequired = true;
             }
 
             var hrCreate = PInvoke.CoCreateInstance(ClsidFileOperation, null, CLSCTX.CLSCTX_INPROC_SERVER, out IFileOperation fileOperation);

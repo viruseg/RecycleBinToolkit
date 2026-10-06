@@ -18,7 +18,58 @@ internal static class FacadeSuite
         new TestCase("FacadeSuite." + nameof(LongPathIsRecycled), LongPathIsRecycled),
         new TestCase("FacadeSuite." + nameof(LargeFileIsRecycled), LargeFileIsRecycled),
         new TestCase("FacadeSuite." + nameof(CancellationIsObserved), CancellationIsObserved),
+        new TestCase("FacadeSuite." + nameof(SingleMissingPathThrowsFileNotFound), SingleMissingPathThrowsFileNotFound),
+        new TestCase("FacadeSuite." + nameof(SingleLockedPathThrowsWithShellHResult), SingleLockedPathThrowsWithShellHResult),
     ];
+
+    private static Task SingleMissingPathThrowsFileNotFound(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        var missing = Path.Combine(ScratchWorkspace.Root, "definitely-absent.bin");
+
+        var thrown = Check.Throws<FileNotFoundException>(
+            () => FileOperationApiWrapper.MoveToRecycleBinAsync(missing).GetAwaiter().GetResult(),
+            "a missing path on the single-path overload reports the path, not a Shell failure");
+
+        Check.True(
+            thrown.Message.Contains(missing, StringComparison.OrdinalIgnoreCase),
+            $"the exception names the missing path (got '{thrown.Message}')");
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
+
+    private static async Task SingleLockedPathThrowsWithShellHResult(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        var files = workspace.CreateRandomFiles(1, 4096);
+
+        IOException thrown;
+        using (new FileStream(files[0], FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var options = new RecycleBinOptions
+            {
+                MaxAttempts = 1,
+                InitialRetryDelay = TimeSpan.Zero,
+                OverallTimeout = TimeSpan.FromSeconds(5)
+            };
+
+            var batch = await FileOperationApiWrapper.MoveToRecycleBinAsync([files[0]], options, context.CancellationToken);
+            Check.False(batch.Succeeded, "a locked file cannot be recycled");
+
+            thrown = Check.Throws<IOException>(
+                () => FileOperationApiWrapper.MoveToRecycleBinAsync(files[0], cancellationToken: context.CancellationToken).GetAwaiter().GetResult(),
+                "a Shell refusal on the single-path overload raises IOException");
+        }
+
+        Check.True((thrown.HResult & unchecked((int)0x80000000)) != 0, $"the exception carries the Shell error code (got 0x{thrown.HResult:X8})");
+        Check.True(thrown.InnerException is not null, "the Shell code is also available as an inner exception");
+        Check.True(File.Exists(files[0]), "the file is still there, since the Shell refused it");
+
+        workspace.Dispose();
+    }
 
     private static async Task SingleFileIsRecycled(TestContext context)
     {
