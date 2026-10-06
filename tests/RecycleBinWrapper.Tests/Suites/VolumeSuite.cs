@@ -7,8 +7,8 @@ internal static class VolumeSuite
 {
     internal static IReadOnlyList<TestCase> Cases =>
     [
-        new TestCase(nameof(RecycleBinQueryReadsTrackedItems), RecycleBinQueryReadsTrackedItems),
-        new TestCase(nameof(RecycleBinQueryReportsFailureForMissingVolume), RecycleBinQueryReportsFailureForMissingVolume),
+        new TestCase("VolumeSuite." + nameof(RecycleBinQueryReadsTrackedItems), RecycleBinQueryReadsTrackedItems),
+        new TestCase("VolumeSuite." + nameof(RecycleBinQueryReportsFailureForMissingVolume), RecycleBinQueryReportsFailureForMissingVolume),
     ];
 
     private static Task RecycleBinQueryReadsTrackedItems(TestContext context)

@@ -7,4 +7,8 @@ if (!OperatingSystem.IsWindows())
     return 2;
 }
 
-return await TestRunner.RunAsync(args, WorkspaceSuite.Cases.Concat(VolumeSuite.Cases).ToArray());
+return await TestRunner.RunAsync(args,
+    WorkspaceSuite.Cases
+        .Concat(VolumeSuite.Cases)
+        .Concat(ContractSuite.Cases)
+        .ToArray());

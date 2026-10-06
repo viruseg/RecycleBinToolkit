@@ -1,6 +1,4 @@
 using System.Runtime.InteropServices;
-using Windows.Win32;
-using Windows.Win32.UI.Shell;
 
 namespace RecycleBinWrapper.Tests.Infrastructure;
 
@@ -9,10 +7,10 @@ namespace RecycleBinWrapper.Tests.Infrastructure;
 /// not an option: the SYSTEM SID subdirectory throws <see cref="UnauthorizedAccessException"/> for
 /// a normal user, so item counts come from the Shell instead.
 /// </summary>
-internal static class RecycleBinVolume
+internal static partial class RecycleBinVolume
 {
     /// <summary>
-    /// Number of items currently in the Recycle Bin of the given volume.
+    /// Number of items currently tracked in the Recycle Bin of the given volume.
     /// </summary>
     /// <param name="rootPath">Volume root, for example <c>"E:\\"</c>. A missing trailing separator is added.</param>
     /// <returns>The item count, or <c>-1</c> when the Shell query failed.</returns>
@@ -29,31 +27,38 @@ internal static class RecycleBinVolume
 
     private static bool TryQuery(string rootPath, out long items, out long size)
     {
-        var info = default(SHQUERYRBINFO);
-        info.cbSize = (uint)Marshal.SizeOf<SHQUERYRBINFO>();
-
         var root = rootPath.EndsWith(Path.DirectorySeparatorChar) || rootPath.EndsWith(Path.AltDirectorySeparatorChar)
             ? rootPath
             : rootPath + Path.DirectorySeparatorChar;
 
-        try
-        {
-            if (PInvoke.SHQueryRecycleBin(root, ref info).Failed)
-            {
-                items = -1;
-                size = -1;
-                return false;
-            }
-        }
-        catch (Exception ex) when (ex is COMException or InvalidOperationException or NotSupportedException)
+        var info = new ShQueryRbInfo { SizeOfSelf = Marshal.SizeOf<ShQueryRbInfo>() };
+
+        var hr = SHQueryRecycleBin(root, ref info);
+        if (hr < 0)
         {
             items = -1;
             size = -1;
             return false;
         }
 
-        items = info.i64NumItems;
-        size = info.i64Size;
+        items = info.NumItems;
+        size = info.Size;
         return true;
+    }
+
+    [LibraryImport("shell32.dll", EntryPoint = "SHQueryRecycleBinW", StringMarshalling = StringMarshalling.Utf16)]
+    private static partial int SHQueryRecycleBin(string rootPath, ref ShQueryRbInfo info);
+
+    /// <summary>
+    /// Native <c>SHQUERYRBINFO</c>: a size field followed by the tracked item count and total size.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ShQueryRbInfo
+    {
+        public int SizeOfSelf;
+
+        public long NumItems;
+
+        public long Size;
     }
 }

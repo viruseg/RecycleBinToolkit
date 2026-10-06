@@ -15,4 +15,8 @@
         </PackageReference>
     </ItemGroup>
 
+    <ItemGroup>
+        <InternalsVisibleTo Include="RecycleBinWrapper.Tests" />
+    </ItemGroup>
+
 </Project>

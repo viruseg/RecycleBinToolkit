@@ -7,7 +7,7 @@ internal static class WorkspaceSuite
 {
     internal static IReadOnlyList<TestCase> Cases =>
     [
-        new TestCase(nameof(WorkspaceCanBeRecreatedAndPopulated), WorkspaceCanBeRecreatedAndPopulated),
+        new TestCase("WorkspaceSuite." + nameof(WorkspaceCanBeRecreatedAndPopulated), WorkspaceCanBeRecreatedAndPopulated),
     ];
 
     private static Task WorkspaceCanBeRecreatedAndPopulated(TestContext context)
