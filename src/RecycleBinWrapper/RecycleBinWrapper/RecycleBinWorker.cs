@@ -159,6 +159,7 @@ internal static class RecycleBinWorker
             {
                 context = ShellOperationContext.Create();
                 CreateMessageQueue();
+                _runner = new RecycleOperationRunner(context);
             }
             catch (Exception ex)
             {
@@ -180,7 +181,7 @@ internal static class RecycleBinWorker
                     {
                         try
                         {
-                            request!.Completion.TrySetResult(RunOnce(context, request.Targets));
+                            request!.Completion.TrySetResult(_runner.Run(request.Targets, request.Options, CancellationToken.None));
                         }
                         catch (Exception ex)
                         {
@@ -195,6 +196,8 @@ internal static class RecycleBinWorker
                 FailPending(new ObjectDisposedException(nameof(RecycleBinWorker)));
             }
         }
+
+        private RecycleOperationRunner? _runner;
 
         private bool TryDequeue(out Request? request)
         {
@@ -231,62 +234,4 @@ internal static class RecycleBinWorker
         }
     }
 
-    /// <summary>
-    /// Queues every target once and reports what the Shell did. Retry and receipt verification are
-    /// layered on top of this pass.
-    /// </summary>
-    private static RecycleBinResult RunOnce(ShellOperationContext context, IReadOnlyList<RecycleTarget> targets)
-    {
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var paths = new string[targets.Count];
-        var recycled = new List<string>(targets.Count);
-        var failures = new List<RecycleFailure>();
-
-        for (var i = 0; i < targets.Count; i++)
-        {
-            paths[i] = targets[i].FullPath;
-        }
-
-        context.SetFlags();
-
-        var sink = new RecycleProgressSink(paths);
-        var queued = new List<RecycleTarget>(targets.Count);
-
-        foreach (var target in targets)
-        {
-            if (!context.TryCreateShellItem(target.FullPath, out var item, out var itemHResult))
-            {
-                failures.Add(new RecycleFailure(target.InputPath, itemHResult, 1, RecycleFailureStage.ShellItemCreation));
-                continue;
-            }
-
-            if (context.TryQueue(item!, sink, out var queueHResult))
-            {
-                queued.Add(target);
-            }
-            else
-            {
-                failures.Add(new RecycleFailure(target.InputPath, queueHResult, 1, RecycleFailureStage.Queueing));
-            }
-        }
-
-        if (queued.Count > 0)
-        {
-            context.Perform();
-        }
-
-        foreach (var target in queued)
-        {
-            if (sink.TryGetOutcome(target.FullPath, out var hResult, out _) && (hResult & unchecked((int)0x80000000)) == 0)
-            {
-                recycled.Add(target.InputPath);
-            }
-            else
-            {
-                failures.Add(new RecycleFailure(target.InputPath, hResult, 1, RecycleFailureStage.Performing));
-            }
-        }
-
-        return RecycleBinResult.Create(recycled, failures, stopwatch.Elapsed);
-    }
 }
