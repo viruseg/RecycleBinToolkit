@@ -1,9 +1,12 @@
 ﻿IFileOperation
-FileOperation
-SHCreateItemFromParsingName
+IFileOperationProgressSink
 IShellItem
-FILEOPERATION_FLAGS
+SIGDN
+SHCreateItemFromParsingName
 CoCreateInstance
 CLSCTX
+COINIT
 CoInitializeEx
 CoUninitialize
+CoTaskMemFree
+GetShortPathNameW

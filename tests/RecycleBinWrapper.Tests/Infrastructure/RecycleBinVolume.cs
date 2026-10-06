@@ -50,15 +50,25 @@ internal static partial class RecycleBinVolume
     private static partial int SHQueryRecycleBin(string rootPath, ref ShQueryRbInfo info);
 
     /// <summary>
-    /// Native <c>SHQUERYRBINFO</c>: a size field followed by the tracked item count and total size.
+    /// Native <c>SHQUERYRBINFO</c>.
     /// </summary>
-    [StructLayout(LayoutKind.Sequential)]
+    /// <remarks>
+    /// The two 64-bit fields are adjacent and the same width, and the byte total sits before the
+    /// item count. Declaration order is therefore spelled out with explicit offsets instead of being
+    /// left to the layout rules: swapping the two silently turns every delta assertion into a
+    /// comparison of the wrong quantity. <c>ShellSuite.RecycleBinVolumeTracksCountAndSizeSeparately</c>
+    /// pins the mapping.
+    /// </remarks>
+    [StructLayout(LayoutKind.Explicit)]
     private struct ShQueryRbInfo
     {
+        [FieldOffset(0)]
         public int SizeOfSelf;
 
-        public long NumItems;
-
+        [FieldOffset(8)]
         public long Size;
+
+        [FieldOffset(16)]
+        public long NumItems;
     }
 }
