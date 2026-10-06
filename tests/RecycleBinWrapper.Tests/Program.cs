@@ -12,4 +12,5 @@ return await TestRunner.RunAsync(args,
         .Concat(VolumeSuite.Cases)
         .Concat(ContractSuite.Cases)
         .Concat(ShellSuite.Cases)
+        .Concat(WorkerSuite.Cases)
         .ToArray());
