@@ -1,0 +1,14 @@
+* text=auto
+
+*.cs        text diff=csharp
+*.csproj    text
+*.slnx      text
+*.txt       text
+*.json      text
+*.props     text
+*.targets   text
+
+*.dll   binary
+*.pdb   binary
+*.exe   binary
+*.nupkg binary
