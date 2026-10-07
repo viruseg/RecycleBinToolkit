@@ -27,7 +27,7 @@ internal static unsafe class ShortPathResolver
     /// </remarks>
     internal static string? TryResolveShort(string path)
     {
-        var buffer = new char[BufferLength];
+        Span<char> buffer = stackalloc char[BufferLength];
 
         fixed (char* bufferPointer = buffer)
         fixed (char* pathPointer = path)
@@ -38,7 +38,7 @@ internal static unsafe class ShortPathResolver
                 return null;
             }
 
-            var shortPath = new string(buffer, 0, (int)length);
+            var shortPath = new string(buffer[..(int)length]);
             return shortPath.Length < path.Length ? shortPath : null;
         }
     }

@@ -28,6 +28,7 @@ internal static class LongPathSuite
         new TestCase("LongPathSuite." + nameof(UnrecyclableLongPathIsNeverHandedToTheShell), UnrecyclableLongPathIsNeverHandedToTheShell),
         new TestCase("LongPathSuite." + nameof(UnrecyclableLongPathThrowsWhenThrowOnError), UnrecyclableLongPathThrowsWhenThrowOnError),
         new TestCase("LongPathSuite." + nameof(DeletePermanentlyPolicyRemovesTheFile), DeletePermanentlyPolicyRemovesTheFile),
+        new TestCase("LongPathSuite." + nameof(DeletePermanentlyReportsEveryLongPathItHandled), DeletePermanentlyReportsEveryLongPathItHandled),
         new TestCase("LongPathSuite." + nameof(PathUnderTheThresholdStillRecyclesNormally), PathUnderTheThresholdStillRecyclesNormally),
         new TestCase("LongPathSuite." + nameof(ShortenPathAndRecyclePutsTheBytesInTheBin), ShortenPathAndRecyclePutsTheBytesInTheBin),
         new TestCase("LongPathSuite." + nameof(ShortenPathAndRecycleRemovesTheStagingDirectory), ShortenPathAndRecycleRemovesTheStagingDirectory),
@@ -292,6 +293,68 @@ internal static class LongPathSuite
     }
 
     /// <summary>
+    /// The permanent-delete policy has to reach every long path in the batch, not just the first one
+    /// that happens to be removable.
+    /// </summary>
+    /// <remarks>
+    /// Reporting is what makes the policy auditable: a caller told only about some of the paths it
+    /// passed in cannot tell what became of the rest. Both halves are asserted — the batch reports no
+    /// failures, and every path is named — because the second alone would also pass if the remaining
+    /// files were silently dropped from the result.
+    /// </remarks>
+    private static async Task DeletePermanentlyReportsEveryLongPathItHandled(TestContext context)
+    {
+        const int pathCount = 3;
+
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        try
+        {
+            var paths = new List<string>(pathCount);
+
+            for (var i = 0; i < pathCount; i++)
+            {
+                var extendedPath = BuildLongPath((char)('f' + i)).ExtendedPath;
+                using (var stream = new FileStream(extendedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    stream.Write(new byte[4096]);
+                }
+
+                paths.Add(Path.Combine(ScratchWorkspace.Root, Path.GetFileName(extendedPath)));
+            }
+
+            var options = new RecycleBinOptions
+            {
+                ThrowOnError = false,
+                LongPathFailureAction = LongPathFailureAction.DeletePermanently
+            };
+
+            var result = await FileRecycler.MoveToRecycleBinAsync(paths, options, context.CancellationToken);
+
+            Check.Equal(0, result.Failures.Count, $"no long path in the batch is left unreported (got {result.Failures.Count}: {Describe(result)})");
+            Check.Equal(pathCount, result.PermanentlyDeletedPaths.Count, $"all {pathCount} long paths are named as permanently deleted (got {Describe(result)})");
+
+            foreach (var path in paths)
+            {
+                Check.True(
+                    result.PermanentlyDeletedPaths.Contains(path, StringComparer.OrdinalIgnoreCase),
+                    $"the report names '{Path.GetFileName(path)}'");
+                Check.False(File.Exists(ExtendedPrefix + path), $"'{Path.GetFileName(path)}' is gone, as the caller asked for");
+            }
+        }
+        finally
+        {
+            workspace.Dispose();
+        }
+    }
+
+    private static string Describe(RecycleBinResult result) =>
+        $"recycled [{string.Join(", ", result.RecycledPaths)}], " +
+        $"deleted [{string.Join(", ", result.PermanentlyDeletedPaths)}], " +
+        $"failed [{string.Join(", ", result.Failures.Select(failure => failure.Path))}]";
+
+    /// <summary>
     /// The extended-length path must work for reading and writing, and recycling it must either put
     /// it in the bin or leave it on disk. Silently losing it is the one outcome this suite exists to
     /// prevent.
@@ -494,9 +557,12 @@ internal static class LongPathSuite
         }
     }
 
-    private static (string PlainPath, string ExtendedPath) BuildLongPath()
+    private static (string PlainPath, string ExtendedPath) BuildLongPath() =>
+        BuildLongPath('f');
+
+    private static (string PlainPath, string ExtendedPath) BuildLongPath(char filler)
     {
-        var fileName = new string('f', FileNameLength - Path.GetExtension(".bin").Length) + ".bin";
+        var fileName = new string(filler, FileNameLength - Path.GetExtension(".bin").Length) + ".bin";
         var plainPath = Path.Combine(ScratchWorkspace.Root, fileName);
         return (plainPath, ExtendedPrefix + plainPath);
     }

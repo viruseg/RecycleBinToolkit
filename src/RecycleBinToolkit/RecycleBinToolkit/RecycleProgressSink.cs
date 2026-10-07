@@ -27,24 +27,59 @@ internal sealed unsafe class RecycleProgressSink : IFileOperationProgressSink
     internal const int Unreported = int.MinValue;
 
     private readonly string[] _pathsInQueueOrder;
+    private readonly int _queuedCount;
     private readonly Dictionary<string, (int HResult, string? RecycleBinPath)> _outcomes;
+
+    /// <summary>
+    /// Index of the first path in <see cref="_pathsInQueueOrder"/> the Shell has not reported on yet.
+    /// </summary>
+    /// <remarks>
+    /// Only ever moves forward, which is what makes the fallback cheap. A verdict is written once per
+    /// path and never cleared, so an index skipped as reported can never become unreported again.
+    /// </remarks>
+    private int _firstUnreported;
 
     /// <summary>
     /// Creates a sink for one round of deletes.
     /// </summary>
-    /// <param name="pathsInQueueOrder">Full paths queued this round, in the order they were queued.</param>
+    /// <param name="pathsInQueueOrder">
+    /// Full paths queued this round, in the order they were queued. Retained rather than copied, so the
+    /// caller must not modify it for as long as the sink is in use.
+    /// </param>
     internal RecycleProgressSink(IReadOnlyList<string> pathsInQueueOrder)
+        : this(ToArray(pathsInQueueOrder), pathsInQueueOrder?.Count ?? 0)
+    {
+    }
+
+    /// <summary>
+    /// Creates a sink over the first <paramref name="queuedCount"/> entries of a buffer the caller
+    /// intends to refill for the next round.
+    /// </summary>
+    /// <param name="pathsInQueueOrder">
+    /// Buffer holding at least <paramref name="queuedCount"/> queued paths. Only the first
+    /// <paramref name="queuedCount"/> entries are read; the rest may hold anything.
+    /// </param>
+    /// <param name="queuedCount">How many leading entries of the buffer were queued this round.</param>
+    internal RecycleProgressSink(string[] pathsInQueueOrder, int queuedCount)
     {
         ArgumentNullException.ThrowIfNull(pathsInQueueOrder);
+        ArgumentOutOfRangeException.ThrowIfNegative(queuedCount);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(queuedCount, pathsInQueueOrder.Length);
 
-        _pathsInQueueOrder = new string[pathsInQueueOrder.Count];
-        _outcomes = new Dictionary<string, (int, string?)>(pathsInQueueOrder.Count, StringComparer.OrdinalIgnoreCase);
+        _pathsInQueueOrder = pathsInQueueOrder;
+        _queuedCount = queuedCount;
+        _outcomes = new Dictionary<string, (int, string?)>(queuedCount, StringComparer.OrdinalIgnoreCase);
 
-        for (var i = 0; i < pathsInQueueOrder.Count; i++)
+        for (var i = 0; i < queuedCount; i++)
         {
-            _pathsInQueueOrder[i] = pathsInQueueOrder[i];
             _outcomes[pathsInQueueOrder[i]] = (Unreported, null);
         }
+    }
+
+    private static string[] ToArray(IReadOnlyList<string> pathsInQueueOrder)
+    {
+        ArgumentNullException.ThrowIfNull(pathsInQueueOrder);
+        return pathsInQueueOrder as string[] ?? [.. pathsInQueueOrder];
     }
 
     /// <summary>
@@ -161,14 +196,26 @@ internal sealed unsafe class RecycleProgressSink : IFileOperationProgressSink
     {
     }
 
+    /// <summary>
+    /// Hands out the earliest queued path the Shell has not reported on, which is the best guess at
+    /// which item the callback is about.
+    /// </summary>
+    /// <remarks>
+    /// The caller writes the outcome it just received onto the returned path, which is what lets the
+    /// scan resume from where it stopped instead of re-walking the batch for every unrecognised
+    /// callback.
+    /// </remarks>
     private string? NextUnrecordedPath()
     {
-        foreach (var path in _pathsInQueueOrder)
+        while (_firstUnreported < _queuedCount)
         {
+            var path = _pathsInQueueOrder[_firstUnreported];
             if (_outcomes[path].HResult == Unreported)
             {
                 return path;
             }
+
+            _firstUnreported++;
         }
 
         return null;

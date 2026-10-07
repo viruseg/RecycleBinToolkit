@@ -31,6 +31,40 @@ internal sealed class RecycleOperationRunner
     private readonly ShellOperationContext _context;
     private readonly Stopwatch _stopwatch = new();
 
+    /// <summary>
+    /// Scratch space for one round's Shell-item indices and queued paths.
+    /// </summary>
+    /// <remarks>
+    /// A retry loop runs up to <see cref="RecycleBinOptions.MaxAttempts"/> rounds over a shrinking
+    /// batch, and every round walked the batch twice through two freshly grown lists. The buffers are
+    /// kept and refilled instead. The runner belongs to the single worker thread and serves one request
+    /// at a time, so holding them across rounds needs no synchronisation, and nothing outlives the
+    /// batch that sized them.
+    /// </remarks>
+    private sealed class RoundScratch
+    {
+        private int[] _buildable = [];
+        private int[] _queueable = [];
+        private string[] _queuedPaths = [];
+
+        internal int[] Buildable => _buildable;
+
+        internal int[] Queueable => _queueable;
+
+        internal string[] QueuedPaths => _queuedPaths;
+
+        /// <summary>Grows the buffers so a batch of <paramref name="count"/> items fits without resizing mid-round.</summary>
+        internal void EnsureCapacity(int count)
+        {
+            if (_buildable.Length < count)
+            {
+                _buildable = new int[count];
+                _queueable = new int[count];
+                _queuedPaths = new string[count];
+            }
+        }
+    }
+
     internal RecycleOperationRunner(ShellOperationContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -95,18 +129,21 @@ internal sealed class RecycleOperationRunner
         var staged = new List<StagedTarget>();
         failures.AddRange(HandleUnrecyclable(unrecyclable, options, permanentlyDeleted, staged, stager));
 
-        pending = [.. recyclable, .. staged.Select(entry => entry.Target)];
+        pending = staged.Count == 0
+            ? recyclable
+            : [.. recyclable, .. staged.Select(entry => entry.Target)];
 
         var attempts = new int[pending.Count];
         var lastHResult = new int[pending.Count];
         var lastStage = new RecycleFailureStage[pending.Count];
+        var scratch = new RoundScratch();
         var deadline = _stopwatch.Elapsed + options.OverallTimeout;
 
         for (var round = 1; round <= options.MaxAttempts && pending.Count > 0; round++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var outcome = RunRound(pending, options, lastHResult, lastStage);
+            var outcome = RunRound(pending, options, lastHResult, lastStage, scratch);
 
             for (var i = 0; i < pending.Count; i++)
             {
@@ -220,7 +257,7 @@ internal sealed class RecycleOperationRunner
                 case LongPathFailureAction.DeletePermanently:
                     if (TryDeletePermanently(target, permanentlyDeleted))
                     {
-                        yield break;
+                        continue;
                     }
 
                     break;
@@ -271,18 +308,23 @@ internal sealed class RecycleOperationRunner
         IReadOnlyList<RecycleTarget> targets,
         RecycleBinOptions options,
         int[] lastHResult,
-        RecycleFailureStage[] lastStage)
+        RecycleFailureStage[] lastStage,
+        RoundScratch scratch)
     {
         var succeeded = new bool[targets.Count];
-        var buildable = new List<int>(targets.Count);
         var items = new IShellItem?[targets.Count];
+
+        scratch.EnsureCapacity(targets.Count);
+        var buildable = scratch.Buildable;
+        var queuedPaths = scratch.QueuedPaths;
+        var buildableCount = 0;
 
         for (var i = 0; i < targets.Count; i++)
         {
             if (_context.TryCreateShellItem(targets[i].ShellPath, out var item, out var itemHResult))
             {
                 items[i] = item;
-                buildable.Add(i);
+                buildable[buildableCount++] = i;
             }
             else
             {
@@ -292,23 +334,25 @@ internal sealed class RecycleOperationRunner
 
         // Keyed on exactly the paths that can reach the Shell. Including a path whose Shell item
         // could not be built would let the sink's queue-position fallback hand its slot to a
-        // different item's result.
-        var queuedPaths = new string[buildable.Count];
-        for (var i = 0; i < buildable.Count; i++)
+        // different item's result. Only the first buildableCount entries are queued this round.
+        for (var i = 0; i < buildableCount; i++)
         {
             queuedPaths[i] = targets[buildable[i]].ShellPath;
         }
 
-        var sink = new RecycleProgressSink(queuedPaths);
-        var queueable = new List<int>(buildable.Count);
+        var sink = new RecycleProgressSink(queuedPaths, buildableCount);
+        var queueable = scratch.Queueable;
+        var queueableCount = 0;
 
         _context.SetFlags();
 
-        foreach (var i in buildable)
+        for (var q = 0; q < buildableCount; q++)
         {
+            var i = buildable[q];
+
             if (_context.TryQueue(items[i]!, sink, out var queueHResult))
             {
-                queueable.Add(i);
+                queueable[queueableCount++] = i;
             }
             else
             {
@@ -316,13 +360,14 @@ internal sealed class RecycleOperationRunner
             }
         }
 
-        if (queueable.Count > 0)
+        if (queueableCount > 0)
         {
             _context.Perform();
         }
 
-        foreach (var i in queueable)
+        for (var q = 0; q < queueableCount; q++)
         {
+            var i = queueable[q];
             var target = targets[i];
 
             if (!sink.TryGetOutcome(target.ShellPath, out var hResult, out var newItemPath))

@@ -1,6 +1,7 @@
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
+using Windows.Win32.Foundation;
 
 namespace RecycleBinToolkit.Tests.Suites;
 
@@ -14,6 +15,8 @@ internal static class ShellSuite
         new TestCase("ShellSuite." + nameof(ShellItemCreationReportsFailureForGarbagePath), ShellItemCreationReportsFailureForGarbagePath),
         new TestCase("ShellSuite." + nameof(RecycleBinListingAgreesWithTheShellOracle), RecycleBinListingAgreesWithTheShellOracle),
         new TestCase("ShellSuite." + nameof(UnreportedItemsAreNotReportedAsSuccess), UnreportedItemsAreNotReportedAsSuccess),
+        new TestCase("ShellSuite." + nameof(UnidentifiedCallbacksConsumeQueuedPathsInOrder), UnidentifiedCallbacksConsumeQueuedPathsInOrder),
+        new TestCase("ShellSuite." + nameof(ReportedPathsAreNotHandedOutAgain), ReportedPathsAreNotHandedOutAgain),
     ];
 
     /// <summary>
@@ -37,6 +40,80 @@ internal static class ShellSuite
         Check.False(
             sink.TryGetOutcome(@"E:\RC\Test\never-reported-b.bin", out _, out _),
             "every unreported path stays unreported");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A callback the Shell cannot be matched to a path by still has to land somewhere, and the
+    /// queue order is the only thing left to go on. Each such callback must consume the earliest path
+    /// still awaiting a verdict, so the paths are handed out in order and exactly once.
+    /// </summary>
+    /// <remarks>
+    /// This is the behaviour the sink's forward-only scan depends on: it starts where the last
+    /// fallback left off rather than re-walking the batch, and that is only sound because a path the
+    /// Shell named itself is already resolved and can never need a slot handed to it again. The test
+    /// pins the behaviour, not the scan, so the same assertions hold whichever way it is implemented.
+    /// </remarks>
+    private static Task UnidentifiedCallbacksConsumeQueuedPathsInOrder(TestContext context)
+    {
+        const int Success = 0x00270008;
+
+        var paths = new[]
+        {
+            @"E:\RC\Test\ordered-a.bin",
+            @"E:\RC\Test\ordered-b.bin",
+            @"E:\RC\Test\ordered-c.bin"
+        };
+
+        var sink = new RecycleProgressSink(paths);
+
+        // A null Shell item stands in for one whose reported path is in no queue: the sink cannot
+        // match it and has to fall back to queue position.
+        for (var i = 0; i < paths.Length; i++)
+        {
+            sink.PostDeleteItem(0, null!, new HRESULT(Success), null!);
+
+            Check.True(sink.TryGetOutcome(paths[i], out var hresult, out _), $"the {i}-th unidentified callback is recorded against '{Path.GetFileName(paths[i])}'");
+            Check.True(IsSuccess(hresult), $"that verdict is a real Shell code (0x{hresult:X8})");
+
+            for (var earlier = 0; earlier < i; earlier++)
+            {
+                Check.True(
+                    sink.TryGetOutcome(paths[earlier], out var earlierHresult, out _),
+                    $"'{Path.GetFileName(paths[earlier])}' keeps the verdict it was given, so an out-of-order callback did not overwrite it");
+
+                Check.Equal(Success, earlierHresult, "and it is still the verdict that was recorded for it");
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Once every queued path has a verdict there is nothing left to hand out, and a callback that
+    /// arrives afterwards must leave the recorded outcomes alone rather than overwrite one.
+    /// </summary>
+    private static Task ReportedPathsAreNotHandedOutAgain(TestContext context)
+    {
+        const int Success = 0x00270008;
+        const int Failure = unchecked((int)0x80070005);
+
+        var paths = new[] { @"E:\RC\Test\exhausted-a.bin", @"E:\RC\Test\exhausted-b.bin" };
+        var sink = new RecycleProgressSink(paths);
+
+        sink.PostDeleteItem(0, null!, new HRESULT(Success), null!);
+        sink.PostDeleteItem(0, null!, new HRESULT(Failure), null!);
+
+        // One more unidentified callback than there are queued paths: the sink has nothing left, and
+        // its own failure path has to absorb this rather than let an exception cross into COM.
+        sink.PostDeleteItem(0, null!, new HRESULT(unchecked((int)0x80004005)), null!);
+
+        Check.True(sink.TryGetOutcome(paths[0], out var first, out _), "the first path still has its outcome");
+        Check.Equal(Success, first, "and it is the success that was recorded, not the extra callback's code");
+
+        Check.True(sink.TryGetOutcome(paths[1], out var second, out _), "the second path still has its outcome");
+        Check.Equal(Failure, second, "and it is the failure that was recorded, not the extra callback's code");
 
         return Task.CompletedTask;
     }
