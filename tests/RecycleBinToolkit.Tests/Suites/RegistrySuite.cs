@@ -16,7 +16,6 @@ namespace RecycleBinToolkit.Tests.Suites;
 internal static class RegistrySuite
 {
     private const int CurrentUser = unchecked((int)0x80000001);
-    private const int LocalMachine = unchecked((int)0x80000002);
 
     private static readonly string ScratchSubKey = $@"Software\RecycleBinToolkit.Tests\{Guid.NewGuid():N}";
 

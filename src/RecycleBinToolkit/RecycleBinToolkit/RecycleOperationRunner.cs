@@ -79,9 +79,10 @@ internal sealed class RecycleOperationRunner
         /// </summary>
         /// <remarks>
         /// The table holds one entry per queued path and is the largest thing a round allocates, so it is
-        /// kept between rounds like the other buffers. A batch large enough to make the table worth
-        /// megabytes is a batch where holding it for the rest of the process is the worse trade, so past
-        /// <see cref="OutcomeReuseLimit"/> it is let go instead of reused.
+        /// kept between rounds like the other buffers. The scratch belongs to one operation, so nothing
+        /// here outlives the call that created it; the limit is about not holding a table sized for an
+        /// enormous batch through what are usually much smaller rounds after it, and past
+        /// <see cref="OutcomeReuseLimit"/> entries the next round allocates its own instead.
         /// </remarks>
         internal Dictionary<string, (int HResult, string? RecycleBinPath)> TakeOutcomes()
         {

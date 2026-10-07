@@ -76,9 +76,7 @@ public static class RecycleBin
     {
         if (cancellationToken.IsCancellationRequested)
         {
-            return await Task
-                .FromCanceled<RecycleBinEmptyResult>(cancellationToken)
-                .ConfigureAwait(false);
+            return await Task.FromCanceled<RecycleBinEmptyResult>(cancellationToken).ConfigureAwait(false);
         }
 
         var targets = ResolveVolumes(volumeRoot);
@@ -229,8 +227,8 @@ public static class RecycleBin
     /// </summary>
     /// <remarks>
     /// The Recycle Bin is one aggregate folder spanning every mounted volume, so this is a filter over
-    /// a complete enumeration. The root is matched as a path prefix rather than by comparing parsed
-    /// roots, because a caller may pass a root without its trailing separator.
+    /// a complete enumeration. The root is normalised first, so the comparison below is a prefix test
+    /// against a real volume root with its separator, whichever spelling the caller used.
     /// </remarks>
     private static IReadOnlyList<RecycleBinItem> Filter(IReadOnlyList<RecycleBinItem> items, string? volumeRoot)
     {

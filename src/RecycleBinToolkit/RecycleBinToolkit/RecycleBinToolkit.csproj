@@ -6,6 +6,10 @@
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>default</LangVersion>
+        <!-- The library documents its public surface in prose, and without this none of it is checked:
+             a malformed comment, a param for a parameter that does not exist and an unresolvable cref
+             are all silent. -->
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
 
     <ItemGroup>
@@ -18,14 +22,4 @@
     <ItemGroup>
         <InternalsVisibleTo Include="RecycleBinToolkit.Tests" />
     </ItemGroup>
-
-    <PropertyGroup>
-        <TargetFramework>net10.0</TargetFramework>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
-        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <LangVersion>default</LangVersion>
-        <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    </PropertyGroup>
-
 </Project>

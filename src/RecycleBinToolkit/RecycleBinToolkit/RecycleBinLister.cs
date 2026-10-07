@@ -189,7 +189,8 @@ internal static unsafe class RecycleBinLister
     /// Measured on this Windows build, the Shell answers <c>SIGDN_NORMALDISPLAY</c> with the full
     /// original path, so the location property is read only when that answer is a bare name and the two
     /// have to be joined. Asking for it unconditionally costs a COM round trip per entry for a value
-    /// that is then discarded, which is one of the six round trips an entry costs.
+    /// that is then discarded — a COM round trip and an allocation per entry, for a value almost every
+    /// entry does not need.
     /// </remarks>
     private static string ResolveOriginalPath(IShellItem2 item, string name)
     {

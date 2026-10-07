@@ -75,12 +75,9 @@ internal static partial class RecycleBinRegistry
             return false;
         }
 
-        if (size > MaxStringBytes)
-        {
-            return false;
-        }
-
-        // REG_DWORD, little endian on every platform Windows runs on.
+        // REG_DWORD, little endian on every platform Windows runs on. A value too large for the buffer
+        // comes back as ERROR_MORE_DATA above rather than reaching here, so size is the width of what
+        // was actually copied and is what decides the shape.
         if (type == RegDword && size == sizeof(int))
         {
             result = data[0] != 0 || data[1] != 0 || data[2] != 0 || data[3] != 0;
@@ -88,9 +85,10 @@ internal static partial class RecycleBinRegistry
         }
 
         // REG_SZ, "1" or "true" in UTF-16 with a terminator.
-        if (type == RegSz)
+        if (type == RegSz && size <= MaxStringBytes)
         {
-            result = IsWideText(data[..(int)size], "1") || IsWideText(data[..(int)size], "true");
+            var text = data[..(int)size];
+            result = IsWideText(text, "1") || IsWideText(text, "true");
             return true;
         }
 

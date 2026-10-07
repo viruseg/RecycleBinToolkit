@@ -219,7 +219,7 @@ internal sealed class LongPathStager : IDisposable
         return !Directory.Exists(directory);
     }
 
-/// <summary>
+    /// <summary>
     /// Adds the extended-length prefix where the path needs it. The .NET file APIs accept a path
     /// above <c>MAX_PATH</c> only in this form, and the Shell only in the form without it.
     /// </summary>
