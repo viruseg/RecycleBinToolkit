@@ -125,9 +125,7 @@ internal static unsafe class RecycleBinLister
             item.GetAttributes(SFGAO_FLAGS.SFGAO_FOLDER, out var attributes);
             var isDirectory = (attributes & SFGAO_FLAGS.SFGAO_FOLDER) != 0;
 
-            var originalPath = ResolveOriginalPath(
-                ReadString(item, RecycleBinPropertyKeys.RecycledFrom),
-                displayName);
+            var originalPath = ResolveOriginalPath(item, displayName);
 
             // Without the original path the entry is not identifiable by the caller and the volume
             // filter has nothing to match on, so it is a failure rather than a silently dropped row.
@@ -189,16 +187,18 @@ internal static unsafe class RecycleBinLister
     /// </summary>
     /// <remarks>
     /// Measured on this Windows build, the Shell answers <c>SIGDN_NORMALDISPLAY</c> with the full
-    /// original path. The location is still consulted so a Shell that answers with a bare file name
-    /// still produces a usable path instead of a name the caller cannot open.
+    /// original path, so the location property is read only when that answer is a bare name and the two
+    /// have to be joined. Asking for it unconditionally costs a COM round trip per entry for a value
+    /// that is then discarded, which is one of the six round trips an entry costs.
     /// </remarks>
-    private static string ResolveOriginalPath(string? location, string name)
+    private static string ResolveOriginalPath(IShellItem2 item, string name)
     {
         if (Path.IsPathRooted(name))
         {
             return name;
         }
 
+        var location = ReadString(item, RecycleBinPropertyKeys.RecycledFrom);
         return string.IsNullOrEmpty(location) ? name : Path.Combine(location, name);
     }
 
