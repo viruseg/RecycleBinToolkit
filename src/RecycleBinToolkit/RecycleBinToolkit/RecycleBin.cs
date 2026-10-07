@@ -70,18 +70,29 @@ public static class RecycleBin
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
     /// </exception>
-    public static Task<RecycleBinEmptyResult> EmptyAsync(
+    public static async Task<RecycleBinEmptyResult> EmptyAsync(
         string? volumeRoot = null,
         CancellationToken cancellationToken = default)
     {
         if (cancellationToken.IsCancellationRequested)
         {
-            return Task.FromCanceled<RecycleBinEmptyResult>(cancellationToken);
+            return await Task
+                .FromCanceled<RecycleBinEmptyResult>(cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var targets = ResolveVolumes(volumeRoot);
 
-        return RecycleBinWorker.RunAsync(() => Empty(targets, volumeRoot), cancellationToken);
+        // Started before the work is queued so that Elapsed covers the wait for the Shell worker as well
+        // as the empty itself. Every operation in this library queues behind one thread, so time spent
+        // waiting for it is part of what the caller waited, and reporting only the Shell's share would
+        // understate it by however long the worker was busy with something else.
+        var stopwatch = Stopwatch.StartNew();
+        var emptied = await RecycleBinWorker
+            .RunAsync(() => Empty(targets, volumeRoot), cancellationToken)
+            .ConfigureAwait(false);
+
+        return emptied with { Elapsed = stopwatch.Elapsed };
     }
 
     /// <summary>
@@ -122,9 +133,15 @@ public static class RecycleBin
     /// <summary>
     /// Removes everything from the targets and reports what went, measured rather than assumed.
     /// </summary>
+    /// <remarks>
+    /// The elapsed time is not measured here. This runs on the Shell worker, so a stopwatch started here
+    /// would report the Shell's share of the work and omit how long the caller waited for the worker to be
+    /// free — which for a library that queues every operation behind one thread is most of what a caller
+    /// experiences. <see cref="EmptyAsync"/> measures around the wait instead, the same way
+    /// <see cref="GetItemsAsync"/> does, so both results mean the same thing.
+    /// </remarks>
     private static RecycleBinEmptyResult Empty(IReadOnlyList<string> targets, string? volumeRoot)
     {
-        var stopwatch = Stopwatch.StartNew();
         var failures = new List<RecycleFailure>();
         var emptied = new List<string>(targets.Count);
 
@@ -175,7 +192,7 @@ public static class RecycleBin
             emptied.Add(targets[i]);
         }
 
-        return new RecycleBinEmptyResult(emptied, itemsRemoved, bytesFreed, failures, stopwatch.Elapsed);
+        return new RecycleBinEmptyResult(emptied, itemsRemoved, bytesFreed, failures, TimeSpan.Zero);
     }
 
     /// <summary>

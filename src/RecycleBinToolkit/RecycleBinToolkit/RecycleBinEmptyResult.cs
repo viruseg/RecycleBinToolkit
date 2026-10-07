@@ -4,7 +4,7 @@ namespace RecycleBinToolkit;
 /// The outcome of <see cref="RecycleBin.EmptyAsync"/>: what was emptied, what it cost, and what could
 /// not be reached.
 /// </summary>
-public sealed class RecycleBinEmptyResult
+public sealed record RecycleBinEmptyResult
 {
     /// <summary>Creates a result.</summary>
     /// <param name="volumesEmptied">Volume roots that were emptied.</param>
@@ -53,6 +53,9 @@ public sealed class RecycleBinEmptyResult
     /// </summary>
     public IReadOnlyList<RecycleFailure> Failures { get; }
 
-    /// <summary>Wall-clock time spent emptying, including the measurements around it.</summary>
-    public TimeSpan Elapsed { get; }
+    /// <summary>
+    /// Wall-clock time the caller waited, from handing the work over to getting this result back. That
+    /// includes waiting for the Shell worker to be free, not just the empty itself.
+    /// </summary>
+    public TimeSpan Elapsed { get; init; }
 }

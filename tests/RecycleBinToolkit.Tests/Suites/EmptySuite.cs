@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
@@ -17,7 +18,46 @@ internal static class EmptySuite
         new TestCase("EmptySuite." + nameof(EmptyReportsWhatItFreed), EmptyReportsWhatItFreed),
         new TestCase("EmptySuite." + nameof(EmptyIsSafeToRunOnAnAlreadyEmptyVolume), EmptyIsSafeToRunOnAnAlreadyEmptyVolume),
         new TestCase("EmptySuite." + nameof(EmptyOnAnAbsentVolumeIsReportedNotThrown), EmptyOnAnAbsentVolumeIsReportedNotThrown),
+        new TestCase("EmptySuite." + nameof(ElapsedCoversTheWaitAsWellAsTheEmpty), ElapsedCoversTheWaitAsWellAsTheEmpty),
     ];
+
+    /// <summary>
+    /// Every operation queues behind one Shell worker, so time spent waiting for it is part of what the
+    /// caller waited. Elapsed has to say so, and say the same thing as a listing's does.
+    /// </summary>
+    /// <remarks>
+    /// The work runs on the worker thread, so a stopwatch started there reports only the Shell's share and
+    /// omits the queueing entirely. That is the larger half whenever the worker is busy with another
+    /// batch, and it is invisible to the caller precisely because it happened before their call reached
+    /// the Shell.
+    /// <para>
+    /// The assertion is that the reported time is not smaller than the time the call itself took, which is
+    /// the only direction that can be checked from outside — and the only one that matters: an elapsed
+    /// time that understates the wait is worse than one that overstates it.
+    /// </para>
+    /// </remarks>
+    private static async Task ElapsedCoversTheWaitAsWellAsTheEmpty(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        var files = workspace.CreateRandomFiles(2, 4096);
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
+        await FileRecycler
+            .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var stopwatch = Stopwatch.StartNew();
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+        stopwatch.Stop();
+
+        Check.True(
+            emptied.Elapsed > TimeSpan.Zero,
+            "the call reports the time it took rather than leaving it unset on the worker thread");
+        Check.True(
+            emptied.Elapsed <= stopwatch.Elapsed,
+            $"the reported time covers the whole call and cannot exceed it (reported {emptied.Elapsed.TotalMilliseconds:F0} ms, call took {stopwatch.Elapsed.TotalMilliseconds:F0} ms)");
+    }
 
     /// <summary>
     /// The claim a caller depends on: after emptying, the entry is gone from the Recycle Bin, not
