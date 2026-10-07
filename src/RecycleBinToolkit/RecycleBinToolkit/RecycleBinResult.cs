@@ -30,7 +30,14 @@ public enum RecycleFailureStage
     /// The Shell did not describe an entry the Recycle Bin reported. Only reachable while reading
     /// the Recycle Bin rather than writing to it.
     /// </summary>
-    Enumeration
+    Enumeration,
+
+    /// <summary>
+    /// The path was too long for the Shell and removing it outright was asked for, but the file system
+    /// refused. Distinct from <see cref="LongPathNotRecyclable"/> because the length was never the
+    /// obstacle here: the file is exactly as the caller left it.
+    /// </summary>
+    PermanentDeleteFailed
 }
 
 /// <summary>

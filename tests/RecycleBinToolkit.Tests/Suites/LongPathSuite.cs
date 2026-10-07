@@ -37,7 +37,63 @@ internal static class LongPathSuite
         new TestCase("LongPathSuite." + nameof(StagingDirectoryIsRemovedAfterTheOperation), StagingDirectoryIsRemovedAfterTheOperation),
         new TestCase("LongPathSuite." + nameof(StagingKeepsAnythingItCouldNotRecover), StagingKeepsAnythingItCouldNotRecover),
         new TestCase("LongPathSuite." + nameof(PermanentDeleteIsStillReportedAlongsideAValidationFailure), PermanentDeleteIsStillReportedAlongsideAValidationFailure),
+        new TestCase("LongPathSuite." + nameof(LockedLongPathFailsTheBatchInsteadOfThrowing), LockedLongPathFailsTheBatchInsteadOfThrowing),
     ];
+
+    /// <summary>
+    /// A per-item failure is data, never an exception. One locked file in a batch has to cost that file
+    /// its recycle and nothing else, which is the whole reason the runner retries only what failed.
+    /// </summary>
+    /// <remarks>
+    /// Removing a long path for good means calling into the file system directly, and that call fails on
+    /// its own terms: a handle held without delete sharing, a read-only attribute, a scan in progress.
+    /// Those have to land in <see cref="RecycleBinResult.Failures"/> with the code the file system gave,
+    /// rather than escaping and taking the rest of the batch with them.
+    /// </remarks>
+    private static async Task LockedLongPathFailsTheBatchInsteadOfThrowing(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        try
+        {
+            var extendedPath = BuildLongPath('k').ExtendedPath;
+            using (var stream = new FileStream(extendedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(new byte[4096]);
+            }
+
+            var longPath = ScratchWorkspace.Root + Path.GetFileName(extendedPath);
+
+            var options = new RecycleBinOptions
+            {
+                ThrowOnError = false,
+                LongPathFailureAction = LongPathFailureAction.DeletePermanently
+            };
+
+            // Held open without delete sharing for the whole call, so the direct removal has to fail.
+            using (new FileStream(extendedPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var result = await FileRecycler.MoveToRecycleBinAsync([longPath], options, context.CancellationToken);
+
+                Check.False(result.Succeeded, "a long path that cannot be removed for good is a failure");
+                Check.Equal(1, result.Failures.Count, "exactly one failure, for the one path that could not be handled");
+                Check.Equal(
+                    RecycleFailureStage.PermanentDeleteFailed,
+                    result.FirstFailure!.Stage,
+                    "the stage says the direct removal failed, not that the path was too long");
+                Check.True(
+                    (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
+                    $"the failure carries the file system's own error code (got 0x{result.FirstFailure.HResult:X8})");
+                Check.Equal(0, result.PermanentlyDeletedPaths.Count, "nothing is reported as removed that was not removed");
+                Check.True(File.Exists(ExtendedPrefix + longPath), "the file is still there, because nothing deleted it");
+            }
+        }
+        finally
+        {
+            workspace.Dispose();
+        }
+    }
 
     /// <summary>
     /// A batch that also carries a path validation failure comes back rebuilt, and the rebuild has to

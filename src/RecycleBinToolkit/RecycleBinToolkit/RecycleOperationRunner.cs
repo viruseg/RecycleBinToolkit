@@ -269,10 +269,19 @@ internal sealed class RecycleOperationRunner
     {
         foreach (var target in unrecyclable)
         {
-            if (options.LongPathFailureAction == LongPathFailureAction.DeletePermanently
-                && TryDeletePermanently(target, permanentlyDeleted))
+            if (options.LongPathFailureAction == LongPathFailureAction.DeletePermanently)
             {
-                continue;
+                if (TryDeletePermanently(target, permanentlyDeleted, out var refused))
+                {
+                    continue;
+                }
+
+                // The file system gave a reason, so report that rather than blaming the path length.
+                if (refused != 0)
+                {
+                    failures.Add(new RecycleFailure(target.InputPath, refused, 0, RecycleFailureStage.PermanentDeleteFailed));
+                    continue;
+                }
             }
 
             if (options.LongPathFailureAction == LongPathFailureAction.ShortenPathAndRecycle)
@@ -289,16 +298,36 @@ internal sealed class RecycleOperationRunner
         }
     }
 
-    private static bool TryDeletePermanently(RecycleTarget target, List<string> permanentlyDeleted)
+    /// <summary>
+    /// Removes a path the Shell could not recycle, reporting it as permanently deleted only once the
+    /// file system confirms it is gone.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the path is gone. On <see langword="false"/>,
+    /// <paramref name="refused"/> carries the file system's own error code, or 0 when nothing was raised
+    /// and the path is nonetheless still there, in which case the caller has nothing better to say than
+    /// that the path could not be handled.
+    /// </returns>
+    private static bool TryDeletePermanently(RecycleTarget target, List<string> permanentlyDeleted, out int refused)
     {
-        File.Delete(target.FullPath);
+        try
+        {
+            File.Delete(target.FullPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            refused = ex.HResult;
+            return false;
+        }
 
         if (File.Exists(target.FullPath) || Directory.Exists(target.FullPath))
         {
+            refused = 0;
             return false;
         }
 
         permanentlyDeleted.Add(target.InputPath);
+        refused = 0;
         return true;
     }
 
