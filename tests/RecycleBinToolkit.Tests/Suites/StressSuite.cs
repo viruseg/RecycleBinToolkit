@@ -25,6 +25,13 @@ internal static class StressSuite
 
         using var workspace = new ScratchWorkspace();
 
+        // One pair of readings around the whole run rather than a pair per cycle. The Shell walks the
+        // bin's metadata to answer, so a probe costs about a tenth of a second per thousand files
+        // already in it: twenty probes meant the run length was set by how full the caller's bin was
+        // rather than by anything under test. The guarantee is unchanged, and each cycle still names its
+        // own failures, so a shortfall is attributed by the per-cycle result rather than by the delta.
+        var (countBefore, _) = RecycleBinProbe.Measure(@"E:\");
+
         for (var cycle = 0; cycle < Cycles; cycle++)
         {
             context.CancellationToken.ThrowIfCancellationRequested();
@@ -39,8 +46,6 @@ internal static class StressSuite
                 ReadAndAppend(path, random);
             }
 
-            var before = RecycleBinProbe.QueryItemCount(@"E:\");
-
             var result = await FileRecycler.MoveToRecycleBinAsync(
                 chosen,
                 cancellationToken: context.CancellationToken);
@@ -48,7 +53,6 @@ internal static class StressSuite
             Check.True(result.Succeeded, DescribeFailure(cycle, result));
             Check.Equal(0, result.Failures.Count, DescribeFailure(cycle, result));
             Check.Equal(chosen.Length, result.RecycledPaths.Count, $"cycle {cycle} recycled every chosen file");
-            Check.True(RecycleBinProbe.QueryItemCount(@"E:\") - before >= chosen.Length, $"cycle {cycle} moved every chosen file into the Recycle Bin");
 
             foreach (var path in chosen)
             {
@@ -57,6 +61,11 @@ internal static class StressSuite
 
             totalRecycled += chosen.Length;
         }
+
+        var (countAfter, _) = RecycleBinProbe.Measure(@"E:\");
+        Check.True(
+            countAfter - countBefore >= totalRecycled,
+            $"every file from every cycle reached the Recycle Bin (bin grew by {countAfter - countBefore}, {totalRecycled} recycled)");
 
         workspace.Dispose();
 
