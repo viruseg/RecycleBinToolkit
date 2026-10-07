@@ -73,9 +73,10 @@ internal sealed class RecycleOperationRunner
         // remove the file permanently while reporting success, so the decision has to happen before
         // the first round rather than after the damage.
         var (recyclable, unrecyclable) = PartitionByRecyclability(pending, options);
-        failures.AddRange(HandleUnrecyclable(unrecyclable, options, permanentlyDeleted));
+        var staged = new List<StagedTarget>();
+        failures.AddRange(HandleUnrecyclable(unrecyclable, options, permanentlyDeleted, staged));
 
-        pending = recyclable;
+        pending = [.. recyclable, .. staged.Select(entry => entry.Target)];
 
         var attempts = new int[pending.Count];
         var lastHResult = new int[pending.Count];
@@ -125,7 +126,31 @@ internal sealed class RecycleOperationRunner
             failures.Add(new RecycleFailure(pending[i].InputPath, lastHResult[i], attempts[i], lastStage[i]));
         }
 
+        RestoreUnrecycledStagedItems(staged, recyclable);
+
         return RecycleBinResult.Create(recycled, permanentlyDeleted, failures, _stopwatch.Elapsed);
+    }
+
+    /// <summary>
+    /// Puts back anything that was moved aside and then failed to recycle, so a failed operation
+    /// leaves the caller's files where it found them.
+    /// </summary>
+    private static void RestoreUnrecycledStagedItems(List<StagedTarget> staged, List<RecycleTarget> recyclable)
+    {
+        if (staged.Count == 0)
+        {
+            return;
+        }
+
+        var recycledPaths = new HashSet<string>(recyclable.Select(target => target.InputPath), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in staged)
+        {
+            if (!recycledPaths.Contains(entry.Target.InputPath))
+            {
+                LongPathStager.TryRestore(entry.Target.FullPath, entry.OriginalFullPath);
+            }
+        }
     }
 
     /// <summary>
@@ -164,26 +189,61 @@ internal sealed class RecycleOperationRunner
     private static IEnumerable<RecycleFailure> HandleUnrecyclable(
         List<RecycleTarget> unrecyclable,
         RecycleBinOptions options,
-        List<string> permanentlyDeleted)
+        List<string> permanentlyDeleted,
+        List<StagedTarget> staged)
     {
         foreach (var target in unrecyclable)
         {
-            if (options.LongPathFailureAction != LongPathFailureAction.DeletePermanently)
+            switch (options.LongPathFailureAction)
             {
-                yield return new RecycleFailure(target.InputPath, PathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable);
-                continue;
+                case LongPathFailureAction.DeletePermanently:
+                    if (TryDeletePermanently(target, permanentlyDeleted))
+                    {
+                        yield break;
+                    }
+
+                    break;
+
+                case LongPathFailureAction.ShortenPathAndRecycle:
+                    var stagedPath = LongPathStager.TryStage(target.FullPath);
+                    if (stagedPath is null)
+                    {
+                        break;
+                    }
+
+                    staged.Add(new StagedTarget(target.WithShellPath(stagedPath), target.FullPath));
+                    continue;
+
+                default:
+                    break;
             }
 
-            File.Delete(target.FullPath);
-
-            if (File.Exists(target.FullPath))
-            {
-                yield return new RecycleFailure(target.InputPath, PathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable);
-                continue;
-            }
-
-            permanentlyDeleted.Add(target.InputPath);
+            yield return new RecycleFailure(target.InputPath, PathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable);
         }
+    }
+
+    private static bool TryDeletePermanently(RecycleTarget target, List<string> permanentlyDeleted)
+    {
+        File.Delete(target.FullPath);
+
+        if (File.Exists(target.FullPath) || Directory.Exists(target.FullPath))
+        {
+            return false;
+        }
+
+        permanentlyDeleted.Add(target.InputPath);
+        return true;
+    }
+
+    /// <summary>
+    /// An item moved to a short path, with where it came from so it can be put back if the recycle
+    /// does not work out.
+    /// </summary>
+    private readonly struct StagedTarget(RecycleTarget target, string originalFullPath)
+    {
+        internal RecycleTarget Target { get; } = target;
+
+        internal string OriginalFullPath { get; } = originalFullPath;
     }
 
     private RoundOutcome RunRound(
