@@ -16,7 +16,52 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(TargetKeepsInputAndFullPath), TargetKeepsInputAndFullPath),
         new TestCase("ContractSuite." + nameof(TargetCarriesBothPathForms), TargetCarriesBothPathForms),
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsStrippedForTheShell), ExtendedPrefixIsStrippedForTheShell),
+        new TestCase("ContractSuite." + nameof(ReceiptAcceptsAnExtendedLengthOriginal), ReceiptAcceptsAnExtendedLengthOriginal),
+        new TestCase("ContractSuite." + nameof(ReceiptRejectsWhatItCannotProve), ReceiptRejectsWhatItCannotProve),
     ];
+
+    /// <summary>
+    /// The receipt answers "did this land in the Recycle Bin on the item's own volume". Both inputs name
+    /// the same place in different forms, and the form difference must not change the answer.
+    /// </summary>
+    private static Task ReceiptAcceptsAnExtendedLengthOriginal(TestContext context)
+    {
+        const string created = @"E:\$Recycle.Bin\S-1-5-21-1-2-3-1001\$RABCDEF.bin";
+
+        Check.True(
+            RecycleBinReceipt.IsInsideRecycleBin(created, @"E:\work\report.bin"),
+            "a plain original and a plain Recycle Bin entry agree");
+        Check.True(
+            RecycleBinReceipt.IsInsideRecycleBin(created, @"\\?\E:\work\report.bin"),
+            "the extended-length form of the same original names the same volume, so it agrees too");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Everything the receipt cannot call proof has to come back negative, because a positive answer is
+    /// what tells the caller the bytes can be recovered.
+    /// </summary>
+    private static Task ReceiptRejectsWhatItCannotProve(TestContext context)
+    {
+        Check.False(
+            RecycleBinReceipt.IsInsideRecycleBin(null, @"E:\work\report.bin"),
+            "no reported location proves nothing");
+        Check.False(
+            RecycleBinReceipt.IsInsideRecycleBin(@"", @"E:\work\report.bin"),
+            "an empty reported location proves nothing");
+        Check.False(
+            RecycleBinReceipt.IsInsideRecycleBin(@"F:\$Recycle.Bin\S-1-5-21\$RX.bin", @"E:\work\report.bin"),
+            "an entry on another volume is not this item's Recycle Bin");
+        Check.False(
+            RecycleBinReceipt.IsInsideRecycleBin(@"E:\Temp\$RABCDEF.bin", @"E:\work\report.bin"),
+            "an entry outside the Recycle Bin folder was not recycled");
+        Check.False(
+            RecycleBinReceipt.IsInsideRecycleBin(@"E:\$Recycle.Bin\$RABCDEF.bin", @"relative\report.bin"),
+            "an original that names no volume cannot be matched");
+
+        return Task.CompletedTask;
+    }
 
     private static Task OptionDefaultsMatchSpec(TestContext context)
     {

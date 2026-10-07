@@ -30,30 +30,43 @@ internal static class RecycleBinReceipt
             return false;
         }
 
-        string? originalRoot;
-        string? newRoot;
+        // Both sides are reduced to Shell-form paths before anything is compared. A caller may hand over
+        // an extended-length path, which names the same volume as its plain form but has a different root
+        // string, and comparing the roots directly would call every such item deleted outside the
+        // Recycle Bin.
+        var created = RecycleTarget.StripExtendedPrefix(newItemPath);
 
+        if (!TryVolumeRoot(RecycleTarget.StripExtendedPrefix(originalPath), out var originalRoot) ||
+            !TryVolumeRoot(created, out var newRoot) ||
+            !created.StartsWith(newRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return originalRoot.Equals(newRoot, StringComparison.OrdinalIgnoreCase)
+            && ContainsRecycleBinSegment(created.AsSpan(newRoot.Length));
+    }
+
+    /// <summary>
+    /// Reads the volume root a Shell-form path belongs to.
+    /// </summary>
+    private static bool TryVolumeRoot(string shellPath, out string root)
+    {
         try
         {
-            originalRoot = Path.GetPathRoot(originalPath);
-            newRoot = Path.GetPathRoot(newItemPath);
+            var found = Path.GetPathRoot(shellPath);
+            if (!string.IsNullOrEmpty(found))
+            {
+                root = found;
+                return true;
+            }
         }
         catch (ArgumentException)
         {
-            return false;
         }
 
-        if (string.IsNullOrEmpty(originalRoot) || string.IsNullOrEmpty(newRoot))
-        {
-            return false;
-        }
-
-        if (!string.Equals(originalRoot, newRoot, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return ContainsRecycleBinSegment(newItemPath.AsSpan(originalRoot.Length));
+        root = string.Empty;
+        return false;
     }
 
     private static bool ContainsRecycleBinSegment(ReadOnlySpan<char> pathAfterRoot)

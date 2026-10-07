@@ -20,7 +20,47 @@ internal static class FacadeSuite
         new TestCase("FacadeSuite." + nameof(CancellationIsObserved), CancellationIsObserved),
         new TestCase("FacadeSuite." + nameof(SingleMissingPathThrowsFileNotFound), SingleMissingPathThrowsFileNotFound),
         new TestCase("FacadeSuite." + nameof(SingleLockedPathThrowsWithShellHResult), SingleLockedPathThrowsWithShellHResult),
+        new TestCase("FacadeSuite." + nameof(ExtendedPrefixOnAShortPathStillReportsSuccess), ExtendedPrefixOnAShortPathStillReportsSuccess),
     ];
+
+    /// <summary>
+    /// The extended-length prefix changes which path the file APIs take, not where the file is. A short
+    /// path handed over in that form is still the same volume, so the delete has to be verified and
+    /// reported as an ordinary recycle.
+    /// </summary>
+    /// <remarks>
+    /// The receipt check compares the volume the item came from against the volume the Shell reported the
+    /// new entry on. Those two strings differ in form: the caller's keeps the <c>\\?\</c> prefix and the
+    /// Shell never emits one. Comparing the roots without settling that first makes every such path look
+    /// like it was deleted outside the Recycle Bin, which reports a successful recycle as a failure.
+    /// </remarks>
+    private static async Task ExtendedPrefixOnAShortPathStillReportsSuccess(TestContext context)
+    {
+        const string ExtendedPrefix = @"\\?\";
+
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var plain = workspace.CreateRandomFile(4096);
+        var extended = ExtendedPrefix + plain;
+        var volumeRoot = Path.GetPathRoot(plain)!;
+
+        Check.True(plain.Length <= 260, $"the path is short enough to recycle unprefixed ({plain.Length} chars)");
+
+        var sizeBefore = RecycleBinProbe.QuerySize(volumeRoot);
+
+        var result = await FileRecycler.MoveToRecycleBinAsync([extended], cancellationToken: context.CancellationToken);
+
+        Check.True(
+            result.Succeeded,
+            $"the extended-length form of a short path is a successful recycle (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.Equal(1, result.RecycledPaths.Count, "the item is reported as recycled");
+        Check.Equal(0, result.Failures.Count, "nothing about the prefix turns into a failure");
+        Check.False(File.Exists(extended), "the file is gone from disk");
+        Check.True(RecycleBinProbe.QuerySize(volumeRoot) - sizeBefore >= 4096, "its bytes reached the Recycle Bin");
+
+        workspace.Dispose();
+    }
 
     private static Task SingleMissingPathThrowsFileNotFound(TestContext context)
     {
