@@ -11,8 +11,9 @@ internal sealed class ScratchWorkspace : IDisposable
     private const int MaxDeleteAttempts = 12;
 
     /// <summary>
-    /// Number of files <see cref="CreateFixtureSet"/> produces. Large enough that a run recycles a
-    /// batch worth measuring, small enough that regenerating it stays cheap.
+    /// Size of the standard fixture set. Large enough that a load case recycles a batch worth measuring,
+    /// which is why a case that only needs a handful of files asks for fewer rather than creating these
+    /// and discarding the rest.
     /// </summary>
     public const int FixtureFileCount = 94;
 
@@ -54,16 +55,19 @@ internal sealed class ScratchWorkspace : IDisposable
     }
 
     /// <summary>
-    /// Creates the standard set of generated files in the scratch root, named <c>(1).jpg</c> through
-    /// <c>(94).jpg</c>. The parenthesised names and the image extension are kept from the sample
-    /// files this suite used to commit, because a Shell rename has to cope with exactly those names.
+    /// Creates generated files in the scratch root, named <c>(1).jpg</c> upward. The parenthesised names
+    /// and the image extension are kept from the sample files this suite used to commit, because a Shell
+    /// rename has to cope with exactly those names.
     /// </summary>
+    /// <param name="count">
+    /// How many to create, starting at <c>(1).jpg</c>. Defaults to the whole standard set.
+    /// </param>
     /// <returns>Full paths of the created files, in name order.</returns>
-    public IReadOnlyList<string> CreateFixtureSet()
+    public IReadOnlyList<string> CreateFixtureSet(int count = FixtureFileCount)
     {
-        var created = new List<string>(FixtureFileCount);
+        var created = new List<string>(count);
 
-        for (var index = 1; index <= FixtureFileCount; index++)
+        for (var index = 1; index <= count; index++)
         {
             created.Add(CreateFile($"({index}).jpg"));
         }

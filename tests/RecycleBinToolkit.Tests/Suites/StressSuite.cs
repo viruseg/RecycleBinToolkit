@@ -11,7 +11,7 @@ namespace RecycleBinToolkit.Tests.Suites;
     /// Both cases are <see cref="TestKind.Load"/>, so they run only under <c>--load</c>. What they add to
     /// what ordinary cases already prove is that the guarantee survives repetition and volume; neither
     /// claim is the only coverage of anything. The cycles rest on
-    /// <c>FacadeSuite.BatchOfGeneratedFilesIsRecycled</c> and <c>WorkflowSuite.ReadPartialAndAppendThenRecycle</c>,
+    /// <c>WorkflowSuite.FiveTouchedFilesAreAllRecycled</c> and <c>EmptySuite.EmptyReportsWhatItFreed</c>,
     /// and the bytes on <c>FacadeSuite.LargeFileIsRecycled</c>.
     /// </remarks>
     internal static class StressSuite

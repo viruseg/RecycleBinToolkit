@@ -9,7 +9,7 @@ internal static class FacadeSuite
     internal static IReadOnlyList<TestCase> Cases =>
     [
         new TestCase("FacadeSuite." + nameof(SingleFileIsRecycled), SingleFileIsRecycled),
-        new TestCase("FacadeSuite." + nameof(BatchOfGeneratedFilesIsRecycled), BatchOfGeneratedFilesIsRecycled),
+        new TestCase("FacadeSuite." + nameof(BatchOfGeneratedFilesIsRecycled), BatchOfGeneratedFilesIsRecycled, TestKind.Load),
         new TestCase("FacadeSuite." + nameof(NullPathThrowsWhenThrowOnError), NullPathThrowsWhenThrowOnError),
         new TestCase("FacadeSuite." + nameof(NullPathFailsWithoutThrowOnError), NullPathFailsWithoutThrowOnError),
         new TestCase("FacadeSuite." + nameof(MissingPathDoesNotBlockTheRest), MissingPathDoesNotBlockTheRest),
@@ -127,6 +127,11 @@ internal static class FacadeSuite
         workspace.Dispose();
     }
 
+    /// <remarks>
+    /// Load, because it recycles the whole 94-file fixture set in one call. What a caller sees when it
+    /// hands over a smaller batch is asserted without the load by
+    /// <c>WorkflowSuite.FiveTouchedFilesAreAllRecycled</c> and <c>EmptySuite.EmptyReportsWhatItFreed</c>.
+    /// </remarks>
     private static async Task BatchOfGeneratedFilesIsRecycled(TestContext context)
     {
         using var workspace = new ScratchWorkspace();

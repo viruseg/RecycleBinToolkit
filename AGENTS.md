@@ -27,9 +27,11 @@ worked around by accident.
 
 **A load case is the one that puts real load on the CPU or the disk, and nothing else qualifies.** Volume,
 repetition, or a bound measured in elapsed time. The number of files it touches is not the test: ten files
-of ten bytes are not a load case, and neither is a single 10 MB file, and neither is a batch of 94 files
-recycled in one call. Ask what the machine is doing — `StressSuite` regenerates a 94-file fixture set ten
-times and moves 204 files through the Shell, which is where the disk gets worked hard enough to notice.
+of ten bytes are not a load case, and neither is a single 10 MB file, and neither is a batch of five small
+files recycled in one call. Ask what the machine is doing — `StressSuite` regenerates a 94-file fixture set
+ten times and moves 204 files through the Shell, which is where the disk gets worked hard enough to notice.
+A batch over the whole fixture set is a load case on its own; the fixture set is 94 files of 64 KiB, so
+creating and moving all of them is 5.75 MiB of writing for one call that still finishes in about a second.
 
 **Mark the case where it is declared**, as the third argument of `new TestCase(...)`:
 `new TestCase("Suite." + nameof(Case), Case, TestKind.Load)`. A load case stays in the suite that owns the
@@ -41,9 +43,15 @@ default run still proves the library works; a claim only `--load` checks is a cl
 make. What is allowed to stay behind the flag is the repetition itself — "this holds across ten cycles" is
 what a load case is for, and no ordinary case can restate it.
 
-Both `StressSuite` cases are already covered this way: the cycles by
-`FacadeSuite.BatchOfGeneratedFilesIsRecycled` and `WorkflowSuite.ReadPartialAndAppendThenRecycle`, the bytes
-by `FacadeSuite.LargeFileIsRecycled`.
+The four load cases are all covered this way, and the ordinary cases that carry the claims are the reason
+they are allowed to sit behind a flag:
+
+| Load case | Covered without the load by |
+| --- | --- |
+| `StressSuite.TenCopyRecycleCyclesAlwaysSucceed` | `WorkflowSuite.FiveTouchedFilesAreAllRecycled`, `EmptySuite.EmptyReportsWhatItFreed` |
+| `StressSuite.RecycledBytesReachTheBin` | `FacadeSuite.LargeFileIsRecycled` |
+| `FacadeSuite.BatchOfGeneratedFilesIsRecycled` | `WorkflowSuite.FiveTouchedFilesAreAllRecycled`, `EmptySuite.EmptyReportsWhatItFreed` |
+| `WorkflowSuite.ReadPartialAndAppendThenRecycle` | `WorkflowSuite.FiveTouchedFilesAreAllRecycled` |
 
 ## README.md and ReadmeExamples.cs are one thing
 
