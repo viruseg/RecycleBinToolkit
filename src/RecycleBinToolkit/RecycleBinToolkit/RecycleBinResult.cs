@@ -73,12 +73,14 @@ public sealed class RecycleBinResult
         IReadOnlyList<string> recycledPaths,
         IReadOnlyList<string> permanentlyDeletedPaths,
         IReadOnlyList<RecycleFailure> failures,
-        TimeSpan elapsed)
+        TimeSpan elapsed,
+        string? leftoverStagingDirectory)
     {
         RecycledPaths = recycledPaths;
         PermanentlyDeletedPaths = permanentlyDeletedPaths;
         Failures = failures;
         Elapsed = elapsed;
+        LeftoverStagingDirectory = leftoverStagingDirectory;
     }
 
     /// <summary>
@@ -108,6 +110,17 @@ public sealed class RecycleBinResult
     public TimeSpan Elapsed { get; }
 
     /// <summary>
+    /// A directory left on the volume because it still holds an item that could neither be recycled
+    /// nor moved back to its original location. It is never deleted in that state, so the data stays
+    /// recoverable; the caller has to move the item out of it.
+    /// </summary>
+    /// <remarks>
+    /// Only reachable with <see cref="LongPathFailureAction.ShortenPathAndRecycle"/>, and only when
+    /// both the recycle and the move back failed.
+    /// </remarks>
+    public string? LeftoverStagingDirectory { get; }
+
+    /// <summary>
     /// The first recorded failure, or <see langword="null"/> when the operation succeeded.
     /// </summary>
     public RecycleFailure? FirstFailure => Failures.Count > 0 ? Failures[0] : null;
@@ -119,11 +132,17 @@ public sealed class RecycleBinResult
     /// <param name="permanentlyDeletedPaths">Paths removed permanently instead of recycled.</param>
     /// <param name="failures">Paths that were not handled at all.</param>
     /// <param name="elapsed">Wall-clock time spent on the operation.</param>
+    /// <param name="leftoverStagingDirectory">
+    /// A staging directory that still holds an item the operation could neither recycle nor move back,
+    /// or <see langword="null"/> when everything was cleaned up.
+    /// </param>
     public static RecycleBinResult Create(
         IReadOnlyList<string> recycledPaths,
         IReadOnlyList<string> permanentlyDeletedPaths,
         IReadOnlyList<RecycleFailure> failures,
-        TimeSpan elapsed) => new(recycledPaths, permanentlyDeletedPaths, failures, elapsed);
+        TimeSpan elapsed,
+        string? leftoverStagingDirectory = null) =>
+        new(recycledPaths, permanentlyDeletedPaths, failures, elapsed, leftoverStagingDirectory);
 
     /// <summary>
     /// Creates a result with nothing removed permanently.
@@ -134,5 +153,5 @@ public sealed class RecycleBinResult
     public static RecycleBinResult Create(
         IReadOnlyList<string> recycledPaths,
         IReadOnlyList<RecycleFailure> failures,
-        TimeSpan elapsed) => new(recycledPaths, [], failures, elapsed);
+        TimeSpan elapsed) => new(recycledPaths, [], failures, elapsed, null);
 }

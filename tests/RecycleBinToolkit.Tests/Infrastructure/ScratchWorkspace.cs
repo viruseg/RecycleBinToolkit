@@ -8,6 +8,10 @@ internal sealed class ScratchWorkspace : IDisposable
 {
     private const string ExtendedPrefix = @"\\?\";
 
+    private const int MaxDeleteAttempts = 12;
+
+    private static readonly TimeSpan DeleteRetryDelay = TimeSpan.FromMilliseconds(250);
+
     private static int _sequence;
 
     /// <summary>
@@ -117,12 +121,51 @@ internal sealed class ScratchWorkspace : IDisposable
         // behind, where a workspace file listing trips over paths it cannot enumerate.
         var root = ExtendedPrefix + ScratchWorkspace.Root.TrimEnd(Path.DirectorySeparatorChar);
 
-        foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        for (var attempt = 1; ; attempt++)
         {
-            TryClearAttributes(path);
-        }
+            try
+            {
+                ClearReadOnly(root);
+                Directory.Delete(root, recursive: true);
+                return;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // The tests create and recycle thousands of files in this one directory, so the
+                // Windows indexer and antivirus routinely have a handle open on a file for a few
+                // milliseconds after it appears. That is a transient hold, not a real failure, and
+                // retrying settles it. Letting it through instead would fail a test that had already
+                // passed, on a file the library never touched.
+                if (attempt >= MaxDeleteAttempts)
+                {
+                    throw new IOException(
+                        $"Could not remove {ScratchWorkspace.Root} after {MaxDeleteAttempts} attempts. " +
+                        $"Something still holds a file there; this suite's own handles are all disposed by now. {ex.Message}",
+                        ex);
+                }
 
-        Directory.Delete(root, recursive: true);
+                Thread.Sleep(DeleteRetryDelay);
+            }
+        }
+    }
+
+    private static void ClearReadOnly(string root)
+    {
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            {
+                TryClearAttributes(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A file that cannot be enumerated or cleared surfaces on Directory.Delete instead.
+        }
     }
 
     private static void TryClearAttributes(string path)

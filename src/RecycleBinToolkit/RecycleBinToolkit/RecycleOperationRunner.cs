@@ -64,6 +64,25 @@ internal sealed class RecycleOperationRunner
             return RecycleBinResult.Create([], [], _stopwatch.Elapsed);
         }
 
+        // Scoped to this operation: a staging directory exists only as long as something is staged
+        // in it, and is removed before returning.
+        var stager = new LongPathStager();
+        try
+        {
+            return RunOperation(targets, options, cancellationToken, stager);
+        }
+        finally
+        {
+            stager.Dispose();
+        }
+    }
+
+    private RecycleBinResult RunOperation(
+        IReadOnlyList<RecycleTarget> targets,
+        RecycleBinOptions options,
+        CancellationToken cancellationToken,
+        LongPathStager stager)
+    {
         var pending = Deduplicate(targets);
         var recycled = new List<string>(pending.Count);
         var permanentlyDeleted = new List<string>();
@@ -74,7 +93,7 @@ internal sealed class RecycleOperationRunner
         // the first round rather than after the damage.
         var (recyclable, unrecyclable) = PartitionByRecyclability(pending, options);
         var staged = new List<StagedTarget>();
-        failures.AddRange(HandleUnrecyclable(unrecyclable, options, permanentlyDeleted, staged));
+        failures.AddRange(HandleUnrecyclable(unrecyclable, options, permanentlyDeleted, staged, stager));
 
         pending = [.. recyclable, .. staged.Select(entry => entry.Target)];
 
@@ -127,8 +146,9 @@ internal sealed class RecycleOperationRunner
         }
 
         RestoreUnrecycledStagedItems(staged, recyclable);
+        var leftover = stager.Release();
 
-        return RecycleBinResult.Create(recycled, permanentlyDeleted, failures, _stopwatch.Elapsed);
+        return RecycleBinResult.Create(recycled, permanentlyDeleted, failures, _stopwatch.Elapsed, leftover);
     }
 
     /// <summary>
@@ -190,7 +210,8 @@ internal sealed class RecycleOperationRunner
         List<RecycleTarget> unrecyclable,
         RecycleBinOptions options,
         List<string> permanentlyDeleted,
-        List<StagedTarget> staged)
+        List<StagedTarget> staged,
+        LongPathStager stager)
     {
         foreach (var target in unrecyclable)
         {
@@ -205,7 +226,7 @@ internal sealed class RecycleOperationRunner
                     break;
 
                 case LongPathFailureAction.ShortenPathAndRecycle:
-                    var stagedPath = LongPathStager.TryStage(target.FullPath);
+                    var stagedPath = stager.TryStage(target.FullPath);
                     if (stagedPath is null)
                     {
                         break;

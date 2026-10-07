@@ -30,9 +30,126 @@ internal static class LongPathSuite
         new TestCase("LongPathSuite." + nameof(DeletePermanentlyPolicyRemovesTheFile), DeletePermanentlyPolicyRemovesTheFile),
         new TestCase("LongPathSuite." + nameof(PathUnderTheThresholdStillRecyclesNormally), PathUnderTheThresholdStillRecyclesNormally),
         new TestCase("LongPathSuite." + nameof(ShortenPathAndRecyclePutsTheBytesInTheBin), ShortenPathAndRecyclePutsTheBytesInTheBin),
-        new TestCase("LongPathSuite." + nameof(ShortenPathAndRecycleLeavesNoStagingLeftovers), ShortenPathAndRecycleLeavesNoStagingLeftovers),
+        new TestCase("LongPathSuite." + nameof(ShortenPathAndRecycleRemovesTheStagingDirectory), ShortenPathAndRecycleRemovesTheStagingDirectory),
         new TestCase("LongPathSuite." + nameof(ThrowPolicyObeysTheGlobalSwitch), ThrowPolicyObeysTheGlobalSwitch),
+        new TestCase("LongPathSuite." + nameof(StagingDirectoryNamesAreUniqueAndShortEnough), StagingDirectoryNamesAreUniqueAndShortEnough),
+        new TestCase("LongPathSuite." + nameof(StagingDirectoryIsRemovedAfterTheOperation), StagingDirectoryIsRemovedAfterTheOperation),
+        new TestCase("LongPathSuite." + nameof(StagingKeepsAnythingItCouldNotRecover), StagingKeepsAnythingItCouldNotRecover),
     ];
+
+    private static Task StagingDirectoryNamesAreUniqueAndShortEnough(TestContext context)
+    {
+        const int Samples = 2000;
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var longest = 0;
+
+        for (var i = 0; i < Samples; i++)
+        {
+            var name = LongPathStager.NewDirectoryName();
+            Check.True(names.Add(name), $"generated name '{name}' is unique across {Samples} samples");
+            Check.True(name.StartsWith(LongPathStager.NamePrefix, StringComparison.Ordinal), $"'{name}' carries the prefix so a leftover is recognisable");
+            longest = Math.Max(longest, Path.Combine(@"E:\", name).Length);
+        }
+
+        Check.True(longest <= 60, $"even the longest staging path leaves room under the Shell limit ({longest} chars)");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The staging directory is the library's own scratch space on the user's volume. It exists only
+    /// for the duration of one operation and must be gone afterwards, including its parent volume
+    /// root.
+    /// </summary>
+    private static async Task StagingDirectoryIsRemovedAfterTheOperation(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        try
+        {
+            var before = CountStagingDirectories();
+
+            var (plainPath, extendedPath) = BuildLongPath();
+            using (var stream = new FileStream(extendedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(new byte[8192]);
+            }
+
+            var options = new RecycleBinOptions
+            {
+                ThrowOnError = false,
+                LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
+            };
+
+            var result = await FileRecycler.MoveToRecycleBinAsync([plainPath], options, context.CancellationToken);
+
+            Check.True(result.Succeeded, "the shortened path is recycled");
+            Check.True(result.LeftoverStagingDirectory is null, $"nothing was left behind (got '{result.LeftoverStagingDirectory}')");
+            Check.Equal(before, CountStagingDirectories(), "the operation created no lasting directory on the volume");
+        }
+        finally
+        {
+            workspace.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Cleanup must never destroy something it could not put back. A staging directory that still
+    /// holds an item is left in place and reported, so the data stays recoverable.
+    /// </summary>
+    private static Task StagingKeepsAnythingItCouldNotRecover(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        try
+        {
+            var stager = new LongPathStager();
+            var file = workspace.CreateRandomFile(4096);
+
+            var staged = stager.TryStage(file);
+            Check.NotNull(staged, $"the item was staged ({staged})");
+            Check.False(File.Exists(file), "the item left its original location");
+
+            var leftover = stager.Release();
+
+            Check.NotNull(leftover, "a staging directory that still holds the item is not deleted");
+            Check.True(Directory.Exists(leftover!), "the leftover directory is still there");
+            Check.True(File.Exists(staged!), "the item inside it is still there, so nothing was destroyed");
+
+            try
+            {
+                Directory.Delete(leftover!, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Best effort; the assertion above already proved the content survived.
+            }
+
+            stager.Dispose();
+            return Task.CompletedTask;
+        }
+        finally
+        {
+            workspace.Dispose();
+        }
+    }
+
+    private static int CountStagingDirectories()
+    {
+        try
+        {
+            return Directory
+                .GetFileSystemEntries(@"E:\")
+                .Count(path => Path.GetFileName(path).StartsWith(LongPathStager.NamePrefix, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
+    }
 
     /// <summary>
     /// The one way a long path actually reaches the Recycle Bin: rename it somewhere short on the same
@@ -86,7 +203,7 @@ internal static class LongPathSuite
         }
     }
 
-    private static async Task ShortenPathAndRecycleLeavesNoStagingLeftovers(TestContext context)
+    private static async Task ShortenPathAndRecycleRemovesTheStagingDirectory(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
@@ -106,12 +223,13 @@ internal static class LongPathSuite
                 LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
             };
 
+            var stagingBefore = CountStagingDirectories();
+
             await FileRecycler.MoveToRecycleBinAsync([plainPath], options, context.CancellationToken);
 
-            var staging = LongPathStager.StagingRootFor(@"E:\long\file.bin");
-            var leftovers = Directory.Exists(staging) ? Directory.GetFileSystemEntries(staging).Length : 0;
+            var stagingAfter = CountStagingDirectories();
 
-            Check.Equal(0, leftovers, "nothing is stranded in the staging directory once the item is recycled");
+            Check.Equal(stagingBefore, stagingAfter, "the operation left no staging directory of its own on the volume");
         }
         finally
         {
