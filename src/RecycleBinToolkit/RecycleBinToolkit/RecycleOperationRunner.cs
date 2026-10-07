@@ -415,23 +415,16 @@ internal sealed class RecycleOperationRunner
                 continue;
             }
 
-            RecordVerdict(lastHResult, lastStage, i, hResult, RecycleFailureStage.Performing);
+            var stage = ClassifyOutcome(
+                hResult,
+                Exists(target.FullPath),
+                newItemPath,
+                options.VerifyRecycleBinReceipt,
+                target.FullPath);
 
-            if ((hResult & SuccessSeverityMask) != 0)
+            if (stage is not null)
             {
-                continue;
-            }
-
-            if (Exists(target.FullPath))
-            {
-                continue;
-            }
-
-            if (options.VerifyRecycleBinReceipt && newItemPath is not null && !RecycleBinReceipt.IsInsideRecycleBin(newItemPath, target.FullPath))
-            {
-                // The Shell reported success and where the file went, and that was not the Recycle
-                // Bin: the file was removed permanently.
-                RecordVerdict(lastHResult, lastStage, i, hResult, RecycleFailureStage.ReceiptVerification);
+                RecordVerdict(lastHResult, lastStage, i, hResult, stage.Value);
                 continue;
             }
 
@@ -439,6 +432,46 @@ internal sealed class RecycleOperationRunner
         }
 
         return new RoundOutcome(succeeded);
+    }
+
+    /// <summary>
+    /// Decides what one item's Shell result means.
+    /// </summary>
+    /// <param name="hResult">The Shell's <c>hrDelete</c> for the item.</param>
+    /// <param name="stillOnDisk">Whether the path is still there after the round.</param>
+    /// <param name="recycleBinPath">Path the Shell reported as created, or <see langword="null"/>.</param>
+    /// <param name="verifyReceipt">Whether a reported destination is checked against the Recycle Bin.</param>
+    /// <param name="originalPath">Path the item was deleted from.</param>
+    /// <returns>
+    /// The stage to report, or <see langword="null"/> when the item counts as recycled.
+    /// </returns>
+    /// <remarks>
+    /// The verdict for an item is written once, when it first fails, and the earliest reason is the one
+    /// kept: a file the Shell already refused often disappears before the next round, and the follow-up
+    /// "file not found" is a consequence of the refusal rather than its cause. Within one round the stage
+    /// has to be the most specific one, which is why the general one is not recorded before the receipt
+    /// has been consulted — first-write-wins would otherwise drop it every time.
+    /// </remarks>
+    internal static RecycleFailureStage? ClassifyOutcome(
+        int hResult,
+        bool stillOnDisk,
+        string? recycleBinPath,
+        bool verifyReceipt,
+        string originalPath)
+    {
+        if ((hResult & SuccessSeverityMask) != 0 || stillOnDisk)
+        {
+            return RecycleFailureStage.Performing;
+        }
+
+        // The Shell reported success and where the file went, and that was not the Recycle Bin: the file
+        // was removed permanently.
+        if (verifyReceipt && recycleBinPath is not null && !RecycleBinReceipt.IsInsideRecycleBin(recycleBinPath, originalPath))
+        {
+            return RecycleFailureStage.ReceiptVerification;
+        }
+
+        return null;
     }
 
     /// <summary>

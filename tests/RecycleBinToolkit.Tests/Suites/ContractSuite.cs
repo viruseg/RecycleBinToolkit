@@ -19,7 +19,57 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ReceiptAcceptsAnExtendedLengthOriginal), ReceiptAcceptsAnExtendedLengthOriginal),
         new TestCase("ContractSuite." + nameof(ReceiptRejectsWhatItCannotProve), ReceiptRejectsWhatItCannotProve),
         new TestCase("ContractSuite." + nameof(JoiningFailuresKeepsTheRestOfTheOutcome), JoiningFailuresKeepsTheRestOfTheOutcome),
+        new TestCase("ContractSuite." + nameof(ItemOutcomeNamesTheStageItFailedAt), ItemOutcomeNamesTheStageItFailedAt),
     ];
+
+    /// <summary>
+    /// Each way one item's Shell result can fall short has to name itself, or a caller reading
+    /// <see cref="RecycleFailure.Stage"/> is told the wrong thing about what went wrong.
+    /// </summary>
+    /// <remarks>
+    /// The receipt rejection is the one that cannot be produced against the live Shell on demand, since
+    /// it needs the Shell itself to name a destination outside the Recycle Bin. Pinning the decision here
+    /// is what keeps that stage reachable at all: it used to be recorded after the general one, and
+    /// because only the first verdict for a path is kept, the later write was dropped every time.
+    /// </remarks>
+    private static Task ItemOutcomeNamesTheStageItFailedAt(TestContext context)
+    {
+        const string original = @"E:\work\report.bin";
+        const int Success = 0x00270008;
+        const int Refused = unchecked((int)0x80070005);
+
+        Check.Equal(
+            null,
+            RecycleOperationRunner.ClassifyOutcome(Success, false, @"E:\$Recycle.Bin\S-1-5\$RA.bin", true, original),
+            "a success, a gone file and a Recycle Bin destination mean recycled");
+
+        Check.Equal(
+            RecycleFailureStage.Performing,
+            RecycleOperationRunner.ClassifyOutcome(Refused, true, null, true, original),
+            "the Shell refusing names Performing");
+
+        Check.Equal(
+            RecycleFailureStage.Performing,
+            RecycleOperationRunner.ClassifyOutcome(Success, true, null, true, original),
+            "a success for a file that is still there also names Performing");
+
+        Check.Equal(
+            RecycleFailureStage.ReceiptVerification,
+            RecycleOperationRunner.ClassifyOutcome(Success, false, @"E:\Temp\$RA.bin", true, original),
+            "a destination outside the Recycle Bin names ReceiptVerification, not Performing");
+
+        Check.Equal(
+            null,
+            RecycleOperationRunner.ClassifyOutcome(Success, false, @"E:\Temp\$RA.bin", false, original),
+            "the same destination is accepted when receipt verification is off");
+
+        Check.Equal(
+            null,
+            RecycleOperationRunner.ClassifyOutcome(Success, false, null, true, original),
+            "a delete that reported no destination stays unproven rather than failed");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// A batch that rejects a path before the Shell is reached has two failure lists to join. Everything
