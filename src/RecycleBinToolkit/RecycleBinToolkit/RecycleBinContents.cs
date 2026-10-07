@@ -1,11 +1,9 @@
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// The Recycle Bin contents returned by <see cref="RecycleBin.GetItemsAsync"/>.
+/// The Recycle Bin contents returned by <see cref="RecycleBin.GetItemsAsync"/>: the entries that were
+/// read, the ones that were not, and the total size of what was.
 /// </summary>
-/// <param name="Items">The items that were read.</param>
-/// <param name="Failures">Items or volumes that could not be read.</param>
-/// <param name="Elapsed">Wall-clock time spent enumerating.</param>
 public sealed class RecycleBinContents
 {
     /// <summary>Creates a listing, deriving its total from the items.</summary>

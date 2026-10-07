@@ -1,13 +1,9 @@
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// The outcome of <see cref="RecycleBin.EmptyAsync"/>.
+/// The outcome of <see cref="RecycleBin.EmptyAsync"/>: what was emptied, what it cost, and what could
+/// not be reached.
 /// </summary>
-/// <param name="volumesEmptied">Volume roots that were emptied, each with a trailing separator.</param>
-/// <param name="itemsRemoved">Number of entries that left the Recycle Bin.</param>
-/// <param name="bytesFreed">Bytes those entries occupied.</param>
-/// <param name="failures">Volumes that could not be emptied or measured.</param>
-/// <param name="elapsed">Wall-clock time spent emptying.</param>
 public sealed class RecycleBinEmptyResult
 {
     /// <summary>Creates a result.</summary>

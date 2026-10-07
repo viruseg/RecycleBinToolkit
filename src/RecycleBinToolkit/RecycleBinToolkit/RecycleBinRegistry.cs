@@ -6,7 +6,7 @@ namespace RecycleBinToolkit;
 /// Reads the Recycle Bin settings Windows keeps in the registry.
 /// </summary>
 /// <remarks>
-/// <see cref="RegGetValueW"/> is declared here rather than taken from the Shell metadata because the
+/// <c>RegGetValueW</c> is declared here rather than taken from the Shell metadata because the
 /// settings live under the predefined <c>HKEY_CURRENT_USER</c> and <c>HKEY_LOCAL_MACHINE</c> handles.
 /// Those are pseudo-handles, not real ones: routing them through a safe handle would add-ref and
 /// release handles that were never opened, so the raw integer handle is passed as the native call

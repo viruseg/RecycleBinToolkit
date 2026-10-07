@@ -40,16 +40,13 @@ public sealed class RecycleBinOptions
 
     /// <summary>
     /// When set, a reported post-delete location is rejected unless it is inside
-    /// <c>$RECYCLE.BIN</c> on the item's volume.
+    /// <c>$RECYCLE.BIN</c> on the item's volume. The default is <c>true</c>.
     /// </summary>
     /// <remarks>
     /// This rejects a delete the Shell itself placed elsewhere. It cannot prove a file reached the
     /// Recycle Bin in the other direction: the Shell reports no location at all for some successful
     /// deletes, and a missing location cannot be distinguished from a delete the Shell completed
     /// without recycling. Turning this off trades that check for slightly less work per item.
-    /// </remarks>
-    /// <remarks>
-    /// The default is <c>true</c>.
     /// </remarks>
     public bool VerifyRecycleBinReceipt { get; init; } = true;
 
@@ -63,15 +60,12 @@ public sealed class RecycleBinOptions
     public bool ThrowOnError { get; init; } = true;
 
     /// <summary>
-    /// What happens to a file whose path is too long for the Shell to recycle.
+    /// What happens to a file whose path is too long for the Shell to recycle. The default is
+    /// <see cref="LongPathFailureAction.Throw"/>, which refuses it and leaves the file in place.
     /// </summary>
     /// <remarks>
-    /// The default refuses it and leaves the file in place. Set
-    /// <see cref="LongPathFailureAction.DeletePermanently"/> to remove it instead, in which case the
+    /// Set <see cref="LongPathFailureAction.DeletePermanently"/> to remove it instead, in which case the
     /// path also appears in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
-    /// </remarks>
-    /// <remarks>
-    /// The default is <c>LongPathFailureAction.Throw</c>.
     /// </remarks>
     public LongPathFailureAction LongPathFailureAction { get; init; } = LongPathFailureAction.Throw;
 

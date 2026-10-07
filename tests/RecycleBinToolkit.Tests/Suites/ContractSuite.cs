@@ -26,7 +26,47 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ATargetCostsNoAllocationOfItsOwn), ATargetCostsNoAllocationOfItsOwn),
         new TestCase("ContractSuite." + nameof(ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed), ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed),
         new TestCase("ContractSuite." + nameof(ContentsTotalIsDerivedNotDeclared), ContentsTotalIsDerivedNotDeclared),
+        new TestCase("ContractSuite." + nameof(FailureHResultIsNotClobberedByTheSeverityBitTest), FailureHResultIsNotClobberedByTheSeverityBitTest),
     ];
+
+    /// <summary>
+    /// A failure's HRESULT is what an integrator looks up, so the value on it has to be the Shell's code
+    /// and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// The documented way to tell a failure from a Shell success code such as <c>0x00270008</c> is to
+    /// test the severity bit. That only holds if the severity bit is never set by anything but the code
+    /// itself: a failure recorded with a code of zero would otherwise read as a success, and one recorded
+    /// with the bit already set would read as a failure even when the Shell reported success. Both cases
+    /// are what this pins — the stage describes where it failed, the HRESULT says what the Shell said.
+    /// </remarks>
+    private static Task FailureHResultIsNotClobberedByTheSeverityBitTest(TestContext context)
+    {
+        const int shellSuccess = 0x00270008;
+        const int sharingViolation = unchecked((int)0x80070020);
+        const int pathTooLong = unchecked((int)0x800700CE);
+
+        var succeededButRejected = new RecycleFailure(@"E:\a.bin", shellSuccess, 2, RecycleFailureStage.ReceiptVerification);
+        Check.Equal(
+            (succeededButRejected.HResult & unchecked((int)0x80000000)),
+            0,
+            "a Shell success code reported as a failure still reads as success, so the stage has to carry the meaning");
+
+        var genuine = new RecycleFailure(@"E:\b.bin", sharingViolation, 3, RecycleFailureStage.Performing);
+        Check.True(
+            (genuine.HResult & unchecked((int)0x80000000)) != 0,
+            "a Shell refusal reads as a failure, which is what the severity bit is for");
+
+        var longPath = new RecycleFailure(@"E:\c.bin", pathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable);
+        Check.Equal(RecycleFailureStage.LongPathNotRecyclable, longPath.Stage, "the stage survives alongside the code");
+        Check.Equal(pathTooLong, longPath.HResult, "the code is carried through unchanged");
+        Check.Equal(0, longPath.Attempts, "and so is the attempt count, which is zero for a path never attempted");
+
+        var validation = new RecycleFailure(@"E:\d.bin", 0, 0, RecycleFailureStage.PathValidation);
+        Check.Equal(0, validation.HResult, "a validation failure carries no code because the Shell was never reached");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// The Recycle Bin folder is the second segment of a physical path, so finding it is a matter of

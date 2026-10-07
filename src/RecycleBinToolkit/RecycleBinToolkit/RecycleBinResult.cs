@@ -49,7 +49,9 @@ public sealed class RecycleFailure
     /// Creates a failure record.
     /// </summary>
     /// <param name="path">The path exactly as the caller supplied it.</param>
-    /// <param name="hResult">Shell error code, or 0 when the Shell was never reached.</param>
+    /// <param name="hResult">
+    /// Shell error code, or 0 when the Shell was never reached. Carried through unchanged.
+    /// </param>
     /// <param name="attempts">How many attempts were made before giving up.</param>
     /// <param name="stage">Where in the pipeline the failure occurred.</param>
     public RecycleFailure(string path, int hResult, int attempts, RecycleFailureStage stage)
@@ -64,10 +66,16 @@ public sealed class RecycleFailure
     public string Path { get; }
 
     /// <summary>
-    /// Shell error code, or 0 when the Shell was never reached. A delete the Shell refused
-    /// reports the severity bit set; check <c>(HResult &amp; 0x80000000) != 0</c> to tell a
-    /// failure from a success code such as <c>0x00270008</c>.
+    /// The Shell's own code for this item, or 0 when the Shell was never reached. Carried through exactly
+    /// as reported, so the severity bit means what the Shell meant by it.
     /// </summary>
+    /// <remarks>
+    /// Check <c>(HResult &amp; 0x80000000) != 0</c> to tell a refusal from a Shell success code such as
+    /// <c>0x00270008</c>. That works because nothing here normalises the code, and it is worth knowing
+    /// that it is not sufficient on its own: an item can carry a success code and still be a failure,
+    /// which is what <see cref="Stage"/> is for. A delete the Shell completed outside the Recycle Bin is
+    /// the case — the Shell reported success and the caller still needs to be told.
+    /// </remarks>
     public int HResult { get; }
 
     /// <summary>How many attempts were made before giving up.</summary>
