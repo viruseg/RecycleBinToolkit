@@ -127,7 +127,7 @@ internal sealed class RecycleOperationRunner
         // the first round rather than after the damage.
         var (recyclable, unrecyclable) = PartitionByRecyclability(pending, options);
         var staged = new List<StagedTarget>();
-        failures.AddRange(HandleUnrecyclable(unrecyclable, options, permanentlyDeleted, staged, stager));
+        HandleUnrecyclable(unrecyclable, options, permanentlyDeleted, staged, stager, failures);
 
         pending = staged.Count == 0
             ? recyclable
@@ -243,40 +243,49 @@ internal sealed class RecycleOperationRunner
         return (recyclable, unrecyclable);
     }
 
-    private static IEnumerable<RecycleFailure> HandleUnrecyclable(
+    /// <summary>
+    /// Applies the caller's policy to every path the Shell must not see, recording the ones it
+    /// cannot rescue as failures.
+    /// </summary>
+    /// <remarks>
+    /// Writes straight into the caller's lists rather than yielding a sequence for the caller to
+    /// consume. This runs before the retry loop and on the batch's one long-path pass, so the
+    /// iterator's state machine was one allocation for a loop that already had every list it needed
+    /// in hand.
+    /// </remarks>
+    /// <param name="unrecyclable">Paths past the Shell's length limit, in batch order.</param>
+    /// <param name="options">Retry, verification and long-path settings; assumed already normalised.</param>
+    /// <param name="permanentlyDeleted">Receives the paths removed for good, if the caller opted in to that.</param>
+    /// <param name="staged">Receives the paths moved aside to a short path so the Shell can take them.</param>
+    /// <param name="stager">Moves items to the staging directory and cleans it up afterwards.</param>
+    /// <param name="failures">Receives one failure per path the policy could not act on.</param>
+    private static void HandleUnrecyclable(
         List<RecycleTarget> unrecyclable,
         RecycleBinOptions options,
         List<string> permanentlyDeleted,
         List<StagedTarget> staged,
-        LongPathStager stager)
+        LongPathStager stager,
+        List<RecycleFailure> failures)
     {
         foreach (var target in unrecyclable)
         {
-            switch (options.LongPathFailureAction)
+            if (options.LongPathFailureAction == LongPathFailureAction.DeletePermanently
+                && TryDeletePermanently(target, permanentlyDeleted))
             {
-                case LongPathFailureAction.DeletePermanently:
-                    if (TryDeletePermanently(target, permanentlyDeleted))
-                    {
-                        continue;
-                    }
-
-                    break;
-
-                case LongPathFailureAction.ShortenPathAndRecycle:
-                    var stagedPath = stager.TryStage(target.FullPath);
-                    if (stagedPath is null)
-                    {
-                        break;
-                    }
-
-                    staged.Add(new StagedTarget(target.WithShellPath(stagedPath), target.FullPath));
-                    continue;
-
-                default:
-                    break;
+                continue;
             }
 
-            yield return new RecycleFailure(target.InputPath, PathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable);
+            if (options.LongPathFailureAction == LongPathFailureAction.ShortenPathAndRecycle)
+            {
+                var stagedPath = stager.TryStage(target.FullPath);
+                if (stagedPath is not null)
+                {
+                    staged.Add(new StagedTarget(target.WithShellPath(stagedPath), target.FullPath));
+                    continue;
+                }
+            }
+
+            failures.Add(new RecycleFailure(target.InputPath, PathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable));
         }
     }
 
