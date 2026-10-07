@@ -175,7 +175,7 @@ internal sealed class RecycleOperationRunner
         CancellationToken cancellationToken,
         LongPathStager stager)
     {
-        var pending = Deduplicate(targets);
+        var pending = CollapseEquivalentPaths(targets);
         var recycled = new List<string>(pending.Count);
         var permanentlyDeleted = new List<string>();
         var failures = new List<RecycleFailure>();
@@ -631,7 +631,17 @@ internal sealed class RecycleOperationRunner
         return true;
     }
 
-    private static IReadOnlyList<RecycleTarget> Deduplicate(IReadOnlyList<RecycleTarget> targets)
+    /// <summary>
+    /// Collapses paths that name the same item, keeping each one's first occurrence.
+    /// </summary>
+    /// <remarks>
+    /// Compared on the Shell path, since that is the form handed to the Shell and the one every spelling
+    /// of a path has already been reduced to by <see cref="RecycleTarget"/>. The extended-length prefix
+    /// is stripped during construction for exactly this reason: <c>\\?\E:\a.bin</c> and
+    /// <c>E:\a.bin</c> have to meet here, or the Shell is handed two items for one file.
+    /// </remarks>
+    /// <param name="targets">Paths to collapse.</param>
+    internal static IReadOnlyList<RecycleTarget> CollapseEquivalentPaths(IReadOnlyList<RecycleTarget> targets)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var unique = new List<RecycleTarget>(targets.Count);

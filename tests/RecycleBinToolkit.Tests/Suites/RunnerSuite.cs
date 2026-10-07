@@ -249,6 +249,9 @@ internal static class RunnerSuite
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Builds one target per path, with the path in all three forms.
+    /// </summary>
     private static IReadOnlyList<RecycleTarget> Targets(IReadOnlyList<string> files)
     {
         var targets = new List<RecycleTarget>(files.Count);

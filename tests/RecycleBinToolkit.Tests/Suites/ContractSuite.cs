@@ -27,7 +27,40 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed), ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed),
         new TestCase("ContractSuite." + nameof(ContentsTotalIsDerivedNotDeclared), ContentsTotalIsDerivedNotDeclared),
         new TestCase("ContractSuite." + nameof(FailureHResultIsNotClobberedByTheSeverityBitTest), FailureHResultIsNotClobberedByTheSeverityBitTest),
+        new TestCase("ContractSuite." + nameof(PathsThatResolveToOneShellItemRecycleOnce), PathsThatResolveToOneShellItemRecycleOnce),
     ];
+
+    /// <summary>
+    /// Two paths that name one file must produce one Shell item, however differently they are written.
+    /// </summary>
+    /// <remarks>
+    /// De-duplication compares the Shell path, and both of these spellings reach that stage as one string,
+    /// so they have to collapse before anything is queued. Handing the Shell two items for one file is
+    /// what the check prevents: the second would be asked to delete something the first had already
+    /// deleted, and the entry that attempt creates would be reported as an item of its own.
+    /// </remarks>
+    private static Task PathsThatResolveToOneShellItemRecycleOnce(TestContext context)
+    {
+        const string plain = @"E:\work\report.bin";
+        const string extended = @"\\?\E:\work\report.bin";
+
+        Check.Equal(
+            1,
+            RecycleOperationRunner.CollapseEquivalentPaths(Targets(plain, extended)).Count,
+            "the extended-length form names the same item as the plain form, so it collapses onto it");
+
+        Check.Equal(
+            1,
+            RecycleOperationRunner.CollapseEquivalentPaths(Targets(plain, plain.ToUpperInvariant())).Count,
+            "the case of the path does not make it a second item");
+
+        Check.Equal(
+            2,
+            RecycleOperationRunner.CollapseEquivalentPaths(Targets(plain, @"E:\work\other.bin")).Count,
+            "two different files are two items");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// A failure's HRESULT is what an integrator looks up, so the value on it has to be the Shell's code
@@ -138,6 +171,21 @@ internal static class ContractSuite
         Check.Equal(0L, empty.TotalSize, "a listing with no items totals nothing rather than claiming a default");
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Builds targets the way the facade does, so a path's two forms meet as one Shell path.
+    /// </summary>
+    private static IReadOnlyList<RecycleTarget> Targets(params string[] shellPaths)
+    {
+        var targets = new List<RecycleTarget>(shellPaths.Length);
+
+        foreach (var shellPath in shellPaths)
+        {
+            targets.Add(new RecycleTarget(shellPath, shellPath, RecycleTarget.StripExtendedPrefix(shellPath)));
+        }
+
+        return targets;
     }
 
     private static Task ATargetCostsNoAllocationOfItsOwn(TestContext context)
