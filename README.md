@@ -8,7 +8,7 @@ using RecycleBinToolkit;
 
 await FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip");
 
-var inTheBin = await RecycleBin.GetItemsAsync();
+await RecycleBin.GetItemsAsync();
 await RecycleBin.EmptyAsync(@"E:\");
 ```
 
@@ -102,16 +102,19 @@ await FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip");
 A batch, reporting failures as data:
 
 ```csharp
-using RecycleBinToolkit;
-
+// TopDirectoryOnly on purpose: a whole tree is one item, and the batch overload is for many
+// paths the caller already has.
 var paths = Directory.GetFiles(@"C:\Users\me\Downloads", "*", SearchOption.TopDirectoryOnly);
 
+// This overload never throws for a per-item failure — a bad path lands in result.Failures
+// and the rest of the batch still runs.
 var result = await FileRecycler.MoveToRecycleBinAsync(paths);
 
 if (!result.Succeeded)
 {
     foreach (var failure in result.Failures)
     {
+        // Attempts is 0 when the item never reached the Shell, so the HRESULT is 0 too.
         Console.Error.WriteLine(
             $"{failure.Path}: {failure.Stage} (0x{failure.HResult:X8}) after {failure.Attempts} attempt(s)");
     }
@@ -121,13 +124,19 @@ if (!result.Succeeded)
 Never throwing, for a background service:
 
 ```csharp
+IReadOnlyList<string?> paths = [];
 var options = new RecycleBinOptions { ThrowOnError = false };
 
+// An empty list is a valid call: it succeeds and does nothing. Entries may also be null or
+// missing, each reported as a failure without aborting the batch.
 var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
+
 if (!result.Succeeded)
 {
-    // Every failure is in result.Failures, with an HRESULT and a stage.
-    LogWarning(result.Failures);
+    foreach (var failure in result.Failures)
+    {
+        Console.Error.WriteLine($"recycle failed for {failure.Path}: {failure.Stage} 0x{failure.HResult:X8}");
+    }
 }
 ```
 
@@ -282,6 +291,8 @@ Immutable; set with `with`-style initialisers. Every property has a production d
 | `MaxShellPathLength` | `int` | `260` | Longest path the Shell can be asked to recycle. Measured: 251 recycles, 261 does not. Clamped to at least 1. |
 
 ```csharp
+// Every property has a production default, so RecycleBinOptions.Default — which is what a null
+// options argument means — is always a valid argument.
 var options = new RecycleBinOptions
 {
     MaxAttempts = 10,
@@ -290,6 +301,10 @@ var options = new RecycleBinOptions
     ThrowOnError = false,
     LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
 };
+
+// ThrowOnError is the global switch and has the final say over LongPathFailureAction.
+// 251 recycles and 261 does not, measured on the machine this was developed against.
+Console.WriteLine(options.MaxShellPathLength);
 ```
 
 ### `RecycleBinResult`
@@ -310,6 +325,16 @@ The outcome of a batch. Immutable.
 > `Succeeded` means **gone from disk**, not necessarily recycled. A file removed permanently under an
 > explicit policy counts as success. Check `PermanentlyDeletedPaths` when that distinction matters.
 
+```csharp
+// Create exists so a test can hold a result without touching the file system. In application
+// code the result comes back from a call.
+var result = RecycleBinResult.Create(["a"], [], [], TimeSpan.Zero);
+
+// Succeeded means gone from disk, not necessarily recycled: a file removed permanently under an
+// explicit policy counts as a success. Check PermanentlyDeletedPaths when that matters.
+Console.WriteLine($"{result.Succeeded} {result.Elapsed} {result.FirstFailure is null}");
+```
+
 ### `RecycleFailure`
 
 One item that was not handled.
@@ -325,7 +350,14 @@ One item that was not handled.
 zero: the Shell reports a successful delete as `0x00270008`, never as `S_OK`.
 
 ```csharp
+var failure = new RecycleFailure(@"C:\x.bin", unchecked((int)0x80270027), 1, RecycleFailureStage.Performing);
+
+// The Shell reports a successful delete as 0x00270008, never as S_OK, so success and failure
+// are told apart by the severity bit rather than by comparing with zero. On its own that is
+// not enough: an item can carry a success code and still be a failure, which is why Stage
+// is read too.
 bool shellSucceeded = (failure.HResult & unchecked((int)0x80000000)) == 0;
+Console.WriteLine(shellSucceeded);
 ```
 
 A locked file reports `0x80270027` at stage `Performing`.
@@ -445,6 +477,10 @@ reported as `Indeterminate`, never optimistically as enabled.
 
 ## Examples
 
+Every example below is compiled as the body of a method in
+`tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs`, so what is shown here is what was built
+against. They are in the order they appear in that file.
+
 ### List what is in the Recycle Bin
 
 ```csharp
@@ -452,15 +488,20 @@ var contents = await RecycleBin.GetItemsAsync();
 
 foreach (var item in contents.Items)
 {
+    // Size is 0 for a directory — its contents cannot be enumerated without elevation, so
+    // IsDirectory is the honest signal that no figure is available.
     Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
 }
 
+// TotalSize is derived from Items when the listing is built, so it cannot disagree with them.
 Console.WriteLine($"{contents.Items.Count} item(s), {contents.TotalSize} byte(s)");
 ```
 
 ### List one volume, and hear about anything unreadable
 
 ```csharp
+// The Recycle Bin is one Shell folder spanning every mounted volume, so this filters an
+// enumeration that has already happened rather than being a cheaper query.
 var onE = await RecycleBin.GetItemsAsync(@"E:\");
 
 foreach (var failure in onE.Failures)
@@ -472,8 +513,12 @@ foreach (var failure in onE.Failures)
 ### Empty the Recycle Bin and report what it freed
 
 ```csharp
+// Confirmation, progress window and sound are always suppressed: an unattended library must
+// never put a dialog on a caller's desktop.
 var emptied = await RecycleBin.EmptyAsync(@"E:\");
 
+// SHEmptyRecycleBin says nothing about how much it removed, so both figures are measured per
+// volume before and after. Neither is ever negative.
 Console.WriteLine($"freed {emptied.BytesFreed} byte(s) from {emptied.ItemsRemoved} item(s)");
 
 foreach (var failure in emptied.Failures)
@@ -485,13 +530,15 @@ foreach (var failure in emptied.Failures)
 ### Act on a volume whose Recycle Bin is switched off
 
 ```csharp
+// A volume root, not a directory inside one.
 var status = await RecycleBin.GetStatusAsync(@"E:\");
 
 if (!status.IsEnabled)
 {
     Console.Error.WriteLine($"the Recycle Bin is not in use on {status.VolumeRoot}: {status.Reason}");
 
-    // The reasons differ in who can fix them, which is why this is not a bool.
+    // The reasons differ in who can fix them, which is why this is not a bool. Indeterminate
+    // is deliberately not Enabled: the library does not assert what it could not read.
     if (status.Reason is RecycleBinAvailabilityReason.DisabledByPolicy)
     {
         Console.Error.WriteLine("an administrator set this; nothing in the application can change it");
@@ -501,18 +548,22 @@ if (!status.IsEnabled)
 
 ### Recycle a directory tree
 
-The single-path overload returns a `bool`. To inspect the reason for a failure, use the batch
-overload with one element:
-
 ```csharp
+// A directory tree is one path. The single-path overload returns a bool and no reason, so the
+// batch overload with one element is the way to learn why it failed.
 IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
 var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+
 Console.WriteLine(result.Succeeded ? "recycled" : $"{result.Failures.Count} failed");
 ```
 
 ### Report every failure with its reason
 
 ```csharp
+// A path that is not there comes back as a failure and does not stop the other entries.
+IReadOnlyList<string?> paths = [@"C:\Projects\build-output", @"C:\Projects\gone.log"];
+var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+
 foreach (var failure in result.Failures)
 {
     Console.Error.WriteLine(
@@ -522,24 +573,30 @@ foreach (var failure in result.Failures)
 
 ### Get long paths into the Recycle Bin
 
-The Shell cannot recycle a path past `MAX_PATH`. This policy moves the item to a short path on the
-same volume — a rename, so it costs nothing regardless of size — and recycles it from there.
-
 ```csharp
+IReadOnlyList<string?> paths = [@"C:\Projects\a-very-long-path\build-output"];
 var options = new RecycleBinOptions
 {
     LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
 };
 
+// Past MAX_PATH the Shell deletes the file for good and reports a success code, so the path is
+// never handed over. This policy renames the item to a short path on its own volume — a rename,
+// so it costs nothing regardless of size — and recycles it from there.
 var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
-```
 
-> The Recycle Bin entry shows the staging path as the original location, not where the file lived.
-> That is inherent: the Shell records the path it was asked to delete.
+// The entry shows the staging path as the original location, not where the file lived. That is
+// inherent: the Shell records the path it was asked to delete.
+//
+// A directory left here still holds an item that could neither be recycled nor moved back. The
+// item is never deleted in that state, so it is recoverable — the caller has to move it out.
+Console.WriteLine(result.LeftoverStagingDirectory);
+```
 
 ### Never let a file be destroyed without a decision
 
 ```csharp
+IReadOnlyList<string?> paths = [@"C:\Projects\a-very-long-path\archive.zip"];
 var options = new RecycleBinOptions
 {
     LongPathFailureAction = LongPathFailureAction.DeletePermanently
@@ -547,43 +604,41 @@ var options = new RecycleBinOptions
 
 var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
 
+// Only files past MAX_PATH are affected; everything else still goes to the Recycle Bin.
 if (result.PermanentlyDeletedPaths.Count > 0)
 {
     Console.Error.WriteLine($"{result.PermanentlyDeletedPaths.Count} file(s) were deleted, not recycled.");
 }
 ```
 
-### A service that must not throw
-
-```csharp
-var options = new RecycleBinOptions { ThrowOnError = false };
-
-var result = await FileRecycler.MoveToRecycleBinAsync(paths, options, stoppingToken);
-
-if (!result.Succeeded)
-{
-    foreach (var failure in result.Failures)
-    {
-        logger.LogWarning("recycle failed for {Path}: {Stage} 0x{HResult:X8}", failure.Path, failure.Stage, failure.HResult);
-    }
-}
-```
-
 ### Cancel the wait
 
 ```csharp
+IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+// Cancelling stops the wait, not the work: a round already handed to the Shell runs to
+// completion, so a cancelled call may still recycle its files.
 await FileRecycler.MoveToRecycleBinAsync(paths, cancellationToken: cts.Token);
 ```
 
 ### Assert in a test
 
+`Check.*` here is the test project's own assertion helper; in a project with xunit the same three
+lines read `Assert.True`, `Assert.Empty` and `Assert.All`.
+
 ```csharp
+IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
 var result = await FileRecycler.MoveToRecycleBinAsync(paths);
 
-Assert.True(result.Succeeded);
-Assert.Empty(result.Failures);
-Assert.All(result.RecycledPaths, path => Assert.False(File.Exists(path)));
+Check.True(result.Succeeded, "the batch succeeded");
+Check.Equal(0, result.Failures.Count, "no failures");
+
+// Succeeded is derived from the library's own checks; File.Exists is the independent one.
+foreach (var path in result.RecycledPaths)
+{
+    Check.False(File.Exists(path), $"{path} is gone");
+}
 ```
 
 ---
@@ -726,6 +781,10 @@ than only reading it, and on a Recycle Bin holding tens of thousands of entries 
 minutes, because emptying that many files is what the Shell does.
 
 ## Contributing
+
+Every code block in this file also exists as a compiling method in
+`tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs`, and the two are edited together. A new example
+goes into both in the same change; the rule is spelled out in `AGENTS.md` at the repository root.
 
 The project has a specification at
 `docs/superpowers/specs/2026-10-06-recycle-bin-reliability-design.md` that records the measurements
