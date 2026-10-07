@@ -1,18 +1,29 @@
 namespace RecycleBinToolkit.Tests.Infrastructure;
 
 /// <summary>
-/// Reads a volume's Recycle Bin occupancy through the library's own listing API, so the delta
+/// Reads a volume's Recycle Bin occupancy through the library's own counting path, so the delta
 /// assertions across the suites are stated against what a caller would see.
 /// </summary>
 /// <remarks>
-/// The count and the size come from one enumeration, and the <c>-1</c> sentinel keeps its meaning: a
+/// The count and the size come from one query, and the <c>-1</c> sentinel keeps its meaning: a
 /// volume that cannot be read reports failure rather than an empty Recycle Bin, because the two are
 /// indistinguishable once they are both zero.
 /// <para>
-/// <see cref="RecycleBinVolume"/> remains the independent oracle, and
-/// <see cref="Suites.ShellSuite.RecycleBinListingAgreesWithTheShellOracle"/> is what pins this probe to
-/// it. Both live in one place on purpose: an assertion that checks the library against itself proves
-/// nothing, so the agreement is asserted once and the rest of the suites build on it.
+/// This asks <c>SHQueryRecycleBin</c>, not the listing. Answering "did the count go up by one" does not
+/// need the entries, and a listing costs six COM round trips and a stat per entry: with ninety thousand
+/// files in the bin a single listing call took over thirteen minutes, against about eleven seconds for
+/// the counter. Seventy times cheaper is not the same as free — the Shell walks the bin's metadata to
+/// produce these two numbers, so the cost still grows with how full the bin is and nothing in this
+/// library can change that. It does mean the suites are not paying for the part they were not asking
+/// for.
+/// </para>
+/// <para>
+/// The listing is still covered, and still pinned against this counter:
+/// <see cref="Suites.ListerSuite"/> is what exercises it, and
+/// <see cref="Suites.ShellSuite.RecycleBinListingAgreesWithTheShellOracle"/> is what asserts the two
+/// views agree. <see cref="RecycleBinVolume"/> remains the independent oracle, so an assertion that
+/// checks the library against itself proves nothing; the agreement is asserted once and the rest of the
+/// suites build on it.
 /// </para>
 /// </remarks>
 internal static class RecycleBinProbe
@@ -32,21 +43,20 @@ internal static class RecycleBinProbe
     public static long QuerySize(string volumeRoot) => Measure(volumeRoot).Bytes;
 
     /// <summary>
-    /// Both quantities from a single enumeration, for assertions that need them together.
+    /// Both quantities from a single query, for assertions that need them together.
     /// </summary>
     /// <param name="volumeRoot">Volume root, for example <c>"E:\\"</c>.</param>
-    /// <returns>The entry count and the size in bytes, each <c>-1</c> when the volume could not be read.</returns>
-    public static (long Items, long Bytes) Measure(string volumeRoot)
-    {
-        var contents = RecycleBin.GetItemsAsync(volumeRoot).ConfigureAwait(false).GetAwaiter().GetResult();
+    /// <returns>The entry count and size in bytes, each <c>-1</c> when the volume could not be read.</returns>
+    public static (long Items, long Bytes) Measure(string volumeRoot) =>
+        RecycleBinCounter.TryQuery(WithSeparator(volumeRoot), out var items, out var bytes)
+            ? (items, bytes)
+            : (-1, -1);
 
-        // A volume that is not mounted filters to nothing and reports no failure, so the fact that it
-        // could not be read has to be established from the volume itself rather than from the result.
-        if (!Directory.Exists(volumeRoot))
-        {
-            return (-1, -1);
-        }
-
-        return (contents.Items.Count, contents.TotalSize);
-    }
+    /// <summary>
+    /// The Shell requires a root with its trailing separator, whatever the caller passed.
+    /// </summary>
+    private static string WithSeparator(string volumeRoot) =>
+        volumeRoot.EndsWith(Path.DirectorySeparatorChar) || volumeRoot.EndsWith(Path.AltDirectorySeparatorChar)
+            ? volumeRoot
+            : volumeRoot + Path.DirectorySeparatorChar;
 }

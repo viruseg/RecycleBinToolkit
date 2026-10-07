@@ -346,8 +346,7 @@ internal static class LongPathSuite
                 stream.Write(new byte[payload]);
             }
 
-            var countBefore = RecycleBinProbe.QueryItemCount(@"E:\");
-            var sizeBefore = RecycleBinProbe.QuerySize(@"E:\");
+            var (countBefore, sizeBefore) = RecycleBinProbe.Measure(@"E:\");
 
             var options = new RecycleBinOptions
             {
@@ -557,8 +556,7 @@ internal static class LongPathSuite
                 Check.True(actual.AsSpan().SequenceEqual(expected), "the file reads back with the content that was written");
             }
 
-            var before = RecycleBinProbe.QueryItemCount(@"E:\");
-            var sizeBefore = RecycleBinProbe.QuerySize(@"E:\");
+            var (before, sizeBefore) = RecycleBinProbe.Measure(@"E:\");
 
             var result = await FileRecycler.MoveToRecycleBinAsync([extendedPath], cancellationToken: context.CancellationToken);
 

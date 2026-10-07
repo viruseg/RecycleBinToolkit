@@ -73,13 +73,11 @@ internal static class StressSuite
         workspace.Recreate();
 
         var files = workspace.CreateRandomFiles(fileCount, fileSize);
-        var countBefore = RecycleBinProbe.QueryItemCount(@"E:\");
-        var sizeBefore = RecycleBinProbe.QuerySize(@"E:\");
+        var (countBefore, sizeBefore) = RecycleBinProbe.Measure(@"E:\");
 
         var result = await FileRecycler.MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken);
 
-        var countAfter = RecycleBinProbe.QueryItemCount(@"E:\");
-        var sizeAfter = RecycleBinProbe.QuerySize(@"E:\");
+        var (countAfter, sizeAfter) = RecycleBinProbe.Measure(@"E:\");
 
         Console.WriteLine($"        bin count {countBefore} -> {countAfter}, size {sizeBefore} -> {sizeAfter}");
 
