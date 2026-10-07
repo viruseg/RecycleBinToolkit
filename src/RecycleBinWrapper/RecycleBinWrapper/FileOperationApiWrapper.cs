@@ -17,34 +17,41 @@ public static class FileOperationApiWrapper
     /// Moves a single file or directory to the Recycle Bin.
     /// </summary>
     /// <param name="filePath">Path of the file or directory to recycle.</param>
-    /// <param name="throwOnError">
-    /// When <see langword="true"/> (the default), a path that cannot be recycled raises an
-    /// exception carrying the reason. When <see langword="false"/>, the call returns
-    /// <see langword="false"/> instead.
+    /// <param name="options">
+    /// Retry, verification and error-handling settings. <see langword="null"/> means
+    /// <see cref="RecycleBinOptions.Default"/>. <see cref="RecycleBinOptions.ThrowOnError"/> decides
+    /// whether a failure raises or is returned as <see langword="false"/>.
     /// </param>
     /// <param name="cancellationToken">
     /// Cancels the wait for the Shell. Cancelling after the work started does not stop the Shell, so
     /// the item may still end up in the Recycle Bin.
     /// </param>
-    /// <returns><see langword="true"/> when the path reached the Recycle Bin.</returns>
+    /// <returns><see langword="true"/> when the path was removed from disk.</returns>
     /// <exception cref="ArgumentException">
-    /// <paramref name="filePath"/> is null, empty or whitespace and <paramref name="throwOnError"/>
-    /// is <see langword="true"/>.
+    /// <paramref name="filePath"/> is null, empty or whitespace and
+    /// <see cref="RecycleBinOptions.ThrowOnError"/> is on.
     /// </exception>
     /// <exception cref="FileNotFoundException">
-    /// <paramref name="filePath"/> does not exist and <paramref name="throwOnError"/> is
-    /// <see langword="true"/>.
+    /// <paramref name="filePath"/> does not exist and <see cref="RecycleBinOptions.ThrowOnError"/> is
+    /// on.
+    /// </exception>
+    /// <exception cref="PathTooLongException">
+    /// The path is too long for the Shell to recycle, no short name is available, and
+    /// <see cref="RecycleBinOptions.LongPathFailureAction"/> is
+    /// <see cref="LongPathFailureAction.Throw"/>. The file is left in place.
     /// </exception>
     /// <exception cref="IOException">
-    /// The Shell refused the delete and <paramref name="throwOnError"/> is
-    /// <see langword="true"/>. <see cref="Exception.HResult"/> carries the Shell error code.
+    /// The Shell refused the delete and <see cref="RecycleBinOptions.ThrowOnError"/> is on.
+    /// <see cref="Exception.HResult"/> carries the Shell error code.
     /// </exception>
     public static async Task<bool> MoveToRecycleBinAsync(
         string? filePath,
-        bool throwOnError = true,
+        RecycleBinOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        if (throwOnError)
+        var effective = options ?? RecycleBinOptions.Default;
+
+        if (effective.ThrowOnError)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         }
@@ -53,13 +60,13 @@ public static class FileOperationApiWrapper
             return false;
         }
 
-        var result = await MoveToRecycleBinAsync([filePath], null, cancellationToken).ConfigureAwait(false);
+        var result = await MoveToRecycleBinAsync([filePath], effective, cancellationToken).ConfigureAwait(false);
         if (result.Succeeded)
         {
             return true;
         }
 
-        if (throwOnError)
+        if (effective.ThrowOnError)
         {
             ThrowForSinglePath(result.FirstFailure!);
         }
@@ -118,12 +125,20 @@ public static class FileOperationApiWrapper
 
     private static void ThrowForSinglePath(RecycleFailure failure)
     {
-        if (failure.Stage == RecycleFailureStage.PathValidation && !string.IsNullOrEmpty(failure.Path))
+        switch (failure.Stage)
         {
-            RecycleBinThrowHelper.ThrowFileNotFound(failure.Path);
-        }
+            case RecycleFailureStage.LongPathNotRecyclable:
+                RecycleBinThrowHelper.ThrowPathTooLong(failure);
+                break;
 
-        RecycleBinThrowHelper.ThrowRecycleFailed(failure);
+            case RecycleFailureStage.PathValidation when !string.IsNullOrEmpty(failure.Path):
+                RecycleBinThrowHelper.ThrowFileNotFound(failure.Path);
+                break;
+
+            default:
+                RecycleBinThrowHelper.ThrowRecycleFailed(failure);
+                break;
+        }
     }
 
     private static (List<RecycleTarget> Targets, List<RecycleFailure> ValidationFailures) BuildTargets(
@@ -172,7 +187,7 @@ public static class FileOperationApiWrapper
             return new RecycleFailure(rawPath, 0, 0, RecycleFailureStage.PathValidation);
         }
 
-        target = new RecycleTarget(rawPath, fullPath);
+        target = new RecycleTarget(rawPath, fullPath, RecycleTarget.StripExtendedPrefix(fullPath));
         return null;
     }
 }

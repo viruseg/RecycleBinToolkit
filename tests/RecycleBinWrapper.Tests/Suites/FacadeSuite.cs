@@ -15,7 +15,7 @@ internal static class FacadeSuite
         new TestCase("FacadeSuite." + nameof(MissingPathDoesNotBlockTheRest), MissingPathDoesNotBlockTheRest),
         new TestCase("FacadeSuite." + nameof(EmptyBatchSucceeds), EmptyBatchSucceeds),
         new TestCase("FacadeSuite." + nameof(DirectoryTargetIsRecycledWithContents), DirectoryTargetIsRecycledWithContents),
-        new TestCase("FacadeSuite." + nameof(LongPathIsRecycled), LongPathIsRecycled),
+        new TestCase("FacadeSuite." + nameof(LongPathPastTheShellLimitIsRefusedSafely), LongPathPastTheShellLimitIsRefusedSafely),
         new TestCase("FacadeSuite." + nameof(LargeFileIsRecycled), LargeFileIsRecycled),
         new TestCase("FacadeSuite." + nameof(CancellationIsObserved), CancellationIsObserved),
         new TestCase("FacadeSuite." + nameof(SingleMissingPathThrowsFileNotFound), SingleMissingPathThrowsFileNotFound),
@@ -191,7 +191,7 @@ internal static class FacadeSuite
         workspace.Dispose();
     }
 
-    private static async Task LongPathIsRecycled(TestContext context)
+    private static async Task LongPathPastTheShellLimitIsRefusedSafely(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
@@ -207,10 +207,15 @@ internal static class FacadeSuite
 
         Check.True(file.Length > 260, $"the test path is genuinely long ({file.Length} chars)");
 
+        // Past the Shell's recycling limit a file is removed permanently while the operation still
+        // reports success, so the path must be refused with the file intact. LongPathSuite covers
+        // the Shell-facing side of this; here the point is only that the facade surfaces the refusal
+        // rather than claiming success.
         var result = await FileOperationApiWrapper.MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken);
 
-        Check.True(result.Succeeded, $"a path over MAX_PATH is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
-        Check.False(File.Exists(file), "the long-path file is gone from disk");
+        Check.False(result.Succeeded, "a path past the Shell limit is refused rather than silently deleted");
+        Check.Equal(RecycleFailureStage.LongPathNotRecyclable, result.FirstFailure!.Stage, "the refusal names the long-path limitation");
+        Check.True(File.Exists(file), "the file survives, because it was never handed to the Shell");
 
         workspace.Dispose();
     }

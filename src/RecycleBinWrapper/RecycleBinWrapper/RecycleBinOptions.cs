@@ -36,11 +36,33 @@ public sealed class RecycleBinOptions
     /// <remarks>
     /// This rejects a delete the Shell itself placed elsewhere. It cannot prove a file reached the
     /// Recycle Bin in the other direction: the Shell reports no location at all for some successful
-    /// deletes — a path longer than <c>MAX_PATH</c> was measured doing exactly that — and a missing
-    /// location cannot be distinguished from a delete the Shell completed without recycling, such
-    /// as a full Recycle Bin. Turning this off trades that check for slightly less work per item.
+    /// deletes, and a missing location cannot be distinguished from a delete the Shell completed
+    /// without recycling. Turning this off trades that check for slightly less work per item.
     /// </remarks>
     public bool VerifyRecycleBinReceipt { get; init; } = true;
+
+    /// <summary>
+    /// Whether a failure raises an exception instead of being reported through
+    /// <see cref="RecycleBinResult.Failures"/>.
+    /// </summary>
+    public bool ThrowOnError { get; init; } = true;
+
+    /// <summary>
+    /// What happens to a file whose path is too long for the Shell to recycle.
+    /// </summary>
+    /// <remarks>
+    /// The default refuses it and leaves the file in place. Set
+    /// <see cref="LongPathFailureAction.DeletePermanently"/> to remove it instead, in which case the
+    /// path also appears in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
+    /// </remarks>
+    public LongPathFailureAction LongPathFailureAction { get; init; } = LongPathFailureAction.Throw;
+
+    /// <summary>
+    /// Longest path the Shell can be asked to recycle, in characters. Measured on this machine: a
+    /// 251-character path recycles, a 261-character path is removed permanently while the operation
+    /// still reports success.
+    /// </summary>
+    public int MaxShellPathLength { get; init; } = 260;
 
     /// <summary>
     /// Returns a copy with out-of-range values clamped into a usable range, so an unvalidated
@@ -51,6 +73,9 @@ public sealed class RecycleBinOptions
         MaxAttempts = Math.Max(1, MaxAttempts),
         InitialRetryDelay = InitialRetryDelay < TimeSpan.Zero ? TimeSpan.Zero : InitialRetryDelay,
         OverallTimeout = OverallTimeout < TimeSpan.Zero ? TimeSpan.Zero : OverallTimeout,
-        VerifyRecycleBinReceipt = VerifyRecycleBinReceipt
+        VerifyRecycleBinReceipt = VerifyRecycleBinReceipt,
+        ThrowOnError = ThrowOnError,
+        LongPathFailureAction = LongPathFailureAction,
+        MaxShellPathLength = Math.Max(1, MaxShellPathLength)
     };
 }

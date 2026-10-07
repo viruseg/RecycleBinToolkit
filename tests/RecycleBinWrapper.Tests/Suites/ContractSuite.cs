@@ -14,6 +14,8 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ResultFailsWhenAnyFailure), ResultFailsWhenAnyFailure),
         new TestCase("ContractSuite." + nameof(ThrowRecycleFailedCarriesHResult), ThrowRecycleFailedCarriesHResult),
         new TestCase("ContractSuite." + nameof(TargetKeepsInputAndFullPath), TargetKeepsInputAndFullPath),
+        new TestCase("ContractSuite." + nameof(TargetCarriesBothPathForms), TargetCarriesBothPathForms),
+        new TestCase("ContractSuite." + nameof(ExtendedPrefixIsStrippedForTheShell), ExtendedPrefixIsStrippedForTheShell),
     ];
 
     private static Task OptionDefaultsMatchSpec(TestContext context)
@@ -101,10 +103,40 @@ internal static class ContractSuite
 
     private static Task TargetKeepsInputAndFullPath(TestContext context)
     {
-        var target = new RecycleTarget(@"sub\..\a.bin", @"E:\a.bin");
+        var target = new RecycleTarget(@"sub\..\a.bin", @"E:\a.bin", @"E:\a.bin");
 
         Check.Equal(@"sub\..\a.bin", target.InputPath, "the caller's path is preserved verbatim for diagnostics");
         Check.Equal(@"E:\a.bin", target.FullPath, "the normalised path is kept for Shell calls");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The Shell's parser rejects the extended-length form with <c>E_INVALIDARG</c>, while the file
+    /// APIs require it. Both forms therefore have to survive normalisation.
+    /// </summary>
+    private static Task TargetCarriesBothPathForms(TestContext context)
+    {
+        var extended = new RecycleTarget(@"\\?\E:\long.bin", @"\\?\E:\long.bin", @"E:\long.bin");
+
+        Check.Equal(@"\\?\E:\long.bin", extended.FullPath, "the file-API form keeps the extended-length prefix");
+        Check.Equal(@"E:\long.bin", extended.ShellPath, "the Shell form has no prefix");
+
+        return Task.CompletedTask;
+    }
+
+    private static Task ExtendedPrefixIsStrippedForTheShell(TestContext context)
+    {
+        Check.Equal(@"E:\a.bin", RecycleTarget.StripExtendedPrefix(@"\\?\E:\a.bin"), "a drive path loses the prefix");
+        Check.Equal(@"E:\a.bin", RecycleTarget.StripExtendedPrefix(@"E:\a.bin"), "a plain path is returned unchanged");
+        Check.Equal(
+            @"\\server\share\a.bin",
+            RecycleTarget.StripExtendedPrefix(@"\\?\UNC\server\share\a.bin"),
+            "an extended UNC path becomes the UNC form, which is already long-path safe");
+        Check.Equal(
+            @"\\?\Volume{00000000-0000-0000-0000-000000000000}\a.bin",
+            RecycleTarget.StripExtendedPrefix(@"\\?\Volume{00000000-0000-0000-0000-000000000000}\a.bin"),
+            "an extended volume GUID path keeps its prefix, since no prefixless equivalent exists");
 
         return Task.CompletedTask;
     }

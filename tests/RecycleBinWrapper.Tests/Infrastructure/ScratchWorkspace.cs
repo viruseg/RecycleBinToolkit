@@ -6,6 +6,8 @@ namespace RecycleBinWrapper.Tests.Infrastructure;
 /// </summary>
 internal sealed class ScratchWorkspace : IDisposable
 {
+    private const string ExtendedPrefix = @"\\?\";
+
     private static int _sequence;
 
     /// <summary>
@@ -105,11 +107,15 @@ internal sealed class ScratchWorkspace : IDisposable
 
     private static void DeleteTree()
     {
-        var root = Root.TrimEnd(Path.DirectorySeparatorChar);
-        if (!Directory.Exists(root))
+        if (!Directory.Exists(ScratchWorkspace.Root))
         {
             return;
         }
+
+        // The extended-length prefix is what makes the standard file APIs work on a path the tests
+        // deliberately build past MAX_PATH. Without it, cleanup throws and the deep tree is left
+        // behind, where a workspace file listing trips over paths it cannot enumerate.
+        var root = ExtendedPrefix + ScratchWorkspace.Root.TrimEnd(Path.DirectorySeparatorChar);
 
         foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
         {

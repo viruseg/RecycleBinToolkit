@@ -18,7 +18,13 @@ public enum RecycleFailureStage
     Performing,
 
     /// <summary>The delete reported success but the result did not reach the Recycle Bin.</summary>
-    ReceiptVerification
+    ReceiptVerification,
+
+    /// <summary>
+    /// The path is too long for the Shell to recycle. Such a file would be deleted permanently while
+    /// the operation still reported success, so it was never handed to the Shell.
+    /// </summary>
+    LongPathNotRecyclable
 }
 
 /// <summary>
@@ -63,20 +69,34 @@ public sealed class RecycleFailure
 /// </summary>
 public sealed class RecycleBinResult
 {
-    private RecycleBinResult(IReadOnlyList<string> recycledPaths, IReadOnlyList<RecycleFailure> failures, TimeSpan elapsed)
+    private RecycleBinResult(
+        IReadOnlyList<string> recycledPaths,
+        IReadOnlyList<string> permanentlyDeletedPaths,
+        IReadOnlyList<RecycleFailure> failures,
+        TimeSpan elapsed)
     {
         RecycledPaths = recycledPaths;
+        PermanentlyDeletedPaths = permanentlyDeletedPaths;
         Failures = failures;
         Elapsed = elapsed;
     }
 
     /// <summary>
-    /// <see langword="true"/> when every requested path reached the Recycle Bin.
+    /// <see langword="true"/> when every requested path is gone: either recycled, or removed
+    /// permanently because the caller asked for that.
     /// </summary>
     public bool Succeeded => Failures.Count == 0;
 
     /// <summary>Paths, as supplied by the caller, that were confirmed recycled.</summary>
     public IReadOnlyList<string> RecycledPaths { get; }
+
+    /// <summary>
+    /// Paths, as supplied by the caller, that were removed permanently instead of being recycled,
+    /// because their length put them past the Shell's limit and
+    /// <see cref="RecycleBinOptions.LongPathFailureAction"/> was
+    /// <see cref="LongPathFailureAction.DeletePermanently"/>. Empty unless that action was taken.
+    /// </summary>
+    public IReadOnlyList<string> PermanentlyDeletedPaths { get; }
 
     /// <summary>
     /// Paths that did not reach the Recycle Bin. Empty when <see cref="Succeeded"/> is
@@ -96,10 +116,23 @@ public sealed class RecycleBinResult
     /// Creates a result.
     /// </summary>
     /// <param name="recycledPaths">Paths confirmed recycled, in caller-supplied form.</param>
-    /// <param name="failures">Paths that did not reach the Recycle Bin.</param>
+    /// <param name="permanentlyDeletedPaths">Paths removed permanently instead of recycled.</param>
+    /// <param name="failures">Paths that were not handled at all.</param>
+    /// <param name="elapsed">Wall-clock time spent on the operation.</param>
+    public static RecycleBinResult Create(
+        IReadOnlyList<string> recycledPaths,
+        IReadOnlyList<string> permanentlyDeletedPaths,
+        IReadOnlyList<RecycleFailure> failures,
+        TimeSpan elapsed) => new(recycledPaths, permanentlyDeletedPaths, failures, elapsed);
+
+    /// <summary>
+    /// Creates a result with nothing removed permanently.
+    /// </summary>
+    /// <param name="recycledPaths">Paths confirmed recycled, in caller-supplied form.</param>
+    /// <param name="failures">Paths that were not handled at all.</param>
     /// <param name="elapsed">Wall-clock time spent on the operation.</param>
     public static RecycleBinResult Create(
         IReadOnlyList<string> recycledPaths,
         IReadOnlyList<RecycleFailure> failures,
-        TimeSpan elapsed) => new(recycledPaths, failures, elapsed);
+        TimeSpan elapsed) => new(recycledPaths, [], failures, elapsed);
 }

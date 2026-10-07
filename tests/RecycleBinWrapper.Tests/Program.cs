@@ -17,4 +17,5 @@ return await TestRunner.RunAsync(args,
         .Concat(FacadeSuite.Cases)
         .Concat(WorkflowSuite.Cases)
         .Concat(StressSuite.Cases)
+        .Concat(LongPathSuite.Cases)
         .ToArray());

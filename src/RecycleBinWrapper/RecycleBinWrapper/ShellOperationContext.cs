@@ -191,7 +191,7 @@ internal sealed unsafe class ShellOperationContext : IDisposable
     {
         item = null;
 
-        var shortPath = TryGetShortPath(fullPath);
+        var shortPath = ShortPathResolver.TryResolveShort(fullPath);
         if (shortPath is null)
         {
             return false;
@@ -199,22 +199,5 @@ internal sealed unsafe class ShellOperationContext : IDisposable
 
         var hrItem = PInvoke.SHCreateItemFromParsingName<IShellItem>(shortPath, null, out item);
         return hrItem.Succeeded;
-    }
-
-    private static unsafe string? TryGetShortPath(string fullPath)
-    {
-        var buffer = new char[1024];
-
-        fixed (char* bufferPointer = buffer)
-        fixed (char* pathPointer = fullPath)
-        {
-            var length = PInvoke.GetShortPathName(new PCWSTR(pathPointer), (PWSTR)bufferPointer, (uint)buffer.Length);
-            if (length == 0 || length >= buffer.Length)
-            {
-                return null;
-            }
-
-            return new string(buffer, 0, (int)length);
-        }
     }
 }

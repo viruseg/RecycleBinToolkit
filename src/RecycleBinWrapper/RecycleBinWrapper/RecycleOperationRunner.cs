@@ -25,6 +25,9 @@ internal sealed class RecycleOperationRunner
     /// <summary>Value meaning "this item has no verdict yet". Never a real Shell code.</summary>
     private const int NoVerdict = 0;
 
+    /// <summary>Win32 <c>ERROR_FILENAME_EXCED_RANGE</c>, used to mark a path the Shell cannot recycle.</summary>
+    private const int PathTooLong = unchecked((int)0x800700CE);
+
     private readonly ShellOperationContext _context;
     private readonly Stopwatch _stopwatch = new();
 
@@ -63,7 +66,17 @@ internal sealed class RecycleOperationRunner
 
         var pending = Deduplicate(targets);
         var recycled = new List<string>(pending.Count);
+        var permanentlyDeleted = new List<string>();
         var failures = new List<RecycleFailure>();
+
+        // Split off the paths the Shell must never see. Handing it a path past its limit makes it
+        // remove the file permanently while reporting success, so the decision has to happen before
+        // the first round rather than after the damage.
+        var (recyclable, unrecyclable) = PartitionByRecyclability(pending, options);
+        failures.AddRange(HandleUnrecyclable(unrecyclable, options, permanentlyDeleted));
+
+        pending = recyclable;
+
         var attempts = new int[pending.Count];
         var lastHResult = new int[pending.Count];
         var lastStage = new RecycleFailureStage[pending.Count];
@@ -112,7 +125,65 @@ internal sealed class RecycleOperationRunner
             failures.Add(new RecycleFailure(pending[i].InputPath, lastHResult[i], attempts[i], lastStage[i]));
         }
 
-        return RecycleBinResult.Create(recycled, failures, _stopwatch.Elapsed);
+        return RecycleBinResult.Create(recycled, permanentlyDeleted, failures, _stopwatch.Elapsed);
+    }
+
+    /// <summary>
+    /// Splits the batch into the paths the Shell can be asked to recycle and the ones it must not see.
+    /// A path within the limit goes straight through. A longer one is only salvageable when the volume
+    /// offers an 8.3 alias short enough for the Shell to accept.
+    /// </summary>
+    private static (List<RecycleTarget> Recyclable, List<RecycleTarget> Unrecyclable) PartitionByRecyclability(
+        IReadOnlyList<RecycleTarget> targets,
+        RecycleBinOptions options)
+    {
+        var recyclable = new List<RecycleTarget>(targets.Count);
+        var unrecyclable = new List<RecycleTarget>();
+
+        foreach (var target in targets)
+        {
+            if (target.ShellPath.Length <= options.MaxShellPathLength)
+            {
+                recyclable.Add(target);
+                continue;
+            }
+
+            var shortPath = ShortPathResolver.TryResolveShort(target.ShellPath);
+            if (shortPath is not null && shortPath.Length <= options.MaxShellPathLength)
+            {
+                recyclable.Add(target.WithShellPath(shortPath));
+                continue;
+            }
+
+            unrecyclable.Add(target);
+        }
+
+        return (recyclable, unrecyclable);
+    }
+
+    private static IEnumerable<RecycleFailure> HandleUnrecyclable(
+        List<RecycleTarget> unrecyclable,
+        RecycleBinOptions options,
+        List<string> permanentlyDeleted)
+    {
+        foreach (var target in unrecyclable)
+        {
+            if (options.LongPathFailureAction != LongPathFailureAction.DeletePermanently)
+            {
+                yield return new RecycleFailure(target.InputPath, PathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable);
+                continue;
+            }
+
+            File.Delete(target.FullPath);
+
+            if (File.Exists(target.FullPath))
+            {
+                yield return new RecycleFailure(target.InputPath, PathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable);
+                continue;
+            }
+
+            permanentlyDeleted.Add(target.InputPath);
+        }
     }
 
     private RoundOutcome RunRound(
@@ -127,7 +198,7 @@ internal sealed class RecycleOperationRunner
 
         for (var i = 0; i < targets.Count; i++)
         {
-            if (_context.TryCreateShellItem(targets[i].FullPath, out var item, out var itemHResult))
+            if (_context.TryCreateShellItem(targets[i].ShellPath, out var item, out var itemHResult))
             {
                 items[i] = item;
                 buildable.Add(i);
@@ -144,7 +215,7 @@ internal sealed class RecycleOperationRunner
         var queuedPaths = new string[buildable.Count];
         for (var i = 0; i < buildable.Count; i++)
         {
-            queuedPaths[i] = targets[buildable[i]].FullPath;
+            queuedPaths[i] = targets[buildable[i]].ShellPath;
         }
 
         var sink = new RecycleProgressSink(queuedPaths);
@@ -173,7 +244,7 @@ internal sealed class RecycleOperationRunner
         {
             var target = targets[i];
 
-            if (!sink.TryGetOutcome(target.FullPath, out var hResult, out var newItemPath))
+            if (!sink.TryGetOutcome(target.ShellPath, out var hResult, out var newItemPath))
             {
                 // Queued but the Shell never reported on it: unfinished, not a success.
                 RecordVerdict(lastHResult, lastStage, i, hResult, RecycleFailureStage.Performing);
@@ -266,7 +337,7 @@ internal sealed class RecycleOperationRunner
 
         foreach (var target in targets)
         {
-            if (seen.Add(target.FullPath))
+            if (seen.Add(target.ShellPath))
             {
                 unique.Add(target);
             }
