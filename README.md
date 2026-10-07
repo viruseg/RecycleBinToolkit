@@ -69,6 +69,12 @@ The API is annotated `[SupportedOSPlatform("windows6.0.6000")]`, so calling it f
 cross-platform target produces an analyzer warning unless you guard with
 `OperatingSystem.IsWindows()`.
 
+There is no stable version yet and no compatibility promise, so the public surface may still change
+between builds. Two things in it are worth knowing are not accidental: `RecycleBinContents.TotalSize` is
+derived when the listing is constructed rather than settable afterwards, and `RecycleBinEmptyResult.Elapsed`
+is the time the caller waited, including queueing behind other work. Both were chosen so a result cannot
+disagree with the measurements it came from.
+
 ## Installation
 
 ```bash
@@ -296,7 +302,7 @@ The outcome of a batch. Immutable.
 | `RecycledPaths` | `IReadOnlyList<string>` | Paths, as you supplied them, confirmed recycled. |
 | `PermanentlyDeletedPaths` | `IReadOnlyList<string>` | Paths removed permanently instead of recycled, because you opted in. Empty unless that happened. |
 | `Failures` | `IReadOnlyList<RecycleFailure>` | Paths that were not handled. Empty when `Succeeded`. |
-| `Elapsed` | `TimeSpan` | Wall-clock time, including retries. |
+| `Elapsed` | `TimeSpan` | Wall-clock time the caller waited, including any queueing behind other Shell work. |
 | `LeftoverStagingDirectory` | `string?` | A staging directory that still holds an item, or `null`. See [Limitations](#limitations). |
 | `FirstFailure` | `RecycleFailure?` | The first recorded failure, or `null`. |
 | `Create(...)` | `static RecycleBinResult` | Constructs a result. Useful in tests, rarely in application code. |

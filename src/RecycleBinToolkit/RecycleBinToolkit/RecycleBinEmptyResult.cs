@@ -11,7 +11,10 @@ public sealed record RecycleBinEmptyResult
     /// <param name="itemsRemoved">Number of entries that left the Recycle Bin.</param>
     /// <param name="bytesFreed">Bytes those entries occupied.</param>
     /// <param name="failures">Volumes that could not be emptied or measured.</param>
-    /// <param name="elapsed">Wall-clock time spent emptying.</param>
+    /// <param name="elapsed">
+    /// Wall-clock time the caller waited. Set by <see cref="RecycleBin.EmptyAsync"/> around the wait for
+    /// the Shell worker, since it is the only place that knows both.
+    /// </param>
     public RecycleBinEmptyResult(
         IReadOnlyList<string> volumesEmptied,
         long itemsRemoved,

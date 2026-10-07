@@ -18,6 +18,14 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 /// for.
 /// </para>
 /// <para>
+/// What this probe no longer covers is the enumeration. It shares <c>SHQueryRecycleBin</c> with
+/// <see cref="RecycleBinVolume"/>, so it cannot disagree with the Shell about a count or a size; the one
+/// thing it still proves is that the library's own struct is laid out correctly. The listing reaches the
+/// Shell by a different route and could disagree with both,
+/// <see cref="Suites.ShellSuite.RecycleBinListingAgreesWithTheShellOracle"/> is what checks it, and it
+/// reads the listing for that purpose alone.
+/// </para>
+/// <para>
 /// The listing is still covered, and still pinned against this counter:
 /// <see cref="Suites.ListerSuite"/> is what exercises it, and
 /// <see cref="Suites.ShellSuite.RecycleBinListingAgreesWithTheShellOracle"/> is what asserts the two

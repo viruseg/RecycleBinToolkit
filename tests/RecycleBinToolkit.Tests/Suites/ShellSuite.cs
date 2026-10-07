@@ -154,22 +154,30 @@ internal static class ShellSuite
     }
 
     /// <summary>
-    /// Pins the library's listing to the Shell's own counter.
+    /// Pins both of the library's views of the Recycle Bin to the Shell's own counter.
     /// </summary>
     /// <remarks>
-    /// Every other suite measures the Recycle Bin through <see cref="RecycleBinProbe"/>, which reads it
-    /// with the library's API. That is only worth anything while the library is known to agree with
-    /// <c>SHQueryRecycleBin</c>, a different call into the Shell that shares no code with the
-    /// enumeration. This is that agreement, asserted on both sides of one known delete.
+    /// There are two views, and they are checked against <c>SHQueryRecycleBin</c> separately because
+    /// they reach the Shell by different routes and can disagree independently.
     /// <para>
-    /// Asserting the oracle against the library in one place rather than in every suite is deliberate:
-    /// forty independent-looking checks against the same API prove the API is consistent with itself.
-    /// It also pins which field of <c>SHQUERYRBINFO</c> is the item count and which is the byte total —
-    /// the two are adjacent and the same width, so a swapped layout would report sizes as counts and
-    /// leave every delta assertion in the suite meaningless.
+    /// The counter is what the rest of the suites read. <see cref="RecycleBinProbe"/> asks the library's
+    /// own <c>RecycleBinCounter</c>, which is this same Shell call wrapped — so on its own it proves the
+    /// struct is laid out correctly and nothing more. <see cref="RecycleBinVolume"/> is the independent
+    /// version of the same call, differing only in where it declares the two 64-bit fields, and it is what
+    /// catches a layout mistake.
+    /// </para>
+    /// <para>
+    /// The listing is the other view, and it is the one that actually enumerates: six COM round trips and
+    /// a stat per entry, through a path that shares no code with the counter. Nothing else in the suite
+    /// compares it to anything, so if the two ever stopped agreeing the delta assertions elsewhere would
+    /// quietly stop meaning what they claim. That comparison is what this test is for.
+    /// </para>
+    /// <para>
+    /// Asserting the agreement in one place rather than in every suite is deliberate: forty
+    /// independent-looking checks against the same API prove the API is consistent with itself.
     /// </para>
     /// </remarks>
-    private static Task RecycleBinListingAgreesWithTheShellOracle(TestContext context)
+    private static async Task RecycleBinListingAgreesWithTheShellOracle(TestContext context)
     {
         const int fileSize = 4096;
 
@@ -180,9 +188,11 @@ internal static class ShellSuite
 
         var oracleBefore = RecycleBinVolume.Measure(volumeRoot);
         var probeBefore = RecycleBinProbe.Measure(volumeRoot);
+        var listingBefore = await RecycleBin.GetItemsAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(oracleBefore.Ok, $"the independent Shell counter reads the volume (got 0x{oracleBefore.HResult:X8})");
         Check.True(probeBefore.Items >= 0, $"the library reads the volume too (got {probeBefore.Items})");
+        Check.True(oracleBefore.Items == probeBefore.Items, $"the two counters agree before the delete (Shell {oracleBefore.Items}, library {probeBefore.Items})");
 
         using (var shell = ShellOperationContext.Create())
         {
@@ -195,25 +205,34 @@ internal static class ShellSuite
 
         var oracleAfter = RecycleBinVolume.Measure(volumeRoot);
         var probeAfter = RecycleBinProbe.Measure(volumeRoot);
+        var listingAfter = await RecycleBin.GetItemsAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Console.WriteLine(
-            $"        oracle count {oracleBefore.Items} -> {oracleAfter.Items}, size {oracleBefore.Bytes} -> {oracleAfter.Bytes}; " +
-            $"listing count {probeBefore.Items} -> {probeAfter.Items}, size {probeBefore.Bytes} -> {probeAfter.Bytes}");
+            $"        counter {oracleBefore.Items} -> {oracleAfter.Items}, size {oracleBefore.Bytes} -> {oracleAfter.Bytes}; " +
+            $"listing {listingBefore.Items.Count} -> {listingAfter.Items.Count}, size {listingBefore.TotalSize} -> {listingAfter.TotalSize}");
 
         // The bin is shared, externally mutable state, so the deltas are bounded below rather than
         // matched exactly: anything else could recycle or purge on this volume mid-run.
         Check.True(oracleAfter.Items - oracleBefore.Items >= 1, "the Shell counter sees the item arrive");
         Check.True(oracleAfter.Bytes - oracleBefore.Bytes >= fileSize, $"the Shell counter sees the {fileSize} bytes arrive");
-        Check.True(probeAfter.Items - probeBefore.Items >= 1, "the listing sees the item arrive");
-        Check.True(probeAfter.Bytes - probeBefore.Bytes >= fileSize, $"the listing sees the {fileSize} bytes arrive");
+        Check.True(probeAfter.Items - probeBefore.Items >= 1, "the library's counter sees the item arrive");
+        Check.True(probeAfter.Bytes - probeBefore.Bytes >= fileSize, $"the library's counter sees the {fileSize} bytes arrive");
 
-        // Both counters are pinned against the same known delete. A listing that reported sizes as
-        // counts, or a struct whose two fields were swapped, comes up short here even though its
-        // numbers are non-negative and it moves in the right direction.
-        Check.True(probeAfter.Bytes - oracleAfter.Bytes >= -fileSize, $"the listing's byte total is within one file of the Shell's (listing {probeAfter.Bytes}, Shell {oracleAfter.Bytes})");
+        // The listing is the only view that enumerates, and nothing else compares it to anything. Both
+        // halves of it are checked against the Shell's counters: a listing that reported sizes as
+        // counts, or dropped an entry, would come up short here while still moving in the right
+        // direction and never reporting a negative number.
+        Check.True(
+            listingAfter.Items.Count - listingBefore.Items.Count >= 1,
+            $"the listing sees the item arrive (listing {listingBefore.Items.Count} -> {listingAfter.Items.Count})");
+        Check.True(
+            listingAfter.TotalSize - listingBefore.TotalSize >= fileSize,
+            $"the listing sees the {fileSize} bytes arrive (listing {listingBefore.TotalSize} -> {listingAfter.TotalSize})");
+        Check.True(
+            listingAfter.TotalSize <= oracleAfter.Bytes,
+            $"the listing does not claim more bytes than the Shell counted (listing {listingAfter.TotalSize}, Shell {oracleAfter.Bytes})");
 
         workspace.Dispose();
-        return Task.CompletedTask;
     }
 
     private static Task ShellRecyclesBatchAndReportsHResults(TestContext context)
