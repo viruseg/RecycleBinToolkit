@@ -16,8 +16,25 @@ internal static partial class RecycleBinRegistry
 {
     private const uint Success = 0;
 
-    /// <summary>Accept a value of any type, so a setting stored as a string is still seen.</summary>
-    private const uint AnyType = 0x00000000;
+    /// <summary>
+    /// Accept a value of any type, so a setting stored as a string is still seen.
+    /// </summary>
+    /// <remarks>
+    /// Win32 <c>RRF_RT_ANY</c>. The type mask is not optional: <c>RegGetValueW</c> rejects any value
+    /// outside the <c>RRF_RT_*</c> set with <c>ERROR_INVALID_PARAMETER</c>, so a zero here does not
+    /// mean "any type", it means the read never succeeds.
+    /// </remarks>
+    private const uint AnyType = 0x0000FFFF;
+
+    private const uint RegDword = 4;
+
+    private const uint RegSz = 1;
+
+    /// <summary>
+    /// Enough for the longest value this reader accepts: a <c>REG_SZ</c> of <c>"true"</c> is eight
+    /// characters plus a UTF-16 terminator.
+    /// </summary>
+    private const int MaxStringBytes = 10;
 
     private const int CurrentUser = unchecked((int)0x80000001);
     private const int LocalMachine = unchecked((int)0x80000002);
@@ -49,31 +66,56 @@ internal static partial class RecycleBinRegistry
         result = false;
 
         var type = default(uint);
-        var size = 4u;
-        Span<byte> data = stackalloc byte[4];
+        Span<byte> data = stackalloc byte[MaxStringBytes];
+        var size = (uint)MaxStringBytes;
 
-        var status = RegGetValue(rootKey, subKey, valueName, AnyType, out type, ref size, data);
+        var status = RegGetValue(rootKey, subKey, valueName, AnyType, out type, data, ref size);
         if (status != Success)
         {
             return false;
         }
 
+        if (size > MaxStringBytes)
+        {
+            return false;
+        }
+
         // REG_DWORD, little endian on every platform Windows runs on.
-        if (type == 4 && size == 4)
+        if (type == RegDword && size == sizeof(int))
         {
             result = data[0] != 0 || data[1] != 0 || data[2] != 0 || data[3] != 0;
             return true;
         }
 
-        // REG_SZ, "1" or "true" in UTF-16, which is 4 or 10 bytes with the terminator.
-        if (type == 1 && size is 4 or 10)
+        // REG_SZ, "1" or "true" in UTF-16 with a terminator.
+        if (type == RegSz)
         {
-            result = data[0] == (byte)'1' ||
-                     (data[0] == (byte)'t' && data[1] == (byte)'r' && data[2] == (byte)'u' && data[3] == (byte)'e');
+            result = IsWideText(data[..(int)size], "1") || IsWideText(data[..(int)size], "true");
             return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Whether a UTF-16LE buffer holds exactly <paramref name="ascii"/>, terminator included.
+    /// </summary>
+    private static bool IsWideText(ReadOnlySpan<byte> wide, string ascii)
+    {
+        if (wide.Length != (ascii.Length + 1) * 2)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < ascii.Length; i++)
+        {
+            if (wide[i * 2] != (byte)ascii[i] || wide[(i * 2) + 1] != 0)
+            {
+                return false;
+            }
+        }
+
+        return wide[^2] == 0 && wide[^1] == 0;
     }
 
     /// <summary>
@@ -97,6 +139,15 @@ internal static partial class RecycleBinRegistry
         return IsFlagSet(CurrentUser, $@"{BitBucketSubKey}\Volume\{volumeGuidPath}", "NukeOnDelete");
     }
 
+    /// <summary>
+    /// <c>RegGetValueW</c>, with its parameters in the order the native function takes them.
+    /// </summary>
+    /// <remarks>
+    /// <c>pvData</c> is the buffer and <c>pcbData</c> the size, in that order. Declared the other way
+    /// round the call still returns, but the native side writes the value's byte count into the caller's
+    /// buffer and reads the buffer address back as the available size, so every read reports
+    /// <c>ERROR_MORE_DATA</c> against a zeroed stack buffer and the caller sees nothing.
+    /// </remarks>
     [LibraryImport("advapi32.dll", EntryPoint = "RegGetValueW", StringMarshalling = StringMarshalling.Utf16)]
     private static partial int RegGetValue(
         int rootKey,
@@ -104,6 +155,6 @@ internal static partial class RecycleBinRegistry
         string valueName,
         uint flags,
         out uint valueType,
-        ref uint dataSize,
-        Span<byte> data);
+        Span<byte> data,
+        ref uint dataSize);
 }
