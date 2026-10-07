@@ -740,17 +740,25 @@ Stated plainly, because these are properties of Windows rather than choices.
 dotnet run --project tests/RecycleBinToolkit.Tests -- --all
 dotnet run --project tests/RecycleBinToolkit.Tests -- --filter LongPathSuite
 dotnet run --project tests/RecycleBinToolkit.Tests -- --filter RecycleBinListingAgreesWithTheShellOracle
+dotnet run --project tests/RecycleBinToolkit.Tests -- --load
 ```
 
 `--filter` matches any part of a case name, and every case is named `<Suite>.<Case>`. It exits
 non-zero when a case fails.
 
-The suite is a console application with no external packages: 67 cases covering batch and single-path
+The suite is a console application with no external packages: 93 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies,
 and a ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing, emptying and status checking
 are covered by their own suites. It writes only to `E:\RC\Test` (or the project root) and moves the
 committed fixture files it uses.
+
+**Two of the 93 are load cases and run only on request.** `StressSuite` regenerates a 94-file fixture set
+ten times and moves 204 files through the Shell, which is the only part of the suite that works the disk
+hard enough to notice. `--all` and `--filter` never run it — `--load` runs those two cases and nothing
+else. Both claims they make are already checked by ordinary cases, so nothing is covered by the stress run
+alone: `FacadeSuite.BatchOfGeneratedFilesIsRecycled` and `WorkflowSuite.ReadPartialAndAppendThenRecycle`
+cover the cycles, `FacadeSuite.LargeFileIsRecycled` covers the bytes.
 
 **The Recycle Bin suites empty it.** `EmptySuite` removes what the earlier suites recycled, and it is
 the only way to assert that an entry really left. Everything else only ever adds to it.

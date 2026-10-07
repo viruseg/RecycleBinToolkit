@@ -5,17 +5,24 @@ using RecycleBinToolkit;
 namespace RecycleBinToolkit.Tests.Suites;
 
 /// <summary>
-/// Acceptance gate for the "100 % of files reach the Recycle Bin" requirement.
-/// </summary>
-internal static class StressSuite
+    /// Acceptance gate for the "100 % of files reach the Recycle Bin" requirement.
+    /// </summary>
+    /// <remarks>
+    /// Both cases are <see cref="TestKind.Load"/>, so they run only under <c>--load</c>. What they add to
+    /// what ordinary cases already prove is that the guarantee survives repetition and volume; neither
+    /// claim is the only coverage of anything. The cycles rest on
+    /// <c>FacadeSuite.BatchOfGeneratedFilesIsRecycled</c> and <c>WorkflowSuite.ReadPartialAndAppendThenRecycle</c>,
+    /// and the bytes on <c>FacadeSuite.LargeFileIsRecycled</c>.
+    /// </remarks>
+    internal static class StressSuite
 {
     private const int Cycles = 10;
     private const int AppendBytes = 1024;
 
     internal static IReadOnlyList<TestCase> Cases =>
     [
-        new TestCase("StressSuite." + nameof(TenCopyRecycleCyclesAlwaysSucceed), TenCopyRecycleCyclesAlwaysSucceed),
-        new TestCase("StressSuite." + nameof(RecycledBytesReachTheBin), RecycledBytesReachTheBin),
+        new TestCase("StressSuite." + nameof(TenCopyRecycleCyclesAlwaysSucceed), TenCopyRecycleCyclesAlwaysSucceed, TestKind.Load),
+        new TestCase("StressSuite." + nameof(RecycledBytesReachTheBin), RecycledBytesReachTheBin, TestKind.Load),
     ];
 
     private static async Task TenCopyRecycleCyclesAlwaysSucceed(TestContext context)
