@@ -1,4 +1,0 @@
-<Solution>
-  <Project Path="RecycleBinWrapper/RecycleBinWrapper.csproj" />
-  <Project Path="../../tests/RecycleBinWrapper.Tests/RecycleBinWrapper.Tests.csproj" />
-</Solution>
