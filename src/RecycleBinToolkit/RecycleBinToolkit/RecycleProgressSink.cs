@@ -61,14 +61,36 @@ internal sealed unsafe class RecycleProgressSink : IFileOperationProgressSink
     /// </param>
     /// <param name="queuedCount">How many leading entries of the buffer were queued this round.</param>
     internal RecycleProgressSink(string[] pathsInQueueOrder, int queuedCount)
+        : this(pathsInQueueOrder, queuedCount, new Dictionary<string, (int HResult, string? RecycleBinPath)>(queuedCount, StringComparer.OrdinalIgnoreCase))
+    {
+    }
+
+    /// <summary>
+    /// Creates a sink over the first <paramref name="queuedCount"/> entries of a buffer the caller
+    /// intends to refill for the next round, storing outcomes in a dictionary the caller will reuse.
+    /// </summary>
+    /// <param name="pathsInQueueOrder">
+    /// Buffer holding at least <paramref name="queuedCount"/> queued paths. Only the first
+    /// <paramref name="queuedCount"/> entries are read; the rest may hold anything.
+    /// </param>
+    /// <param name="queuedCount">How many leading entries of the buffer were queued this round.</param>
+    /// <param name="outcomes">
+    /// Table to fill. It must be empty: the sink seeds one entry per queued path and writes each verdict
+    /// exactly once, so anything already in it would read as a verdict this round never produced.
+    /// </param>
+    internal RecycleProgressSink(
+        string[] pathsInQueueOrder,
+        int queuedCount,
+        Dictionary<string, (int HResult, string? RecycleBinPath)> outcomes)
     {
         ArgumentNullException.ThrowIfNull(pathsInQueueOrder);
+        ArgumentNullException.ThrowIfNull(outcomes);
         ArgumentOutOfRangeException.ThrowIfNegative(queuedCount);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(queuedCount, pathsInQueueOrder.Length);
 
         _pathsInQueueOrder = pathsInQueueOrder;
         _queuedCount = queuedCount;
-        _outcomes = new Dictionary<string, (int, string?)>(queuedCount, StringComparer.OrdinalIgnoreCase);
+        _outcomes = outcomes;
 
         for (var i = 0; i < queuedCount; i++)
         {

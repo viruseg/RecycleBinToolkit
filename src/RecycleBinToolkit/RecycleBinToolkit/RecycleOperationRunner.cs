@@ -53,6 +53,7 @@ internal sealed class RecycleOperationRunner
         private string[] _queuedPaths = [];
         private bool[] _succeeded = [];
         private IShellItem?[] _items = [];
+        private Dictionary<string, (int HResult, string? RecycleBinPath)>? _outcomes;
 
         internal int[] Buildable => _buildable;
 
@@ -65,6 +66,31 @@ internal sealed class RecycleOperationRunner
 
         /// <summary>The Shell item for each target, or <see langword="null"/> where none was built.</summary>
         internal IShellItem?[] Items => _items;
+
+        /// <summary>
+        /// An empty outcome table for a round, reusing the previous one where that is worth doing.
+        /// </summary>
+        /// <remarks>
+        /// The table holds one entry per queued path and is the largest thing a round allocates, so it is
+        /// kept between rounds like the other buffers. A batch large enough to make the table worth
+        /// megabytes is a batch where holding it for the rest of the process is the worse trade, so past
+        /// <see cref="OutcomeReuseLimit"/> it is let go instead of reused.
+        /// </remarks>
+        internal Dictionary<string, (int HResult, string? RecycleBinPath)> TakeOutcomes()
+        {
+            if (_outcomes is not null && _outcomes.Count > OutcomeReuseLimit)
+            {
+                _outcomes = null;
+            }
+
+            _outcomes ??= new Dictionary<string, (int HResult, string? RecycleBinPath)>(StringComparer.OrdinalIgnoreCase);
+            _outcomes.Clear();
+
+            return _outcomes;
+        }
+
+        /// <summary>Batch size past which the outcome table is not held on to between rounds.</summary>
+        private const int OutcomeReuseLimit = 8192;
 
         /// <summary>Grows the buffers so a batch of <paramref name="count"/> items fits without resizing mid-round.</summary>
         internal void EnsureCapacity(int count)
@@ -456,7 +482,7 @@ internal sealed class RecycleOperationRunner
             queuedPaths[i] = targets[buildable[i]].ShellPath;
         }
 
-        var sink = new RecycleProgressSink(queuedPaths, buildableCount);
+        var sink = new RecycleProgressSink(queuedPaths, buildableCount, scratch.TakeOutcomes());
         var queueable = scratch.Queueable;
         var queueableCount = 0;
 
