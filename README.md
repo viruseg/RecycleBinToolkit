@@ -334,7 +334,14 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `Performing` | The Shell performed the delete and reported a failure for this item. |
 | `ReceiptVerification` | The delete reported success but the result did not reach the Recycle Bin. |
 | `LongPathNotRecyclable` | The path is too long for the Shell. It was never handed over. |
+| `PermanentDeleteFailed` | The path was too long and removing it outright was asked for, but the file system refused — a handle is held, the attributes are read-only. The file is exactly as the caller left it. |
 | `Enumeration` | The Shell would not describe a Recycle Bin entry, or a volume could not be read. Only reachable while reading or emptying the Recycle Bin. |
+
+`HResult` carries the Shell's own code, or the file system's where the file system refused. Test
+`(HResult & 0x80000000) != 0` to tell a refusal from a Shell success code such as `0x00270008`. That is
+not sufficient on its own: an item can carry a success code and still be a failure, which is what
+`ReceiptVerification` is. A rejected destination is reported with the Shell's success code, so read
+`Stage` as well.
 
 ### `LongPathFailureAction`
 
@@ -388,7 +395,7 @@ The outcome of a listing. Immutable.
 | `Items` | `IReadOnlyList<RecycleBinItem>` | The entries that were read. |
 | `Failures` | `IReadOnlyList<RecycleFailure>` | Entries the Shell would not describe, at stage `Enumeration`. |
 | `Elapsed` | `TimeSpan` | Wall-clock time spent enumerating. |
-| `TotalSize` | `long` | Sum of `Size` over `Items`. |
+| `TotalSize` | `long` | Sum of `Size` over `Items`, derived when the listing was built. |
 
 ### `RecycleBinEmptyResult`
 
@@ -400,7 +407,7 @@ The outcome of an empty. Immutable.
 | `ItemsRemoved` | `long` | Entries that left the Recycle Bin. Measured, never negative. |
 | `BytesFreed` | `long` | Bytes they occupied. Measured, never negative. |
 | `Failures` | `IReadOnlyList<RecycleFailure>` | Volumes that could not be emptied or measured. |
-| `Elapsed` | `TimeSpan` | Wall-clock time, including the measurements around the Shell call. |
+| `Elapsed` | `TimeSpan` | Wall-clock time the caller waited, including any queueing behind other Shell work. |
 
 ### `RecycleBinStatus`
 
@@ -699,6 +706,18 @@ same API.
 The harness must cope with the Windows indexer: it creates and recycles thousands of files in one
 directory, so handles appear and disappear underneath it. Cleanup and staging both retry for that
 reason.
+
+Two things about the harness are worth knowing before reading its timings. Reading a count asks
+`SHQueryRecycleBin` rather than listing the bin, because a listing costs six COM round trips and a stat
+per entry while a count question needs none of it — on a bin holding ninety thousand files that is the
+difference between about eleven seconds and over thirteen minutes. The count is not free, though: the
+Shell walks the bin's metadata, so it still costs roughly a tenth of a second per thousand files, and
+the suites read a handful of times per test. What they assert about the listing itself lives in
+`ListerSuite`, which pays for it deliberately.
+
+`EmptySuite` empties the volume it runs against. It is the one suite that changes machine state rather
+than only reading it, and on a Recycle Bin holding tens of thousands of entries it will take tens of
+minutes, because emptying that many files is what the Shell does.
 
 ## Contributing
 
