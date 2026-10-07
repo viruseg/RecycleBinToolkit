@@ -20,7 +20,42 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ReceiptRejectsWhatItCannotProve), ReceiptRejectsWhatItCannotProve),
         new TestCase("ContractSuite." + nameof(JoiningFailuresKeepsTheRestOfTheOutcome), JoiningFailuresKeepsTheRestOfTheOutcome),
         new TestCase("ContractSuite." + nameof(ItemOutcomeNamesTheStageItFailedAt), ItemOutcomeNamesTheStageItFailedAt),
+        new TestCase("ContractSuite." + nameof(ExtendedPrefixIsOnlyValidWhereItIs), ExtendedPrefixIsOnlyValidWhereItIs),
     ];
+
+    /// <summary>
+    /// The <c>\\?\</c> prefix is not a marker that can be put in front of any long path. It means
+    /// "everything after this is a literal filesystem path", which is only true for a drive or volume
+    /// path. Applied elsewhere it produces a path no API will open.
+    /// </summary>
+    private static Task ExtendedPrefixIsOnlyValidWhereItIs(TestContext context)
+    {
+        var shortDrive = @"E:\work\report.bin";
+        Check.Equal(shortDrive, LongPathStager.PathForIo(shortDrive), "a path that fits is left exactly as it is");
+
+        var longDrive = @"E:\" + new string('d', 300) + @"\report.bin";
+        Check.Equal(@"\\?\" + longDrive, LongPathStager.PathForIo(longDrive), "a long drive path takes the plain prefix");
+
+        var longUnc = @"\\server\share" + new string('d', 300) + @"\report.bin";
+        Check.Equal(
+            @"\\?\UNC\server\share" + new string('d', 300) + @"\report.bin",
+            LongPathStager.PathForIo(longUnc),
+            "a long UNC path needs \\?\\UNC\\, since \\?\\ immediately followed by another backslash is not a UNC path");
+
+        var shortUnc = @"\\server\share\report.bin";
+        Check.Equal(shortUnc, LongPathStager.PathForIo(shortUnc), "a UNC path that fits is left alone");
+
+        var alreadyPrefixed = @"\\?\" + longDrive;
+        Check.Equal(alreadyPrefixed, LongPathStager.PathForIo(alreadyPrefixed), "an already-prefixed path is not prefixed twice");
+
+        var volume = @"\\?\Volume{00000000-0000-0000-0000-000000000000}\" + new string('v', 300) + @"\report.bin";
+        Check.Equal(volume, LongPathStager.PathForIo(volume), "an extended volume GUID path is already in extended form");
+
+        var device = @"\\.\PhysicalDrive0" + new string('d', 300);
+        Check.Equal(device, LongPathStager.PathForIo(device), "a device path is not a filesystem path and takes no prefix");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// Each way one item's Shell result can fall short has to name itself, or a caller reading

@@ -227,14 +227,38 @@ internal sealed class LongPathStager : IDisposable
         return !Directory.Exists(directory);
     }
 
-    /// <summary>
+/// <summary>
     /// Adds the extended-length prefix where the path needs it. The .NET file APIs accept a path
     /// above <c>MAX_PATH</c> only in this form, and the Shell only in the form without it.
     /// </summary>
-    private static string PathForIo(string path) =>
-        path.Length <= MaxPathWithoutPrefix || path.StartsWith(@"\\?\", StringComparison.Ordinal)
-            ? path
-            : @"\\?\" + path;
+    /// <remarks>
+    /// The prefix is not a marker that can be put in front of any path: it says "everything after this is
+    /// a literal filesystem path". A UNC path has to be rewritten to <c>\\?\UNC\server\share</c>,
+    /// because <c>\\?\\server\share</c> parses as a path beginning with a separator, and a device path
+    /// takes no prefix at all.
+    /// </remarks>
+    internal static string PathForIo(string path)
+    {
+        if (path.Length <= MaxPathWithoutPrefix)
+        {
+            return path;
+        }
+
+        if (path.StartsWith(ExtendedPrefix, StringComparison.Ordinal) || path.StartsWith(DevicePrefix, StringComparison.Ordinal))
+        {
+            return path;
+        }
+
+        return path.StartsWith(@"\\", StringComparison.Ordinal)
+            ? ExtendedUncPrefix + path[2..]
+            : ExtendedPrefix + path;
+    }
+
+    private const string ExtendedPrefix = @"\\?\";
+
+    private const string ExtendedUncPrefix = @"\\?\UNC\";
+
+    private const string DevicePrefix = @"\\.\";
 
     private const int MaxPathWithoutPrefix = 260;
 }
