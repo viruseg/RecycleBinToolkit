@@ -201,7 +201,6 @@ internal static class ShellSuite
             }
 
             context2.Perform();
-            Check.False(context2.AnyOperationsAborted, "no operation reported as aborted");
 
             foreach (var file in files)
             {
@@ -285,7 +284,6 @@ internal static class ShellSuite
 
             shell.Perform();
 
-            Check.True(shell.AnyOperationsAborted, "the Shell reports the batch as aborted when an item fails");
             Check.True(sink.TryGetOutcome(files[0], out var lockedHresult, out var lockedBinPath), "sink recorded the locked item");
             Check.False(IsSuccess(lockedHresult), $"locked file reports a failure HRESULT (0x{lockedHresult:X8})");
             Check.True(lockedBinPath is null, $"locked file has no recycle bin path (got {lockedBinPath ?? "<null>"})");

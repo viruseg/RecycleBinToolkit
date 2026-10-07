@@ -155,20 +155,6 @@ internal sealed unsafe class ShellOperationContext : IDisposable
     internal void Perform() => _fileOperation.PerformOperations();
 
     /// <summary>
-    /// Whether the Shell stopped short of completing every queued item. This is true as soon as any
-    /// single item fails, so it says nothing about which item or why.
-    /// </summary>
-    internal bool AnyOperationsAborted
-    {
-        get
-        {
-            BOOL aborted = default;
-            _fileOperation.GetAnyOperationsAborted(&aborted);
-            return aborted.Value != 0;
-        }
-    }
-
-    /// <summary>
     /// Releases the thread's COM apartment. Must run on the creating thread.
     /// </summary>
     public void Dispose()
