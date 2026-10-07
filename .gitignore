@@ -134,3 +134,11 @@ $RECYCLE.BIN/
 
 # CodeGraph index
 .codegraph/
+
+# Local design notes and plans. Anchored to the repository root on purpose:
+# core.ignorecase makes a bare "docs/" also match the tracked
+# tests/RecycleBinToolkit.Tests/Docs/ sources.
+/docs/
+
+# Scratch directory the test suite recreates per run.
+/Test/

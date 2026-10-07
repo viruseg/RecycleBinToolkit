@@ -24,7 +24,7 @@ internal static class WorkflowSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var all = workspace.CopyAllFixtures();
+        var all = workspace.CreateFixtureSet();
         var random = new Random(20261006);
         var chosen = all.OrderBy(_ => random.Next()).Take(20).ToArray();
 

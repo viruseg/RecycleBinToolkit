@@ -1,8 +1,8 @@
 namespace RecycleBinToolkit.Tests.Infrastructure;
 
 /// <summary>
-/// The single scratch directory every test writes into. It lives next to the fixture directory
-/// inside the repository, so no test ever touches a path outside the project.
+/// The single scratch directory every test writes into. It lives inside the repository, so no test
+/// ever touches a path outside the project.
 /// </summary>
 internal sealed class ScratchWorkspace : IDisposable
 {
@@ -10,7 +10,23 @@ internal sealed class ScratchWorkspace : IDisposable
 
     private const int MaxDeleteAttempts = 12;
 
+    /// <summary>
+    /// Number of files <see cref="CreateFixtureSet"/> produces. Large enough that a run recycles a
+    /// batch worth measuring, small enough that regenerating it stays cheap.
+    /// </summary>
+    public const int FixtureFileCount = 94;
+
+    /// <summary>
+    /// Size of every generated file. Uniform on purpose: the tests assert on file counts and on the
+    /// Recycle Bin totals, never on per-file sizes.
+    /// </summary>
+    public const int FixtureFileSizeBytes = 64 * 1024;
+
+    private const int DeterministicSeed = 20261007;
+
     private static readonly TimeSpan DeleteRetryDelay = TimeSpan.FromMilliseconds(250);
+
+    private static readonly byte[] FixturePattern = BuildFixturePattern();
 
     private static int _sequence;
 
@@ -18,7 +34,7 @@ internal sealed class ScratchWorkspace : IDisposable
     /// Absolute path of the scratch root, always with a trailing separator.
     /// </summary>
     public static string Root { get; } =
-        Path.Combine(Path.GetDirectoryName(FixtureFiles.SourceDirectory)!, "Test") + Path.DirectorySeparatorChar;
+        Path.Combine(ResolveRepositoryRoot(), "Test") + Path.DirectorySeparatorChar;
 
     private bool _disposed;
 
@@ -38,21 +54,21 @@ internal sealed class ScratchWorkspace : IDisposable
     }
 
     /// <summary>
-    /// Copies every fixture file into the scratch root, preserving names.
+    /// Creates the standard set of generated files in the scratch root, named <c>(1).jpg</c> through
+    /// <c>(94).jpg</c>. The parenthesised names and the image extension are kept from the sample
+    /// files this suite used to commit, because a Shell rename has to cope with exactly those names.
     /// </summary>
-    /// <returns>Full paths of the copies, in fixture order.</returns>
-    public IReadOnlyList<string> CopyAllFixtures()
+    /// <returns>Full paths of the created files, in name order.</returns>
+    public IReadOnlyList<string> CreateFixtureSet()
     {
-        var copied = new List<string>();
+        var created = new List<string>(FixtureFileCount);
 
-        foreach (var source in FixtureFiles.All())
+        for (var index = 1; index <= FixtureFileCount; index++)
         {
-            var target = Path.Combine(Root, Path.GetFileName(source));
-            File.Copy(source, target, overwrite: true);
-            copied.Add(target);
+            created.Add(CreateFile($"({index}).jpg"));
         }
 
-        return copied;
+        return created;
     }
 
     /// <summary>
@@ -186,4 +202,47 @@ internal sealed class ScratchWorkspace : IDisposable
 
     private static string NextPath() =>
         Path.Combine(Root, $"random-{Environment.ProcessId}-{Interlocked.Increment(ref _sequence)}.bin");
+
+    private string CreateFile(string fileName)
+    {
+        var path = Path.Combine(Root, fileName);
+
+        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        stream.Write(FixturePattern);
+
+        return path;
+    }
+
+    /// <summary>
+    /// One shared buffer of random-looking bytes. It is generated once from a fixed seed so a failed
+    /// run can be reproduced exactly, and it stays readable as ordinary binary content, which is what
+    /// the read-a-slice tests actually need.
+    /// </summary>
+    private static byte[] BuildFixturePattern()
+    {
+        var buffer = new byte[FixtureFileSizeBytes];
+        new Random(DeterministicSeed).NextBytes(buffer);
+        return buffer;
+    }
+
+    /// <summary>
+    /// Walks up from the test binary to the directory holding both <c>src</c> and <c>tests</c>.
+    /// A structural marker rather than a file name: the solution file sits under
+    /// <c>src/RecycleBinToolkit/</c>, so walking up for it would stop one level too low.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">No parent directory holds both source trees.</exception>
+    private static string ResolveRepositoryRoot()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, "src"))
+                && Directory.Exists(Path.Combine(directory.FullName, "tests")))
+            {
+                return directory.FullName;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Could not find the repository root — a directory holding both 'src' and 'tests' — in any parent of {AppContext.BaseDirectory}.");
+    }
 }

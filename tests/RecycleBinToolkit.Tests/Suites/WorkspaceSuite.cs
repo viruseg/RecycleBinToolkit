@@ -18,13 +18,13 @@ internal static class WorkspaceSuite
             workspace.Recreate();
             Check.True(Directory.Exists(ScratchWorkspace.Root), $"scratch root exists: {ScratchWorkspace.Root}");
 
-            var copied = workspace.CopyAllFixtures();
-            Check.Equal(FixtureFiles.All().Count, copied.Count, "copied file count matches fixture count");
+            var created = workspace.CreateFixtureSet();
+            Check.Equal(ScratchWorkspace.FixtureFileCount, created.Count, "generated file count matches the declared count");
 
-            foreach (var path in copied)
+            foreach (var path in created)
             {
-                Check.True(File.Exists(path), $"copied file exists: {path}");
-                Check.True(new FileInfo(path).Length > 0, $"copied file is non-empty: {path}");
+                Check.True(File.Exists(path), $"generated file exists: {path}");
+                Check.True(new FileInfo(path).Length == ScratchWorkspace.FixtureFileSizeBytes, $"generated file has the declared size: {path}");
             }
 
             workspace.Dispose();

@@ -9,7 +9,7 @@ internal static class FacadeSuite
     internal static IReadOnlyList<TestCase> Cases =>
     [
         new TestCase("FacadeSuite." + nameof(SingleFileIsRecycled), SingleFileIsRecycled),
-        new TestCase("FacadeSuite." + nameof(BatchOfAllFixturesIsRecycled), BatchOfAllFixturesIsRecycled),
+        new TestCase("FacadeSuite." + nameof(BatchOfGeneratedFilesIsRecycled), BatchOfGeneratedFilesIsRecycled),
         new TestCase("FacadeSuite." + nameof(NullPathThrowsWhenThrowOnError), NullPathThrowsWhenThrowOnError),
         new TestCase("FacadeSuite." + nameof(NullPathFailsWithoutThrowOnError), NullPathFailsWithoutThrowOnError),
         new TestCase("FacadeSuite." + nameof(MissingPathDoesNotBlockTheRest), MissingPathDoesNotBlockTheRest),
@@ -87,25 +87,25 @@ internal static class FacadeSuite
         workspace.Dispose();
     }
 
-    private static async Task BatchOfAllFixturesIsRecycled(TestContext context)
+    private static async Task BatchOfGeneratedFilesIsRecycled(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
-        var files = workspace.CopyAllFixtures();
+        var files = workspace.CreateFixtureSet();
         var before = RecycleBinProbe.QueryItemCount(@"E:\");
 
         var result = await FileRecycler.MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken);
 
-        Check.True(result.Succeeded, $"every fixture is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8} {result.FirstFailure?.Path})");
-        Check.Equal(files.Count, result.RecycledPaths.Count, "every fixture is reported as recycled");
-        Check.Equal(0, result.Failures.Count, "no fixture is reported as failed");
+        Check.True(result.Succeeded, $"every generated file is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8} {result.FirstFailure?.Path})");
+        Check.Equal(files.Count, result.RecycledPaths.Count, "every generated file is reported as recycled");
+        Check.Equal(0, result.Failures.Count, "no generated file is reported as failed");
 
         foreach (var file in files)
         {
             Check.False(File.Exists(file), $"{Path.GetFileName(file)} is gone from disk");
         }
 
-        Check.True(RecycleBinProbe.QueryItemCount(@"E:\") - before >= files.Count, "the Recycle Bin gained every fixture");
+        Check.True(RecycleBinProbe.QueryItemCount(@"E:\") - before >= files.Count, "the Recycle Bin gained every generated file");
 
         workspace.Dispose();
     }

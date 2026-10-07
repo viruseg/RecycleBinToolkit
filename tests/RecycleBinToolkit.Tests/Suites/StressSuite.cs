@@ -30,7 +30,7 @@ internal static class StressSuite
             context.CancellationToken.ThrowIfCancellationRequested();
 
             workspace.Recreate();
-            var available = workspace.CopyAllFixtures();
+            var available = workspace.CreateFixtureSet();
             var take = random.Next(10, Math.Min(31, available.Count + 1));
             var chosen = available.OrderBy(_ => random.Next()).Take(take).ToArray();
 
