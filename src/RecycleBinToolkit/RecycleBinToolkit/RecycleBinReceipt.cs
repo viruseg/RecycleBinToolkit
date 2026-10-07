@@ -69,25 +69,28 @@ internal static class RecycleBinReceipt
         return false;
     }
 
+    /// <summary>
+    /// Whether any whole segment after the volume root is the Recycle Bin folder.
+    /// </summary>
+    /// <remarks>
+    /// Compared segment by segment rather than by searching the string, so that a file called
+    /// <c>$RECYCLE.BIN.zip</c> in a directory the caller happened to name that way is not mistaken for
+    /// the folder itself.
+    /// </remarks>
     private static bool ContainsRecycleBinSegment(ReadOnlySpan<char> pathAfterRoot)
     {
         while (!pathAfterRoot.IsEmpty)
         {
             var separator = pathAfterRoot.IndexOf(Path.DirectorySeparatorChar);
+
             if (separator < 0)
             {
-                separator = pathAfterRoot.IndexOf(Path.AltDirectorySeparatorChar);
+                return pathAfterRoot.Equals(RecycleBinSegment, StringComparison.OrdinalIgnoreCase);
             }
 
-            var segment = separator < 0 ? pathAfterRoot : pathAfterRoot[..separator];
-            if (segment.Equals(RecycleBinSegment, StringComparison.OrdinalIgnoreCase))
+            if (pathAfterRoot[..separator].Equals(RecycleBinSegment, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
-            }
-
-            if (separator < 0)
-            {
-                return false;
             }
 
             pathAfterRoot = pathAfterRoot[(separator + 1)..];

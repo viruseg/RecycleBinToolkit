@@ -24,7 +24,35 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsOnlyValidWhereItIs), ExtendedPrefixIsOnlyValidWhereItIs),
         new TestCase("ContractSuite." + nameof(VolumeRootIsAlwaysARootWithASeparator), VolumeRootIsAlwaysARootWithASeparator),
         new TestCase("ContractSuite." + nameof(ATargetCostsNoAllocationOfItsOwn), ATargetCostsNoAllocationOfItsOwn),
+        new TestCase("ContractSuite." + nameof(ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed), ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed),
     ];
+
+    /// <summary>
+    /// The Recycle Bin folder is the second segment of a physical path, so finding it is a matter of
+    /// comparing segments — but only whole segments.
+    /// </summary>
+    /// <remarks>
+    /// Scanning the whole string for the name would also match a file called <c>$RECYCLE.BIN.txt</c>
+    /// sitting in a directory the caller chose the name of. The check has to be on boundaries.
+    /// </remarks>
+    private static Task ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed(TestContext context)
+    {
+        const string original = @"E:\work\report.bin";
+        const string recycled = @"E:\$Recycle.Bin\S-1-5-21-1-2-3-1001\$RABCDEF.bin";
+
+        Check.True(
+            RecycleBinReceipt.IsInsideRecycleBin(recycled, original),
+            "the folder itself is recognised wherever it sits in the path");
+
+        Check.False(
+            RecycleBinReceipt.IsInsideRecycleBin(@"E:\Downloads\$RECYCLE.BIN.zip", original),
+            "a file whose name merely starts with the folder name is not the Recycle Bin");
+        Check.False(
+            RecycleBinReceipt.IsInsideRecycleBin(@"E:\$Recycle.Bin.old\file.bin", original),
+            "a directory whose name merely starts with the folder name is not the Recycle Bin");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// A batch is a list of targets, and the list is held for the whole operation, so what a target costs
