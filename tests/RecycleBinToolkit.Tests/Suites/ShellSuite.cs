@@ -12,7 +12,7 @@ internal static class ShellSuite
         new TestCase("ShellSuite." + nameof(ShellHandlesSpecialAndNonAsciiNames), ShellHandlesSpecialAndNonAsciiNames),
         new TestCase("ShellSuite." + nameof(LockedFileReportsFailureHResult), LockedFileReportsFailureHResult),
         new TestCase("ShellSuite." + nameof(ShellItemCreationReportsFailureForGarbagePath), ShellItemCreationReportsFailureForGarbagePath),
-        new TestCase("ShellSuite." + nameof(RecycleBinVolumeTracksCountAndSizeSeparately), RecycleBinVolumeTracksCountAndSizeSeparately),
+        new TestCase("ShellSuite." + nameof(RecycleBinListingAgreesWithTheShellOracle), RecycleBinListingAgreesWithTheShellOracle),
         new TestCase("ShellSuite." + nameof(UnreportedItemsAreNotReportedAsSuccess), UnreportedItemsAreNotReportedAsSuccess),
     ];
 
@@ -42,21 +42,35 @@ internal static class ShellSuite
     }
 
     /// <summary>
-    /// Pins which field of <c>SHQUERYRBINFO</c> is the item count and which is the byte total.
-    /// The two sit next to each other in native memory and are the same width, so a swapped
-    /// layout silently reports sizes as counts and every delta assertion in the suite becomes
-    /// meaningless.
+    /// Pins the library's listing to the Shell's own counter.
     /// </summary>
-    private static Task RecycleBinVolumeTracksCountAndSizeSeparately(TestContext context)
+    /// <remarks>
+    /// Every other suite measures the Recycle Bin through <see cref="RecycleBinProbe"/>, which reads it
+    /// with the library's API. That is only worth anything while the library is known to agree with
+    /// <c>SHQueryRecycleBin</c>, a different call into the Shell that shares no code with the
+    /// enumeration. This is that agreement, asserted on both sides of one known delete.
+    /// <para>
+    /// Asserting the oracle against the library in one place rather than in every suite is deliberate:
+    /// forty independent-looking checks against the same API prove the API is consistent with itself.
+    /// It also pins which field of <c>SHQUERYRBINFO</c> is the item count and which is the byte total —
+    /// the two are adjacent and the same width, so a swapped layout would report sizes as counts and
+    /// leave every delta assertion in the suite meaningless.
+    /// </para>
+    /// </remarks>
+    private static Task RecycleBinListingAgreesWithTheShellOracle(TestContext context)
     {
         const int fileSize = 4096;
 
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
         var files = workspace.CreateRandomFiles(1, fileSize);
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        var countBefore = RecycleBinVolume.QueryItemCount(@"E:\");
-        var sizeBefore = RecycleBinVolume.QuerySize(@"E:\");
+        var oracleBefore = RecycleBinVolume.Measure(volumeRoot);
+        var probeBefore = RecycleBinProbe.Measure(volumeRoot);
+
+        Check.True(oracleBefore.Ok, $"the independent Shell counter reads the volume (got 0x{oracleBefore.HResult:X8})");
+        Check.True(probeBefore.Items >= 0, $"the library reads the volume too (got {probeBefore.Items})");
 
         using (var shell = ShellOperationContext.Create())
         {
@@ -67,17 +81,24 @@ internal static class ShellSuite
             shell.Perform();
         }
 
-        var countAfter = RecycleBinVolume.QueryItemCount(@"E:\");
-        var sizeAfter = RecycleBinVolume.QuerySize(@"E:\");
+        var oracleAfter = RecycleBinVolume.Measure(volumeRoot);
+        var probeAfter = RecycleBinProbe.Measure(volumeRoot);
 
-        Console.WriteLine($"        count {countBefore} -> {countAfter}, size {sizeBefore} -> {sizeAfter}");
+        Console.WriteLine(
+            $"        oracle count {oracleBefore.Items} -> {oracleAfter.Items}, size {oracleBefore.Bytes} -> {oracleAfter.Bytes}; " +
+            $"listing count {probeBefore.Items} -> {probeAfter.Items}, size {probeBefore.Bytes} -> {probeAfter.Bytes}");
 
         // The bin is shared, externally mutable state, so the deltas are bounded below rather than
-        // matched exactly; anything else could recycle or purge on this volume mid-run. Both fields
-        // are still pinned: with the two 64-bit fields swapped, the count would absorb the byte
-        // growth and the size check below would come up short.
-        Check.True(countAfter - countBefore >= 1, "recycling one file adds at least one tracked item");
-        Check.True(sizeAfter - sizeBefore >= fileSize, $"recycling one {fileSize}-byte file grows the size by at least {fileSize} bytes");
+        // matched exactly: anything else could recycle or purge on this volume mid-run.
+        Check.True(oracleAfter.Items - oracleBefore.Items >= 1, "the Shell counter sees the item arrive");
+        Check.True(oracleAfter.Bytes - oracleBefore.Bytes >= fileSize, $"the Shell counter sees the {fileSize} bytes arrive");
+        Check.True(probeAfter.Items - probeBefore.Items >= 1, "the listing sees the item arrive");
+        Check.True(probeAfter.Bytes - probeBefore.Bytes >= fileSize, $"the listing sees the {fileSize} bytes arrive");
+
+        // Both counters are pinned against the same known delete. A listing that reported sizes as
+        // counts, or a struct whose two fields were swapped, comes up short here even though its
+        // numbers are non-negative and it moves in the right direction.
+        Check.True(probeAfter.Bytes - oracleAfter.Bytes >= -fileSize, $"the listing's byte total is within one file of the Shell's (listing {probeAfter.Bytes}, Shell {oracleAfter.Bytes})");
 
         workspace.Dispose();
         return Task.CompletedTask;
@@ -88,7 +109,7 @@ internal static class ShellSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
         var files = workspace.CreateRandomFiles(5, 4096);
-        var before = RecycleBinVolume.QueryItemCount(@"E:\");
+        var before = RecycleBinProbe.QueryItemCount(@"E:\");
 
         using (var context2 = ShellOperationContext.Create())
         {
@@ -117,7 +138,7 @@ internal static class ShellSuite
             }
         }
 
-        var after = RecycleBinVolume.QueryItemCount(@"E:\");
+        var after = RecycleBinProbe.QueryItemCount(@"E:\");
         Console.WriteLine($"        bin tracked items: {before} -> {after}");
         Check.True(after - before >= files.Count, $"Recycle Bin tracked at least {files.Count} new item(s)");
 

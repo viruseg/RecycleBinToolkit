@@ -24,7 +24,13 @@ public enum RecycleFailureStage
     /// The path is too long for the Shell to recycle. Such a file would be deleted permanently while
     /// the operation still reported success, so it was never handed to the Shell.
     /// </summary>
-    LongPathNotRecyclable
+    LongPathNotRecyclable,
+
+    /// <summary>
+    /// The Shell did not describe an entry the Recycle Bin reported. Only reachable while reading
+    /// the Recycle Bin rather than writing to it.
+    /// </summary>
+    Enumeration
 }
 
 /// <summary>

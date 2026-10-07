@@ -39,7 +39,7 @@ internal static class StressSuite
                 ReadAndAppend(path, random);
             }
 
-            var before = RecycleBinVolume.QueryItemCount(@"E:\");
+            var before = RecycleBinProbe.QueryItemCount(@"E:\");
 
             var result = await FileRecycler.MoveToRecycleBinAsync(
                 chosen,
@@ -48,7 +48,7 @@ internal static class StressSuite
             Check.True(result.Succeeded, DescribeFailure(cycle, result));
             Check.Equal(0, result.Failures.Count, DescribeFailure(cycle, result));
             Check.Equal(chosen.Length, result.RecycledPaths.Count, $"cycle {cycle} recycled every chosen file");
-            Check.True(RecycleBinVolume.QueryItemCount(@"E:\") - before >= chosen.Length, $"cycle {cycle} moved every chosen file into the Recycle Bin");
+            Check.True(RecycleBinProbe.QueryItemCount(@"E:\") - before >= chosen.Length, $"cycle {cycle} moved every chosen file into the Recycle Bin");
 
             foreach (var path in chosen)
             {
@@ -73,13 +73,13 @@ internal static class StressSuite
         workspace.Recreate();
 
         var files = workspace.CreateRandomFiles(fileCount, fileSize);
-        var countBefore = RecycleBinVolume.QueryItemCount(@"E:\");
-        var sizeBefore = RecycleBinVolume.QuerySize(@"E:\");
+        var countBefore = RecycleBinProbe.QueryItemCount(@"E:\");
+        var sizeBefore = RecycleBinProbe.QuerySize(@"E:\");
 
         var result = await FileRecycler.MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken);
 
-        var countAfter = RecycleBinVolume.QueryItemCount(@"E:\");
-        var sizeAfter = RecycleBinVolume.QuerySize(@"E:\");
+        var countAfter = RecycleBinProbe.QueryItemCount(@"E:\");
+        var sizeAfter = RecycleBinProbe.QuerySize(@"E:\");
 
         Console.WriteLine($"        bin count {countBefore} -> {countAfter}, size {sizeBefore} -> {sizeAfter}");
 

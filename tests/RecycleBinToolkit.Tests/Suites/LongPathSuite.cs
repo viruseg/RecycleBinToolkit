@@ -172,8 +172,8 @@ internal static class LongPathSuite
                 stream.Write(new byte[payload]);
             }
 
-            var countBefore = RecycleBinVolume.QueryItemCount(@"E:\");
-            var sizeBefore = RecycleBinVolume.QuerySize(@"E:\");
+            var countBefore = RecycleBinProbe.QueryItemCount(@"E:\");
+            var sizeBefore = RecycleBinProbe.QuerySize(@"E:\");
 
             var options = new RecycleBinOptions
             {
@@ -193,9 +193,9 @@ internal static class LongPathSuite
 
             Check.False(File.Exists(extendedPath), "the file is gone from its original location");
 
-            var sizeDelta = RecycleBinVolume.QuerySize(@"E:\") - sizeBefore;
+            var sizeDelta = RecycleBinProbe.QuerySize(@"E:\") - sizeBefore;
             Check.True(sizeDelta >= payload, $"the bytes really reached the Recycle Bin (grew by {sizeDelta}, expected at least {payload})");
-            Check.True(RecycleBinVolume.QueryItemCount(@"E:\") - countBefore >= 1, "the Recycle Bin gained an item");
+            Check.True(RecycleBinProbe.QueryItemCount(@"E:\") - countBefore >= 1, "the Recycle Bin gained an item");
         }
         finally
         {
@@ -321,12 +321,12 @@ internal static class LongPathSuite
                 Check.True(actual.AsSpan().SequenceEqual(expected), "the file reads back with the content that was written");
             }
 
-            var before = RecycleBinVolume.QueryItemCount(@"E:\");
-            var sizeBefore = RecycleBinVolume.QuerySize(@"E:\");
+            var before = RecycleBinProbe.QueryItemCount(@"E:\");
+            var sizeBefore = RecycleBinProbe.QuerySize(@"E:\");
 
             var result = await FileRecycler.MoveToRecycleBinAsync([extendedPath], cancellationToken: context.CancellationToken);
 
-            var sizeDelta = RecycleBinVolume.QuerySize(@"E:\") - sizeBefore;
+            var sizeDelta = RecycleBinProbe.QuerySize(@"E:\") - sizeBefore;
 
             if (result.Succeeded)
             {
@@ -364,13 +364,13 @@ internal static class LongPathSuite
                 stream.Write(new byte[4096]);
             }
 
-            var sizeBefore = RecycleBinVolume.QuerySize(@"E:\");
+            var sizeBefore = RecycleBinProbe.QuerySize(@"E:\");
             var result = await FileRecycler.MoveToRecycleBinAsync([plainPath], cancellationToken: context.CancellationToken);
 
             if (result.Succeeded)
             {
                 // Only reachable when the volume offers a usable 8.3 alias for this path.
-                Check.True(RecycleBinVolume.QuerySize(@"E:\") - sizeBefore >= 4096, "a reported success means the bytes reached the bin");
+                Check.True(RecycleBinProbe.QuerySize(@"E:\") - sizeBefore >= 4096, "a reported success means the bytes reached the bin");
                 Check.False(File.Exists(extendedPath), "the file is gone from disk");
                 return;
             }
@@ -383,7 +383,7 @@ internal static class LongPathSuite
                 (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
                 $"the failure carries an error code rather than looking like success (got 0x{result.FirstFailure.HResult:X8})");
             Check.True(File.Exists(extendedPath), "the file survives, because it was never handed to the Shell");
-            Check.Equal(0, RecycleBinVolume.QuerySize(@"E:\") - sizeBefore, "nothing reached the bin");
+            Check.Equal(0, RecycleBinProbe.QuerySize(@"E:\") - sizeBefore, "nothing reached the bin");
             Check.Equal(0, result.PermanentlyDeletedPaths.Count, "nothing was deleted permanently without being asked to");
         }
         finally
@@ -479,13 +479,13 @@ internal static class LongPathSuite
             Check.True(plainPath.Length <= MaxPathThreshold, $"the path is under the threshold ({plainPath.Length} chars)");
 
             var options = new RecycleBinOptions { LongPathFailureAction = LongPathFailureAction.DeletePermanently };
-            var before = RecycleBinVolume.QuerySize(@"E:\");
+            var before = RecycleBinProbe.QuerySize(@"E:\");
 
             var result = await FileRecycler.MoveToRecycleBinAsync([plainPath], options, context.CancellationToken);
 
             Check.True(result.Succeeded, "a path under the threshold recycles");
             Check.Equal(0, result.PermanentlyDeletedPaths.Count, "a path under the threshold never takes the permanent route");
-            Check.True(RecycleBinVolume.QuerySize(@"E:\") - before >= 4096, "its bytes reached the Recycle Bin");
+            Check.True(RecycleBinProbe.QuerySize(@"E:\") - before >= 4096, "its bytes reached the Recycle Bin");
             Check.False(File.Exists(plainPath), "the file is gone from disk");
         }
         finally

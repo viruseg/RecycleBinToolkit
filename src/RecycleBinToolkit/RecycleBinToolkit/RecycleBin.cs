@@ -1,0 +1,266 @@
+using System.Diagnostics;
+using System.Runtime.Versioning;
+using Windows.Win32;
+using Windows.Win32.UI.Shell;
+
+namespace RecycleBinToolkit;
+
+/// <summary>
+/// Reads, empties and reports on the Windows Recycle Bin.
+/// </summary>
+/// <remarks>
+/// Safe to call from any thread, including one that is already a single-threaded apartment. Shell
+/// work runs on the same worker thread as <see cref="FileRecycler"/>, so a caller never pays for COM
+/// initialisation and every COM call in the process stays on one thread.
+/// </remarks>
+[SupportedOSPlatform("windows6.0.6000")]
+public static class RecycleBin
+{
+    /// <summary>
+    /// Ask for nothing, progress nothing, play nothing. An unattended library must never put a dialog
+    /// or a sound on a caller's desktop.
+    /// </summary>
+    private const uint EmptyFlags = PInvoke.SHERB_NOCONFIRMATION | PInvoke.SHERB_NOPROGRESSUI | PInvoke.SHERB_NOSOUND;
+
+    /// <summary>Win32 <c>ERROR_NOT_SET</c>, used when the Shell gives no error code of its own.</summary>
+    private const int UnreadableVolume = unchecked((int)0x80070490);
+
+    /// <summary>
+    /// Reads the contents of the Recycle Bin.
+    /// </summary>
+    /// <param name="volumeRoot">
+    /// Volume root to keep, such as <c>"E:\\"</c>, or <see langword="null"/> for every volume.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the wait.</param>
+    /// <returns>The entries that could be read, plus the ones that could not.</returns>
+    /// <remarks>
+    /// The Recycle Bin is a single Shell folder spanning every mounted volume, so
+    /// <paramref name="volumeRoot"/> narrows an enumeration that has already happened rather than
+    /// making a cheaper query. Entries the Shell would not describe arrive in
+    /// <see cref="RecycleBinContents.Failures"/>; an environmental problem is never an exception.
+    /// </remarks>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before the work started.
+    /// </exception>
+    public static async Task<RecycleBinContents> GetItemsAsync(
+        string? volumeRoot = null,
+        CancellationToken cancellationToken = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        var collected = await RecycleBinWorker
+            .RunAsync(Collect, cancellationToken)
+            .ConfigureAwait(false);
+
+        var items = Filter(collected.Items, volumeRoot);
+
+        return new RecycleBinContents(items, collected.Failures, stopwatch.Elapsed)
+        {
+            TotalSize = TotalSize(items)
+        };
+    }
+
+    /// <summary>
+    /// Empties the Recycle Bin.
+    /// </summary>
+    /// <param name="volumeRoot">
+    /// Volume root to empty, such as <c>"E:\\"</c>, or <see langword="null"/> for every volume.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// Cancels the wait. An empty already handed to the Shell always finishes.
+    /// </param>
+    /// <returns>What was removed, and what could not be reached.</returns>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before the work started.
+    /// </exception>
+    public static Task<RecycleBinEmptyResult> EmptyAsync(
+        string? volumeRoot = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<RecycleBinEmptyResult>(cancellationToken);
+        }
+
+        var targets = ResolveVolumes(volumeRoot);
+
+        return RecycleBinWorker.RunAsync(() => Empty(targets, volumeRoot), cancellationToken);
+    }
+
+    /// <summary>
+    /// Reports whether the Recycle Bin is in use for a volume, and why.
+    /// </summary>
+    /// <param name="volumeRoot">Volume root to inspect, such as <c>"E:\\"</c>.</param>
+    /// <param name="cancellationToken">Cancels the wait.</param>
+    /// <returns>The status of that volume.</returns>
+    /// <remarks>
+    /// This answers whether the Recycle Bin is configured for the volume, not whether the next delete
+    /// will land there. A volume mounted after this call, or a policy applied after it, changes the
+    /// answer without this call being wrong. It needs no COM, so it does not queue behind the Shell
+    /// worker and never blocks behind an in-flight batch.
+    /// </remarks>
+    /// <exception cref="ArgumentException"><paramref name="volumeRoot"/> is null, empty or whitespace.</exception>
+    public static Task<RecycleBinStatus> GetStatusAsync(
+        string volumeRoot,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(volumeRoot);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return Task.FromResult(RecycleBinVolumeState.Inspect(volumeRoot));
+    }
+
+    private static RecycleBinContents Collect()
+    {
+        var items = new List<RecycleBinItem>();
+        var failures = new List<RecycleFailure>();
+
+        RecycleBinLister.TryEnumerate(items, failures);
+
+        return new RecycleBinContents(items, failures, TimeSpan.Zero)
+        {
+            TotalSize = TotalSize(items)
+        };
+    }
+
+    /// <summary>
+    /// Removes everything from the targets and reports what went, measured rather than assumed.
+    /// </summary>
+    private static RecycleBinEmptyResult Empty(IReadOnlyList<string> targets, string? volumeRoot)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var failures = new List<RecycleFailure>();
+        var emptied = new List<string>(targets.Count);
+
+        // Measured on both sides of the call, per volume, because the Shell reports success whether it
+        // removed ten entries or none and says nothing about either count.
+        var itemsBefore = new long?[targets.Count];
+        var bytesBefore = new long?[targets.Count];
+
+        for (var i = 0; i < targets.Count; i++)
+        {
+            if (RecycleBinCounter.TryQuery(targets[i], out var items, out var bytes))
+            {
+                itemsBefore[i] = items;
+                bytesBefore[i] = bytes;
+            }
+        }
+
+        var hrEmpty = PInvoke.SHEmptyRecycleBin(default, volumeRoot, EmptyFlags);
+
+        long itemsRemoved = 0;
+        long bytesFreed = 0;
+
+        for (var i = 0; i < targets.Count; i++)
+        {
+            if (!itemsBefore[i].HasValue || !RecycleBinCounter.TryQuery(targets[i], out var itemsAfter, out var bytesAfter))
+            {
+                failures.Add(new RecycleFailure(targets[i], UnreadableVolume, 1, RecycleFailureStage.Enumeration));
+                continue;
+            }
+
+            // A Recycle Bin that grew while the operation ran would otherwise report a negative
+            // removal, which no caller can interpret.
+            var removed = Math.Max(0, itemsBefore[i]!.Value - itemsAfter);
+            var freed = Math.Max(0, bytesBefore[i]!.Value - bytesAfter);
+
+            // The Shell's verdict is only consulted where the measurement cannot speak for itself:
+            // it reports an error when asked to empty a Recycle Bin that is already empty, so an
+            // HRESULT alone would fail a call that did exactly what was asked. A volume counts as
+            // failed only when the Shell refused and something is demonstrably still there.
+            if (hrEmpty.Failed && removed == 0 && itemsAfter > 0)
+            {
+                failures.Add(new RecycleFailure(targets[i], hrEmpty.Value, 1, RecycleFailureStage.Performing));
+                continue;
+            }
+
+            itemsRemoved += removed;
+            bytesFreed += freed;
+            emptied.Add(targets[i]);
+        }
+
+        return new RecycleBinEmptyResult(emptied, itemsRemoved, bytesFreed, failures, stopwatch.Elapsed);
+    }
+
+    /// <summary>
+    /// Chooses the volumes an operation covers: exactly the one asked for, or every mounted volume
+    /// that can hold a Recycle Bin.
+    /// </summary>
+    /// <remarks>
+    /// Network drives have no Recycle Bin, so measuring them would report a problem the caller cannot
+    /// act on.
+    /// </remarks>
+    private static IReadOnlyList<string> ResolveVolumes(string? volumeRoot)
+    {
+        if (volumeRoot is not null)
+        {
+            return [NormalizeRoot(volumeRoot)];
+        }
+
+        var drives = DriveInfo.GetDrives();
+        var roots = new List<string>(drives.Length);
+
+        foreach (var drive in drives)
+        {
+            if (drive.DriveType is DriveType.Fixed or DriveType.Removable && drive.IsReady)
+            {
+                roots.Add(NormalizeRoot(drive.Name));
+            }
+        }
+
+        return roots;
+    }
+
+    /// <summary>
+    /// Keeps only the entries that were deleted from <paramref name="volumeRoot"/>.
+    /// </summary>
+    /// <remarks>
+    /// The Recycle Bin is one aggregate folder spanning every mounted volume, so this is a filter over
+    /// a complete enumeration. The root is matched as a path prefix rather than by comparing parsed
+    /// roots, because a caller may pass a root without its trailing separator.
+    /// </remarks>
+    private static IReadOnlyList<RecycleBinItem> Filter(IReadOnlyList<RecycleBinItem> items, string? volumeRoot)
+    {
+        if (string.IsNullOrEmpty(volumeRoot))
+        {
+            return items;
+        }
+
+        var root = NormalizeRoot(volumeRoot);
+
+        var kept = new List<RecycleBinItem>(items.Count);
+        foreach (var item in items)
+        {
+            if (item.OriginalPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            {
+                kept.Add(item);
+            }
+        }
+
+        return kept;
+    }
+
+    private static string NormalizeRoot(string volumeRoot)
+    {
+        var root = Path.GetPathRoot(volumeRoot);
+        if (!string.IsNullOrEmpty(root))
+        {
+            return root;
+        }
+
+        return volumeRoot.EndsWith(Path.DirectorySeparatorChar) || volumeRoot.EndsWith(Path.AltDirectorySeparatorChar)
+            ? volumeRoot
+            : volumeRoot + Path.DirectorySeparatorChar;
+    }
+
+    private static long TotalSize(IReadOnlyList<RecycleBinItem> items)
+    {
+        long total = 0;
+        foreach (var item in items)
+        {
+            total += item.Size;
+        }
+
+        return total;
+    }
+}

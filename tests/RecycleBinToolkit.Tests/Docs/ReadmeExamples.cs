@@ -12,6 +12,14 @@ internal static class ReadmeExamples
         FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip").GetAwaiter().GetResult();
     }
 
+    internal static void QuickStartWithTheBinItself()
+    {
+        FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip").GetAwaiter().GetResult();
+
+        RecycleBin.GetItemsAsync().GetAwaiter().GetResult();
+        RecycleBin.EmptyAsync(@"E:\").GetAwaiter().GetResult();
+    }
+
     internal static void BatchReportingFailures()
     {
         var paths = Directory.GetFiles(@"C:\Users\me\Downloads", "*", SearchOption.TopDirectoryOnly);
@@ -127,5 +135,54 @@ internal static class ReadmeExamples
     {
         var result = RecycleBinResult.Create(["a"], [], [], TimeSpan.Zero);
         Console.WriteLine($"{result.Succeeded} {result.Elapsed} {result.FirstFailure is null}");
+    }
+
+    internal static void ListTheRecycleBin()
+    {
+        var contents = RecycleBin.GetItemsAsync().GetAwaiter().GetResult();
+
+        foreach (var item in contents.Items)
+        {
+            Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+        }
+
+        Console.WriteLine($"{contents.Items.Count} item(s), {contents.TotalSize} byte(s)");
+    }
+
+    internal static void ListOneVolumeAndHearAboutUnreadableEntries()
+    {
+        var onE = RecycleBin.GetItemsAsync(@"E:\").GetAwaiter().GetResult();
+
+        foreach (var failure in onE.Failures)
+        {
+            Console.Error.WriteLine($"could not read an entry: 0x{failure.HResult:X8}");
+        }
+    }
+
+    internal static void EmptyAndReportWhatItFreed()
+    {
+        var emptied = RecycleBin.EmptyAsync(@"E:\").GetAwaiter().GetResult();
+
+        Console.WriteLine($"freed {emptied.BytesFreed} byte(s) from {emptied.ItemsRemoved} item(s)");
+
+        foreach (var failure in emptied.Failures)
+        {
+            Console.Error.WriteLine($"{failure.Path} was not emptied: 0x{failure.HResult:X8}");
+        }
+    }
+
+    internal static void ActOnAVolumeWhoseRecycleBinIsOff()
+    {
+        var status = RecycleBin.GetStatusAsync(@"E:\").GetAwaiter().GetResult();
+
+        if (!status.IsEnabled)
+        {
+            Console.Error.WriteLine($"the Recycle Bin is not in use on {status.VolumeRoot}: {status.Reason}");
+
+            if (status.Reason is RecycleBinAvailabilityReason.DisabledByPolicy)
+            {
+                Console.Error.WriteLine("an administrator set this; nothing in the application can change it");
+            }
+        }
     }
 }

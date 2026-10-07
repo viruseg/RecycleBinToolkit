@@ -53,12 +53,42 @@ internal static class RecycleBinWorker
             return Task.FromCanceled<RecycleBinResult>(cancellationToken);
         }
 
-        var request = new Request(targets, options.Normalize());
+        var request = new RecycleWorkItem(targets, options.Normalize());
         EnsureWorker().Enqueue(request);
 
-        return cancellationToken.CanBeCanceled
-            ? AwaitWithCancellation(request, cancellationToken)
-            : request.Completion.Task;
+        return AwaitAsync<RecycleBinResult>(request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs Shell work on the worker thread and returns its result.
+    /// </summary>
+    /// <remarks>
+    /// Used by the operations that need the Shell apartment but no delete: enumerating the Recycle
+    /// Bin and emptying it. They queue behind a batch exactly like a delete does, which keeps every
+    /// COM call in this process on one thread.
+    /// </remarks>
+    /// <typeparam name="T">What the work produces.</typeparam>
+    /// <param name="work">
+    /// The work to run. It executes on the worker thread, where the apartment is already
+    /// initialised, and must touch COM only from there.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// Cancels the wait. Work already handed to the Shell always finishes.
+    /// </param>
+    /// <returns>Whatever <paramref name="work"/> returned.</returns>
+    internal static Task<T> RunAsync<T>(Func<T> work, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<T>(cancellationToken);
+        }
+
+        var request = new DelegateWorkItem<T>(work);
+        EnsureWorker().Enqueue(request);
+
+        return AwaitAsync<T>(request, cancellationToken);
     }
 
     private static Worker EnsureWorker()
@@ -75,7 +105,17 @@ internal static class RecycleBinWorker
         }
     }
 
-    private static async Task<RecycleBinResult> AwaitWithCancellation(Request request, CancellationToken cancellationToken)
+    private static async Task<T> AwaitAsync<T>(WorkItem request, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.CanBeCanceled)
+        {
+            return (T)(await AwaitWithCancellation(request, cancellationToken).ConfigureAwait(false))!;
+        }
+
+        return (T)(await request.Completion.Task.ConfigureAwait(false))!;
+    }
+
+    private static async Task<object?> AwaitWithCancellation(WorkItem request, CancellationToken cancellationToken)
     {
         var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -91,25 +131,47 @@ internal static class RecycleBinWorker
         return await request.Completion.Task.ConfigureAwait(false);
     }
 
-    private sealed class Request
+    /// <summary>
+    /// One queued unit of Shell work. The completion is untyped because the queue holds work with
+    /// different result types; each submitter casts its own result back.
+    /// </summary>
+    private abstract class WorkItem
     {
-        internal Request(IReadOnlyList<RecycleTarget> targets, RecycleBinOptions options)
+        private protected WorkItem() =>
+            Completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource<object?> Completion { get; }
+
+        internal abstract object? Execute(RecycleOperationRunner runner);
+    }
+
+    private sealed class RecycleWorkItem : WorkItem
+    {
+        private readonly IReadOnlyList<RecycleTarget> _targets;
+        private readonly RecycleBinOptions _options;
+
+        internal RecycleWorkItem(IReadOnlyList<RecycleTarget> targets, RecycleBinOptions options)
         {
-            Targets = targets;
-            Options = options;
+            _targets = targets;
+            _options = options;
         }
 
-        internal IReadOnlyList<RecycleTarget> Targets { get; }
+        internal override object? Execute(RecycleOperationRunner runner) =>
+            runner.Run(_targets, _options, CancellationToken.None);
+    }
 
-        internal RecycleBinOptions Options { get; }
+    private sealed class DelegateWorkItem<T> : WorkItem
+    {
+        private readonly Func<T> _work;
 
-        internal TaskCompletionSource<RecycleBinResult> Completion { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal DelegateWorkItem(Func<T> work) => _work = work;
+
+        internal override object? Execute(RecycleOperationRunner runner) => _work();
     }
 
     private sealed unsafe class Worker
     {
-        private readonly Queue<Request> _queue = [];
+        private readonly Queue<WorkItem> _queue = [];
         private readonly object _queueGate = new();
         private readonly SemaphoreSlim _signal = new(0);
         private readonly ManualResetEventSlim _warm = new(false);
@@ -144,7 +206,7 @@ internal static class RecycleBinWorker
 
         private Exception? StartupFailure { get; set; }
 
-        internal void Enqueue(Request request)
+        internal void Enqueue(WorkItem request)
         {
             if (StartupFailure is not null)
             {
@@ -189,7 +251,7 @@ internal static class RecycleBinWorker
                     {
                         try
                         {
-                            request!.Completion.TrySetResult(_runner.Run(request.Targets, request.Options, CancellationToken.None));
+                            request!.Completion.TrySetResult(request.Execute(_runner));
                         }
                         catch (Exception ex)
                         {
@@ -207,7 +269,7 @@ internal static class RecycleBinWorker
 
         private RecycleOperationRunner? _runner;
 
-        private bool TryDequeue(out Request? request)
+        private bool TryDequeue(out WorkItem? request)
         {
             lock (_queueGate)
             {

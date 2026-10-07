@@ -15,7 +15,7 @@ internal static partial class RecycleBinVolume
     /// <param name="rootPath">Volume root, for example <c>"E:\\"</c>. A missing trailing separator is added.</param>
     /// <returns>The item count, or <c>-1</c> when the Shell query failed.</returns>
     public static long QueryItemCount(string rootPath) =>
-        TryQuery(rootPath, out var items, out _) ? items : -1;
+        TryQuery(rootPath, out var items, out _, out _) ? items : -1;
 
     /// <summary>
     /// Total size in bytes of the Recycle Bin contents of the given volume.
@@ -23,9 +23,27 @@ internal static partial class RecycleBinVolume
     /// <param name="rootPath">Volume root, for example <c>"E:\\"</c>. A missing trailing separator is added.</param>
     /// <returns>The size in bytes, or <c>-1</c> when the Shell query failed.</returns>
     public static long QuerySize(string rootPath) =>
-        TryQuery(rootPath, out _, out var size) ? size : -1;
+        TryQuery(rootPath, out _, out var size, out _) ? size : -1;
 
-    private static bool TryQuery(string rootPath, out long items, out long size)
+    /// <summary>
+    /// Both quantities from one query, with the failure code kept for a readable assertion.
+    /// </summary>
+    /// <param name="rootPath">Volume root, for example <c>"E:\\"</c>. A missing trailing separator is added.</param>
+    /// <returns>
+    /// The entry count and size in bytes, both <c>-1</c> when the query failed, and the Shell's error
+    /// code so a failing assertion can name it.
+    /// </returns>
+    public static (long Items, long Bytes, int HResult, bool Ok) Measure(string rootPath)
+    {
+        if (TryQuery(rootPath, out var items, out var size, out var hr))
+        {
+            return (items, size, 0, true);
+        }
+
+        return (-1, -1, hr, false);
+    }
+
+    private static bool TryQuery(string rootPath, out long items, out long size, out int hrResult)
     {
         var root = rootPath.EndsWith(Path.DirectorySeparatorChar) || rootPath.EndsWith(Path.AltDirectorySeparatorChar)
             ? rootPath
@@ -33,8 +51,8 @@ internal static partial class RecycleBinVolume
 
         var info = new ShQueryRbInfo { SizeOfSelf = Marshal.SizeOf<ShQueryRbInfo>() };
 
-        var hr = SHQueryRecycleBin(root, ref info);
-        if (hr < 0)
+        hrResult = SHQueryRecycleBin(root, ref info);
+        if (hrResult < 0)
         {
             items = -1;
             size = -1;

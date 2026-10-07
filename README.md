@@ -1,12 +1,15 @@
 # RecycleBinToolkit
 
 Move files and directories to the Windows Recycle Bin from .NET, with per-item diagnostics that
-tell you *why* an item failed.
+tell you *why* an item failed — and read, empty, and inspect the Recycle Bin itself.
 
 ```csharp
 using RecycleBinToolkit;
 
 await FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip");
+
+var inTheBin = await RecycleBin.GetItemsAsync();
+await RecycleBin.EmptyAsync(@"E:\");
 ```
 
 - **Targets** `net10.0`, Windows only. The library is `AnyCPU`; the test project is `x64`.
@@ -33,6 +36,8 @@ This library wraps that API so a caller gets the answer instead of the guess:
 | A delete that lands outside the Recycle Bin is reported as success | Rejected, and reported as a failure with its stage |
 | Creating an STA thread and a COM apartment per call dominates batched work | One warmed-up worker thread per process, reused |
 | `Marshal.ReleaseComObject` on a live RCW risks a double `IUnknown::Release` | RCWs are left to the garbage collector |
+| `SHEmptyRecycleBin` reports success without saying what it removed | Counted before and after, per volume, and the totals are measured |
+| Explorer column indexes for Recycle Bin details shift with locale and Windows build | Documented property keys and Shell names, which do not |
 
 ## Why it exists
 
@@ -130,8 +135,11 @@ if (!result.Succeeded)
 | --- | --- | --- |
 | `FileRecycler.MoveToRecycleBinAsync(string? filePath, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<bool>` | Recycles one file or directory. `true` when it is gone from disk. |
 | `FileRecycler.MoveToRecycleBinAsync(IReadOnlyList<string?> filePaths, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinResult>` | Recycles a batch and reports the outcome of every item. |
+| `RecycleBin.GetItemsAsync(string? volumeRoot = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinContents>` | Lists what is in the Recycle Bin. |
+| `RecycleBin.EmptyAsync(string? volumeRoot = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinEmptyResult>` | Empties it, and reports how much it freed. |
+| `RecycleBin.GetStatusAsync(string volumeRoot, CancellationToken cancellationToken = default)` | `Task<RecycleBinStatus>` | Whether it is in use for a volume, and why not if it is not. |
 
-Both are safe to call from any thread, including one that already runs on a single-threaded
+All five are safe to call from any thread, including one that already runs on a single-threaded
 apartment.
 
 ### `MoveToRecycleBinAsync(string?, RecycleBinOptions?, CancellationToken)`
@@ -176,6 +184,71 @@ Recycles a batch. This overload **never throws** for a per-item failure.
 
 **Exceptions** `ArgumentNullException` when `filePaths` is null, and `OperationCanceledException`
 when the token is cancelled. Per-item problems are data, not exceptions.
+
+---
+
+## The Recycle Bin itself
+
+`RecycleBin` is a second entry point next to `FileRecycler`. Where `FileRecycler` moves items *in*,
+`RecycleBin` reads, empties, and reports on the bin as a whole.
+
+All three of its methods are batch-shaped: they never throw for an environmental problem. A volume
+that is not mounted or an entry the Shell will not describe is data in the result, because a service
+that lists or empties drives must survive one unmounted letter.
+
+`GetItemsAsync` and `EmptyAsync` share the one worker thread with `FileRecycler`, so every COM call
+in the process stays on one apartment and no caller pays for COM initialisation.
+`GetStatusAsync` needs no COM at all and never queues behind them.
+
+### `GetItemsAsync`
+
+Lists the Recycle Bin.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `volumeRoot` | `string?` | Volume root to keep, such as `"E:\"`, or `null` for every volume. |
+| `cancellationToken` | `CancellationToken` | Cancels the wait. |
+
+**Returns** a `RecycleBinContents`.
+
+The Recycle Bin is a single Shell folder spanning every mounted volume, so `volumeRoot` narrows an
+enumeration that has already happened. It is a filter, not a cheaper query.
+
+### `EmptyAsync`
+
+Empties the Recycle Bin. Confirmation, progress window and sound are always suppressed: an unattended
+library must never put a dialog on a caller's desktop.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `volumeRoot` | `string?` | Volume root to empty, or `null` for every volume, in which case every mounted Fixed or Removable volume is covered in a single Shell call. |
+| `cancellationToken` | `CancellationToken` | Cancels the wait. An empty already handed to the Shell always finishes. |
+
+**Returns** a `RecycleBinEmptyResult`.
+
+`SHEmptyRecycleBin` reports success whether it removed ten thousand entries or none, and says nothing
+about either count. Each volume is therefore queried before and after with `SHQueryRecycleBin`, and
+`ItemsRemoved` and `BytesFreed` are the measured differences. Neither is ever negative: a Recycle Bin
+that grew mid-run is reported as zero rather than as a negative removal.
+
+A volume counts as failed only when the Shell refused **and** something is demonstrably still in it.
+The Shell reports an error when asked to empty a Recycle Bin that is already empty, so trusting the
+HRESULT alone would fail a call that did exactly what was asked.
+
+### `GetStatusAsync`
+
+Whether the Recycle Bin is in use for one volume.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `volumeRoot` | `string` | Volume root to inspect. Must be a volume root, not a directory inside one. |
+| `cancellationToken` | `CancellationToken` | Checked before the work starts. |
+
+**Returns** a `RecycleBinStatus`. **Throws** `ArgumentException` for a null or blank path.
+
+Windows exposes no authoritative query for this. What happens on the next delete is decided by a group
+policy, by a per-volume setting the user owns, and by the kind of volume, so an answer that is only
+"off" throws away the one thing a caller can act on.
 
 ---
 
@@ -261,6 +334,7 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `Performing` | The Shell performed the delete and reported a failure for this item. |
 | `ReceiptVerification` | The delete reported success but the result did not reach the Recycle Bin. |
 | `LongPathNotRecyclable` | The path is too long for the Shell. It was never handed over. |
+| `Enumeration` | The Shell would not describe a Recycle Bin entry, or a volume could not be read. Only reachable while reading or emptying the Recycle Bin. |
 
 ### `LongPathFailureAction`
 
@@ -275,9 +349,142 @@ What to do with a path past the Shell's limit.
 `ThrowOnError` is the global switch and has the final say. With it off, `LongPathFailureAction.Throw`
 raises nothing and the path arrives in `Failures` instead.
 
+### `RecycleBinItem`
+
+One entry in the Recycle Bin. Immutable.
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `Name` | `string` | File or directory name, as it was before deletion. |
+| `OriginalPath` | `string` | Full path the entry was deleted from. |
+| `RecycledPath` | `string` | Physical path of the renamed `$R` entry, inside the Recycle Bin. The name cannot be reconstructed from the other fields, and this is what a restore or a targeted delete needs. |
+| `Size` | `long` | Size in bytes. `0` for a directory — see [Limitations](#limitations). |
+| `DeletedAt` | `DateTimeOffset` | When it was deleted, as recorded by the Shell, presented in the local offset. |
+| `IsDirectory` | `bool` | Whether the entry is a directory. |
+
+**Where each field comes from was measured, not assumed.** The obvious sources come back empty on a
+current Windows build, which is why this is worth stating:
+
+| Field | Source | What does *not* work |
+| --- | --- | --- |
+| `OriginalPath`, `Name` | `SIGDN_NORMALDISPLAY`, which the Shell fills with the full original path. `System.Recycle.DeletedFrom` holds only the directory, and is the fallback when the name is not rooted | `System.ItemNameDisplay` comes back empty |
+| `RecycledPath` | `SIGDN_FILESYSPATH` | — |
+| `DeletedAt` | `System.Recycle.DateDeleted` through `IShellItem2` | — |
+| `Size` | The entry's own file on disk | `System.Size` returns `0` for everything in the Recycle Bin |
+| `IsDirectory` | `SFGAO_FOLDER` | — |
+
+Binding an `IPropertyStore` onto a Recycle Bin entry answers `CO_E_NOT_SUPPORTED`, which is why the
+recycle properties are read through `IShellItem2` instead.
+
+> One original path can appear more than once. Deleting the same file twice leaves two entries with two
+> deletion times, and both are listed.
+
+### `RecycleBinContents`
+
+The outcome of a listing. Immutable.
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `Items` | `IReadOnlyList<RecycleBinItem>` | The entries that were read. |
+| `Failures` | `IReadOnlyList<RecycleFailure>` | Entries the Shell would not describe, at stage `Enumeration`. |
+| `Elapsed` | `TimeSpan` | Wall-clock time spent enumerating. |
+| `TotalSize` | `long` | Sum of `Size` over `Items`. |
+
+### `RecycleBinEmptyResult`
+
+The outcome of an empty. Immutable.
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `VolumesEmptied` | `IReadOnlyList<string>` | Volume roots covered, each with a trailing separator. |
+| `ItemsRemoved` | `long` | Entries that left the Recycle Bin. Measured, never negative. |
+| `BytesFreed` | `long` | Bytes they occupied. Measured, never negative. |
+| `Failures` | `IReadOnlyList<RecycleFailure>` | Volumes that could not be emptied or measured. |
+| `Elapsed` | `TimeSpan` | Wall-clock time, including the measurements around the Shell call. |
+
+### `RecycleBinStatus`
+
+The outcome of a status check. Immutable.
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `VolumeRoot` | `string` | The volume the answer is about. |
+| `DriveType` | `DriveType` | What kind of volume it is; `Unknown` when that could not be read. |
+| `Reason` | `RecycleBinAvailabilityReason` | Why it is or is not in use. |
+| `IsEnabled` | `bool` | `true` only when `Reason` is `Enabled`. |
+
+### `RecycleBinAvailabilityReason`
+
+| Value | Meaning |
+| --- | --- |
+| `Enabled` | Nothing disables the Recycle Bin for this volume. |
+| `DisabledByPolicy` | A group policy forbids it. Neither the user nor the application can change this, which is why it is named first whenever it applies. |
+| `DisabledByUserPreference` | This volume is set to delete immediately instead of recycling. The user can change it. |
+| `UnsupportedVolumeType` | The volume type has no Recycle Bin at all. |
+| `VolumeNotFound` | The volume is not mounted, or the path given is not a volume root. |
+| `Indeterminate` | The volume exists but the answer could not be established. Deliberately not `Enabled`. |
+
+`Enabled` is the only value that asserts a fact, and this library does not assert what it could not
+read. A volume whose GUID — which is what the per-volume setting is keyed on — cannot be resolved is
+reported as `Indeterminate`, never optimistically as enabled.
+
 ---
 
 ## Examples
+
+### List what is in the Recycle Bin
+
+```csharp
+var contents = await RecycleBin.GetItemsAsync();
+
+foreach (var item in contents.Items)
+{
+    Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+}
+
+Console.WriteLine($"{contents.Items.Count} item(s), {contents.TotalSize} byte(s)");
+```
+
+### List one volume, and hear about anything unreadable
+
+```csharp
+var onE = await RecycleBin.GetItemsAsync(@"E:\");
+
+foreach (var failure in onE.Failures)
+{
+    Console.Error.WriteLine($"could not read an entry: 0x{failure.HResult:X8}");
+}
+```
+
+### Empty the Recycle Bin and report what it freed
+
+```csharp
+var emptied = await RecycleBin.EmptyAsync(@"E:\");
+
+Console.WriteLine($"freed {emptied.BytesFreed} byte(s) from {emptied.ItemsRemoved} item(s)");
+
+foreach (var failure in emptied.Failures)
+{
+    Console.Error.WriteLine($"{failure.Path} was not emptied: 0x{failure.HResult:X8}");
+}
+```
+
+### Act on a volume whose Recycle Bin is switched off
+
+```csharp
+var status = await RecycleBin.GetStatusAsync(@"E:\");
+
+if (!status.IsEnabled)
+{
+    Console.Error.WriteLine($"the Recycle Bin is not in use on {status.VolumeRoot}: {status.Reason}");
+
+    // The reasons differ in who can fix them, which is why this is not a bool.
+    if (status.Reason is RecycleBinAvailabilityReason.DisabledByPolicy)
+    {
+        Console.Error.WriteLine("an administrator set this; nothing in the application can change it");
+    }
+}
+```
 
 ### Recycle a directory tree
 
@@ -373,11 +580,17 @@ Assert.All(result.RecycledPaths, path => Assert.False(File.Exists(path)));
 ```
 FileRecycler          validates, normalises, de-duplicates, dispatches
   └─ RecycleBinWorker one STA thread per process, warmed up, reused
-       └─ RecycleOperationRunner   attempt loop, selective retry, receipt check
-            ├─ ShellOperationContext   COM apartment + one reused IFileOperation
-            ├─ RecycleProgressSink     IFileOperationProgressSink -> hrDelete per item
-            ├─ RecycleBinReceipt       did it land in $RECYCLE.BIN?
-            └─ LongPathStager          short path on the same volume
+       ├─ RecycleOperationRunner   attempt loop, selective retry, receipt check
+       │    ├─ ShellOperationContext   COM apartment + one reused IFileOperation
+       │    ├─ RecycleProgressSink     IFileOperationProgressSink -> hrDelete per item
+       │    ├─ RecycleBinReceipt       did it land in $RECYCLE.BIN?
+       │    └─ LongPathStager          short path on the same volume
+       ├─ RecycleBinLister          virtual Recycle Bin folder -> per-entry properties
+       └─ RecycleBinCounter         SHQueryRecycleBin, for before-and-after measurement
+
+RecycleBin            validates, filters, reports
+  ├─ RecycleBinVolumeState  volume table + registry facts
+  └─ RecycleBinVolumePolicy the decision, separated so it can be checked exhaustively
 ```
 
 **One round, one answer per item.** Each round builds Shell items for the unfinished targets, queues
@@ -394,6 +607,21 @@ already on an STA thread, which keeps `CoInitializeEx` out of an incompatible ap
 **Paths exist in two forms.** `SHCreateItemFromParsingName` rejects the extended-length `\\?\` prefix
 with `E_INVALIDARG`, while the .NET file APIs require it. Paths are therefore kept both ways: the
 prefixed form for `File` and `Directory`, the plain form for the Shell.
+
+**Listing is one apartment, not one thread per caller.** Enumerating the Recycle Bin needs the same
+apartment as deleting from it, so it queues on the same worker. The cost of that choice is that a
+listing of a large Recycle Bin waits behind an in-flight batch rather than running beside it.
+
+**The Recycle Bin is reached by CLSID, not by path.** `C:\$Recycle.Bin` is the per-volume storage:
+enumerating it directly yields one folder per user SID instead of the deleted items, with the SYSTEM
+entry among them denying access to an unelevated process. The virtual folder aggregates every volume,
+which is also why filtering by volume is a filter and not a cheaper query.
+
+**Measured cost of a listing.** 523 entries took 337 ms, and 23 entries took 150 ms, so roughly 120 ms
+is the fixed cost of opening the aggregate folder and 0.4–0.6 ms is per entry. The per-entry cost is
+the Shell's: six COM round trips, of which reading the deletion time is only about 15%. The work this
+library adds per entry is one file-system stat. `GetStatusAsync`, which needs no COM, measures 0.06 ms
+a call.
 
 ---
 
@@ -419,6 +647,22 @@ Stated plainly, because these are properties of Windows rather than choices.
 - **A staging directory can survive a crash.** It is named `$RCW-<32 hex>` so a leftover is
   recognisable. Its presence is reported in `LeftoverStagingDirectory` when the process lives long
   enough to notice.
+- **A recycled directory reports `Size` as zero.** Its contents cannot be enumerated without
+  elevation, and the Shell reports those as zero too, so there is no figure to give. `IsDirectory` is
+  the honest signal that a size is not available.
+- **A listing covers every mounted volume, always.** Filtering by volume happens after enumeration
+  because the Recycle Bin is a single aggregate folder. A caller who wants only `E:\` still pays for
+  the volumes it does not care about, and it cannot see a volume that is not mounted.
+- **`GetStatusAsync` reports configuration, not behaviour.** It answers whether the Recycle Bin is
+  configured for a volume, not whether the next delete will land there. A volume mounted after the
+  call, or a policy applied after it, changes the answer without the call having been wrong. It is also
+  not consulted by anything else in this library: `FileRecycler` reports what the Shell actually did.
+- **The per-volume Recycle Bin capacity is not treated as a switch.** A capacity of `0` is not
+  reported as disabled, because the Recycle Bin dialog offers no such setting and no measurement of its
+  behaviour is recorded here.
+- **Emptying a large Recycle Bin is slow, and that is the Shell deleting files.** Measured: emptying
+  roughly 13,600 accumulated entries took 216 s. There is no progress callback to report from and no
+  way to make it incremental; a caller that needs responsiveness should empty one volume at a time.
 
 ---
 
@@ -427,18 +671,30 @@ Stated plainly, because these are properties of Windows rather than choices.
 ```bash
 dotnet run --project tests/RecycleBinToolkit.Tests -- --all
 dotnet run --project tests/RecycleBinToolkit.Tests -- --filter LongPathSuite
-dotnet run --project tests/RecycleBinToolkit.Tests -- --filter RecycleBinVolumeTracksCount
+dotnet run --project tests/RecycleBinToolkit.Tests -- --filter RecycleBinListingAgreesWithTheShellOracle
 ```
 
 `--filter` matches any part of a case name, and every case is named `<Suite>.<Case>`. It exits
 non-zero when a case fails.
 
-The suite is a console application with no external packages: 52 cases covering batch and single-path
+The suite is a console application with no external packages: 67 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies,
-and a ten-cycle stress run asserting 100 % Recycle Bin delivery with an independent
-`SHQueryRecycleBin` byte-count check. It writes only to `E:\RC\Test` (or the project root) and moves
-the committed fixture files it uses.
+and a ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing, emptying and status checking
+are covered by their own suites. It writes only to `E:\RC\Test` (or the project root) and moves the
+committed fixture files it uses.
+
+**The Recycle Bin suites empty it.** `EmptySuite` removes what the earlier suites recycled, and it is
+the only way to assert that an entry really left. Everything else only ever adds to it.
+
+**One test keeps the measurement honest.** Every suite reads the Recycle Bin through
+`RecycleBinProbe`, which uses the library's own listing API. That would prove only that the library
+agrees with itself, so `ShellSuite.RecycleBinListingAgreesWithTheShellOracle` asserts the same thing
+against `SHQueryRecycleBin` — a different call into the Shell that shares no code with the enumeration
+— on both sides of one known delete. On this machine the two report identical figures, which is what
+makes the rest of the delta assertions mean anything. The agreement is asserted in one place rather
+than in every suite on purpose: forty checks against the same API are still forty checks against the
+same API.
 
 The harness must cope with the Windows indexer: it creates and recycles thousands of files in one
 directory, so handles appear and disappear underneath it. Cleanup and staging both retry for that
