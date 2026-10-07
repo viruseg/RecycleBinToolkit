@@ -180,6 +180,12 @@ internal sealed unsafe class ShellOperationContext : IDisposable
     /// leaves the release to happen at an arbitrary later point, on whatever thread the finalizer runs,
     /// which for an object that must be released on one thread is a leak rather than a cleanup. So the
     /// object goes first, deterministically, and only then is the apartment released.
+    /// <para>
+    /// In the library this runs only from <see cref="Create"/>'s own failure path. The worker holds its
+    /// apartment for the lifetime of the process and has no shutdown path, so a healthy context is never
+    /// disposed — see the note at the worker's loop. The ordering still has to be right here rather than
+    /// being left to chance, because the one path that does run it must not be the one that leaks.
+    /// </para>
     /// </remarks>
     public void Dispose()
     {

@@ -238,10 +238,16 @@ internal static class RecycleBinWorker
 
             _warm.Set();
 
-            // No exit condition and no finally. The loop ends only if the thread is torn down, and a
-            // background thread that is torn down does not run managed finally blocks on the way — so a
-            // cleanup written there would look like it worked and never execute. The apartment is
-            // released by the process exiting, which is the same thing that ends this loop anyway.
+            // No exit condition, and deliberately no finally. The loop ends only if the thread is torn
+            // down, and a background thread that is torn down does not run managed finally blocks on the
+            // way out — so cleanup written there would look like it worked and never run.
+            //
+            // That is a real gap rather than a tidy one: the apartment and the operation object live until
+            // the process exits, so ShellOperationContext.Dispose is never reached from here. Dispose is
+            // still the correct implementation of IDisposable for that type, and Create's own failure path
+            // does reach it; what the library does not do is release a healthy apartment at shutdown,
+            // because there is no shutdown to release it on. A sentinel work item plus a join would be the
+            // way to change that, and nothing needs it today.
             while (true)
             {
                 _signal.Wait();

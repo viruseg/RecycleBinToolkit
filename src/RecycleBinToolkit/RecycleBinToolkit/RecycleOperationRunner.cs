@@ -1,3 +1,4 @@
+using System.Security;
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using Windows.Win32.UI.Shell;
@@ -434,8 +435,15 @@ for (var i = 0; i < pending.Count; i++)
         {
             File.Delete(target.FullPath);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        catch (Exception ex) when (ex is IOException
+            or UnauthorizedAccessException
+            or NotSupportedException
+            or ArgumentException
+            or SecurityException)
         {
+            // Everything File.Delete raises for one path. Run is documented never to throw for a per-item
+            // failure, so an exception type missing from here is a whole batch lost to one file rather than
+            // one failure recorded.
             refused = ex.HResult;
             return false;
         }

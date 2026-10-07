@@ -47,17 +47,37 @@ internal static class EmptySuite
             .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
+        // Occupy the worker first, so the empty cannot start until this finishes. Without that the queueing
+        // is indistinguishable from no queueing, and the assertion below would be satisfied by a worker-side
+        // measurement too — which is the whole question.
+        var blocking = RecycleBinWorker.RunAsync(
+            () =>
+            {
+                Thread.Sleep(WorkerOccupation);
+                return true;
+            },
+            context.CancellationToken);
+
         var stopwatch = Stopwatch.StartNew();
         var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
         stopwatch.Stop();
 
+        await blocking.ConfigureAwait(false);
+
         Check.True(
-            emptied.Elapsed > TimeSpan.Zero,
-            "the call reports the time it took rather than leaving it unset on the worker thread");
+            emptied.Elapsed >= WorkerOccupation - Slack,
+            $"the reported time includes waiting for the worker, not just the empty (reported {emptied.Elapsed.TotalMilliseconds:F0} ms, worker was occupied for {WorkerOccupation.TotalMilliseconds:F0} ms)");
+
         Check.True(
             emptied.Elapsed <= stopwatch.Elapsed,
-            $"the reported time covers the whole call and cannot exceed it (reported {emptied.Elapsed.TotalMilliseconds:F0} ms, call took {stopwatch.Elapsed.TotalMilliseconds:F0} ms)");
+            $"and it still cannot exceed the time the call itself took (reported {emptied.Elapsed.TotalMilliseconds:F0} ms, call took {stopwatch.Elapsed.TotalMilliseconds:F0} ms)");
     }
+
+    /// <summary>How long the worker is held before the empty is issued.</summary>
+    private static readonly TimeSpan WorkerOccupation = TimeSpan.FromMilliseconds(1500);
+
+    /// <summary>Slack for the sleep overshooting its own duration.</summary>
+    private static readonly TimeSpan Slack = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// The claim a caller depends on: after emptying, the entry is gone from the Recycle Bin, not
