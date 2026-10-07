@@ -149,7 +149,7 @@ public static class FileRecycler
             var failure = TryCreateTarget(filePaths[i], out var target);
             if (failure is null)
             {
-                targets.Add(target!);
+                targets.Add(target!.Value);
             }
             else
             {

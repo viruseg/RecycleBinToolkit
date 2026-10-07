@@ -3,7 +3,14 @@ namespace RecycleBinToolkit;
 /// <summary>
 /// One path to recycle, in every form the pipeline needs.
 /// </summary>
-internal sealed class RecycleTarget
+/// <remarks>
+/// A value type because a batch is a list of these and is held for the whole operation. As a reference
+/// type every path the caller ever passes would cost an object header and three references on top of the
+/// slot it occupies, which is a few megabytes of short-lived garbage across a hundred thousand paths for
+/// an operation dominated by Shell latency. Inline in the list, a target costs its three references and
+/// nothing else.
+/// </remarks>
+internal readonly struct RecycleTarget
 {
     private const string ExtendedPrefix = @"\\?\";
 

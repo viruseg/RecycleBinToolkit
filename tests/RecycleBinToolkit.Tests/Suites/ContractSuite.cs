@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit;
@@ -22,7 +23,58 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ItemOutcomeNamesTheStageItFailedAt), ItemOutcomeNamesTheStageItFailedAt),
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsOnlyValidWhereItIs), ExtendedPrefixIsOnlyValidWhereItIs),
         new TestCase("ContractSuite." + nameof(VolumeRootIsAlwaysARootWithASeparator), VolumeRootIsAlwaysARootWithASeparator),
+        new TestCase("ContractSuite." + nameof(ATargetCostsNoAllocationOfItsOwn), ATargetCostsNoAllocationOfItsOwn),
     ];
+
+    /// <summary>
+    /// A batch is a list of targets, and the list is held for the whole operation, so what a target costs
+    /// is a per-path cost across every path the caller ever passes.
+    /// </summary>
+    /// <remarks>
+    /// As a class, every path costs an object header and three references on top of the slot it occupies
+    /// in the list. A hundred thousand paths is a few megabytes of short-lived garbage for a delete that
+    /// is dominated by Shell latency anyway, which is the wrong place to pay. Measured rather than
+    /// asserted on the declaration, because that is the property that matters and it does not care how
+    /// the type is spelled.
+    /// <para>
+    /// The bound is a few bytes per target against roughly forty for a reference type. It is not tight,
+    /// and does not need to be: anything above zero per path means a target is still escaping.
+    /// </para>
+    /// </remarks>
+    private static Task ATargetCostsNoAllocationOfItsOwn(TestContext context)
+    {
+        const int Count = 200_000;
+        const int BytesPerTargetBudget = 8;
+
+        RecycleTarget[] warm = new RecycleTarget[1];
+        warm[0] = new RecycleTarget("a", "b", "c");
+        GC.KeepAlive(warm);
+
+        // The array is allocated before the measurement starts, so what is counted is the cost of
+        // constructing the targets rather than the storage the list needs either way.
+        var targets = new RecycleTarget[Count];
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        var before = GC.GetTotalAllocatedBytes(precise: true);
+        for (var i = 0; i < Count; i++)
+        {
+            targets[i] = new RecycleTarget("input", "full", "shell");
+        }
+
+        var allocated = GC.GetTotalAllocatedBytes(precise: true) - before;
+        var perTarget = allocated / (double)Count;
+
+        GC.KeepAlive(targets);
+
+        Check.True(
+            perTarget < BytesPerTargetBudget,
+            $"a target allocates nothing of its own (got {perTarget:F2} bytes per target over {Count} of them, budget {BytesPerTargetBudget})");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// A volume root is documented as always carrying a trailing separator, and the Shell and the volume
