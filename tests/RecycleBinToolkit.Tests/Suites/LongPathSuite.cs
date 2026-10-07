@@ -36,7 +36,56 @@ internal static class LongPathSuite
         new TestCase("LongPathSuite." + nameof(StagingDirectoryNamesAreUniqueAndShortEnough), StagingDirectoryNamesAreUniqueAndShortEnough),
         new TestCase("LongPathSuite." + nameof(StagingDirectoryIsRemovedAfterTheOperation), StagingDirectoryIsRemovedAfterTheOperation),
         new TestCase("LongPathSuite." + nameof(StagingKeepsAnythingItCouldNotRecover), StagingKeepsAnythingItCouldNotRecover),
+        new TestCase("LongPathSuite." + nameof(PermanentDeleteIsStillReportedAlongsideAValidationFailure), PermanentDeleteIsStillReportedAlongsideAValidationFailure),
     ];
+
+    /// <summary>
+    /// A batch that also carries a path validation failure comes back rebuilt, and the rebuild has to
+    /// carry everything the operation learned. Dropping the permanent-delete record is the worst of the
+    /// possibilities: the file is gone for good and the caller is never told.
+    /// </summary>
+    private static async Task PermanentDeleteIsStillReportedAlongsideAValidationFailure(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        try
+        {
+            var extendedPath = BuildLongPath('p').ExtendedPath;
+            using (var stream = new FileStream(extendedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(new byte[4096]);
+            }
+
+            var longPath = ScratchWorkspace.Root + Path.GetFileName(extendedPath);
+            var missing = Path.Combine(ScratchWorkspace.Root, "definitely-absent.bin");
+
+            var options = new RecycleBinOptions
+            {
+                ThrowOnError = false,
+                LongPathFailureAction = LongPathFailureAction.DeletePermanently
+            };
+
+            var result = await FileRecycler.MoveToRecycleBinAsync([missing, longPath], options, context.CancellationToken);
+
+            Check.False(result.Succeeded, "the missing path still makes the batch report failure");
+            Check.Equal(1, result.Failures.Count, "and it is the only failure");
+            Check.Equal(
+                RecycleFailureStage.PathValidation,
+                result.FirstFailure!.Stage,
+                "which is the validation failure the rebuild merged in");
+            Check.Equal(
+                1,
+                result.PermanentlyDeletedPaths.Count,
+                $"the long path is still named as permanently deleted (got {Describe(result)})");
+            Check.Equal(longPath, result.PermanentlyDeletedPaths[0], "and it is the caller's own path");
+            Check.False(File.Exists(ExtendedPrefix + longPath), "the long file is gone, as the caller asked for");
+        }
+        finally
+        {
+            workspace.Dispose();
+        }
+    }
 
     private static Task StagingDirectoryNamesAreUniqueAndShortEnough(TestContext context)
     {

@@ -18,7 +18,44 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsStrippedForTheShell), ExtendedPrefixIsStrippedForTheShell),
         new TestCase("ContractSuite." + nameof(ReceiptAcceptsAnExtendedLengthOriginal), ReceiptAcceptsAnExtendedLengthOriginal),
         new TestCase("ContractSuite." + nameof(ReceiptRejectsWhatItCannotProve), ReceiptRejectsWhatItCannotProve),
+        new TestCase("ContractSuite." + nameof(JoiningFailuresKeepsTheRestOfTheOutcome), JoiningFailuresKeepsTheRestOfTheOutcome),
     ];
+
+    /// <summary>
+    /// A batch that rejects a path before the Shell is reached has two failure lists to join. Everything
+    /// the operation already learned has to survive that join, in particular the two fields that report
+    /// unrecoverable outcomes rather than refusals.
+    /// </summary>
+    private static Task JoiningFailuresKeepsTheRestOfTheOutcome(TestContext context)
+    {
+        var validated = new RecycleFailure(@"E:\absent.bin", 0, 0, RecycleFailureStage.PathValidation);
+        var fromShell = new RecycleFailure(@"E:\locked.bin", unchecked((int)0x80070005), 2, RecycleFailureStage.Performing);
+
+        var original = RecycleBinResult.Create(
+            recycledPaths: [@"E:\recycled.bin"],
+            permanentlyDeletedPaths: [@"E:\long.bin"],
+            failures: [fromShell],
+            elapsed: TimeSpan.FromMilliseconds(40),
+            leftoverStagingDirectory: @"E:\$RCW-leftover");
+
+        var joined = original.WithFailures([validated, fromShell]);
+
+        Check.Equal(2, joined.Failures.Count, "both failures are carried");
+        Check.True(ReferenceEquals(validated, joined.FirstFailure), "the joined failure comes first");
+
+        Check.Equal(
+            original.PermanentlyDeletedPaths.Count,
+            joined.PermanentlyDeletedPaths.Count,
+            "a permanent deletion reported by the operation survives the join");
+        Check.Equal(
+            @"E:\$RCW-leftover",
+            joined.LeftoverStagingDirectory,
+            "a staging directory left behind survives the join, which is the only trace the data is there");
+        Check.Equal(1, joined.RecycledPaths.Count, "the recycled paths survive too");
+        Check.Equal(original.Elapsed, joined.Elapsed, "and so does the elapsed time");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// The receipt answers "did this land in the Recycle Bin on the item's own volume". Both inputs name

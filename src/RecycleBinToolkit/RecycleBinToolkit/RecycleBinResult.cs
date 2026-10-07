@@ -151,6 +151,21 @@ public sealed class RecycleBinResult
         new(recycledPaths, permanentlyDeletedPaths, failures, elapsed, leftoverStagingDirectory);
 
     /// <summary>
+    /// Returns a copy whose failures are exactly <paramref name="failures"/>, keeping every other part of
+    /// the outcome as it was.
+    /// </summary>
+    /// <remarks>
+    /// A batch that rejects some of its paths before the Shell is reached comes back needing the two
+    /// failure lists joined. Rebuilding it through the constructor that has no
+    /// <see cref="PermanentlyDeletedPaths"/> or <see cref="LeftoverStagingDirectory"/> would quietly
+    /// reset both, and those are the two fields a caller needs to learn that a file was removed for good
+    /// or that one could not be put back.
+    /// </remarks>
+    /// <param name="failures">The failures the copy should carry, in the order they should be read.</param>
+    internal RecycleBinResult WithFailures(IReadOnlyList<RecycleFailure> failures) =>
+        new(RecycledPaths, PermanentlyDeletedPaths, failures, Elapsed, LeftoverStagingDirectory);
+
+    /// <summary>
     /// Creates a result with nothing removed permanently.
     /// </summary>
     /// <param name="recycledPaths">Paths confirmed recycled, in caller-supplied form.</param>

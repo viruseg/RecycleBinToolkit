@@ -117,10 +117,7 @@ public static class FileRecycler
             return result;
         }
 
-        return RecycleBinResult.Create(
-            result.RecycledPaths,
-            [.. validationFailures, .. result.Failures],
-            result.Elapsed);
+        return result.WithFailures([.. validationFailures, .. result.Failures]);
     }
 
     private static void ThrowForSinglePath(RecycleFailure failure)
