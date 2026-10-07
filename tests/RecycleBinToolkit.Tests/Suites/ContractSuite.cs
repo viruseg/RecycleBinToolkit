@@ -21,7 +21,33 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(JoiningFailuresKeepsTheRestOfTheOutcome), JoiningFailuresKeepsTheRestOfTheOutcome),
         new TestCase("ContractSuite." + nameof(ItemOutcomeNamesTheStageItFailedAt), ItemOutcomeNamesTheStageItFailedAt),
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsOnlyValidWhereItIs), ExtendedPrefixIsOnlyValidWhereItIs),
+        new TestCase("ContractSuite." + nameof(VolumeRootIsAlwaysARootWithASeparator), VolumeRootIsAlwaysARootWithASeparator),
     ];
+
+    /// <summary>
+    /// A volume root is documented as always carrying a trailing separator, and the Shell and the volume
+    /// APIs both require one. The tricky input is a bare drive letter: <c>Path.GetPathRoot</c> answers
+    /// <c>E:</c> for it, which is a drive-relative path rather than a root, and which
+    /// <c>GetVolumeNameForVolumeMountPoint</c> rejects.
+    /// </summary>
+    private static Task VolumeRootIsAlwaysARootWithASeparator(TestContext context)
+    {
+        Check.Equal(@"E:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"E:"), "a bare drive letter gains its separator");
+        Check.Equal(@"E:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"E:\"), "a root that already has one is unchanged");
+        Check.Equal(@"E:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"E:\work"), "a path inside a volume collapses to its root");
+        Check.Equal(@"e:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"e:"), "a lower-case drive letter keeps its case and gains its separator");
+
+        Check.Equal(
+            @"\\server\share" + Path.DirectorySeparatorChar,
+            RecycleBinVolumeState.NormalizeVolumeRoot(@"\\server\share"),
+            "a UNC share is a volume root too");
+        Check.Equal(
+            @"\\server\share" + Path.DirectorySeparatorChar,
+            RecycleBinVolumeState.NormalizeVolumeRoot(@"\\server\share\work\report.bin"),
+            "a path inside a UNC share collapses to the share root");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// The <c>\\?\</c> prefix is not a marker that can be put in front of any long path. It means

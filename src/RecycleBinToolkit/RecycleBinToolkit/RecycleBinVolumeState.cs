@@ -25,14 +25,14 @@ internal static class RecycleBinVolumeState
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(volumeRoot);
 
-        var root = Path.GetPathRoot(volumeRoot);
+        var root = NormalizeVolumeRoot(volumeRoot);
 
         // A path that is not a volume root is not a question about a volume, and a drive letter that
         // is not mounted has no volume table entry behind it. Both are answered before anything else
         // so a caller never reads them as a Recycle Bin that happens to be off.
-        if (string.IsNullOrEmpty(root) || !IsVolumeRoot(volumeRoot) || !Directory.Exists(root))
+        if (string.IsNullOrEmpty(Path.GetPathRoot(volumeRoot)) || !IsVolumeRoot(volumeRoot) || !Directory.Exists(root))
         {
-            return new RecycleBinStatus(Normalize(volumeRoot), DriveType.Unknown, RecycleBinAvailabilityReason.VolumeNotFound);
+            return new RecycleBinStatus(root, DriveType.Unknown, RecycleBinAvailabilityReason.VolumeNotFound);
         }
 
         var driveType = ReadDriveType(root);
@@ -90,16 +90,32 @@ internal static class RecycleBinVolumeState
         return new string(buffer).TrimEnd('\\');
     }
 
-    private static string Normalize(string volumeRoot)
+    /// <summary>
+    /// The volume a path belongs to, always in the form the Shell and the volume APIs accept: a root with
+    /// a trailing separator.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Path.GetPathRoot(string)"/> answers <c>E:</c> for a bare drive letter, which is a
+    /// drive-relative path rather than a root and is rejected by
+    /// <c>GetVolumeNameForVolumeMountPoint</c>. Collapsing to a root alone is therefore not enough: the
+    /// separator has to be added back.
+    /// </remarks>
+    /// <param name="volumeRoot">A volume root or any path inside one.</param>
+    internal static string NormalizeVolumeRoot(string volumeRoot)
     {
         var root = Path.GetPathRoot(volumeRoot);
-        if (!string.IsNullOrEmpty(root))
+        if (string.IsNullOrEmpty(root))
         {
-            return root;
+            return AppendSeparator(volumeRoot);
         }
 
-        return volumeRoot.EndsWith(Path.DirectorySeparatorChar) || volumeRoot.EndsWith(Path.AltDirectorySeparatorChar)
-            ? volumeRoot
-            : volumeRoot + Path.DirectorySeparatorChar;
+        return root.EndsWith(Path.DirectorySeparatorChar) || root.EndsWith(Path.AltDirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
     }
+
+    private static string AppendSeparator(string path) =>
+        path.EndsWith(Path.DirectorySeparatorChar) || path.EndsWith(Path.AltDirectorySeparatorChar)
+            ? path
+            : path + Path.DirectorySeparatorChar;
 }

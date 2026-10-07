@@ -18,7 +18,35 @@ internal static class StatusSuite
         new TestCase("StatusSuite." + nameof(StatusReportsAPathThatIsNotAVolumeAsNotFound), StatusReportsAPathThatIsNotAVolumeAsNotFound),
         new TestCase("StatusSuite." + nameof(StatusSeparatesTheReasonsItCanReport), StatusSeparatesTheReasonsItCanReport),
         new TestCase("StatusSuite." + nameof(StatusNeverReportsEnabledWithoutAFact), StatusNeverReportsEnabledWithoutAFact),
+        new TestCase("StatusSuite." + nameof(StatusAgreesWhateverSpellingOfTheRootItIsGiven), StatusAgreesWhateverSpellingOfTheRootItIsGiven),
     ];
+
+    /// <summary>
+    /// A caller holding a volume as <c>E:</c> and a caller holding the same volume as <c>E:\</c> are
+    /// asking the same question, and have to get the same answer.
+    /// </summary>
+    /// <remarks>
+    /// <c>Path.GetPathRoot("E:")</c> is <c>E:</c>, which is a drive-relative path rather than a root. It
+    /// satisfies an equality check against itself while being useless to
+    /// <c>GetVolumeNameForVolumeMountPoint</c>, which needs the trailing separator — so the volume GUID
+    /// came back unreadable and the answer degraded to Indeterminate for a volume that is plainly there.
+    /// </remarks>
+    private static async Task StatusAgreesWhateverSpellingOfTheRootItIsGiven(TestContext context)
+    {
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
+        var withSeparator = await RecycleBin.GetStatusAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+        var bare = await RecycleBin.GetStatusAsync(volumeRoot.TrimEnd(Path.DirectorySeparatorChar), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(withSeparator.VolumeRoot, bare.VolumeRoot, "both spellings report the same volume root");
+        Check.Equal(withSeparator.DriveType, bare.DriveType, "and the same drive type");
+        Check.Equal(withSeparator.Reason, bare.Reason, "and the same reason, so the answer does not depend on the spelling");
+        Check.Equal(
+            RecycleBinAvailabilityReason.Enabled,
+            bare.Reason,
+            $"a volume that has just accepted a delete is not Indeterminate (got {bare.Reason})");
+    }
 
     /// <summary>
     /// The registry can say one thing while the volume does another, so the answer is checked against

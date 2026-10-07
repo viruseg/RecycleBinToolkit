@@ -240,18 +240,8 @@ public static class RecycleBin
         return kept;
     }
 
-    private static string NormalizeRoot(string volumeRoot)
-    {
-        var root = Path.GetPathRoot(volumeRoot);
-        if (!string.IsNullOrEmpty(root))
-        {
-            return root;
-        }
-
-        return volumeRoot.EndsWith(Path.DirectorySeparatorChar) || volumeRoot.EndsWith(Path.AltDirectorySeparatorChar)
-            ? volumeRoot
-            : volumeRoot + Path.DirectorySeparatorChar;
-    }
+    private static string NormalizeRoot(string volumeRoot) =>
+        RecycleBinVolumeState.NormalizeVolumeRoot(volumeRoot);
 
     private static long TotalSize(IReadOnlyList<RecycleBinItem> items)
     {
