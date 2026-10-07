@@ -8,7 +8,7 @@ namespace RecycleBinToolkit;
 /// <param name="Elapsed">Wall-clock time spent enumerating.</param>
 public sealed class RecycleBinContents
 {
-    /// <summary>Creates a listing.</summary>
+    /// <summary>Creates a listing, deriving its total from the items.</summary>
     /// <param name="items">The items that were read.</param>
     /// <param name="failures">Items or volumes that could not be read.</param>
     /// <param name="elapsed">Wall-clock time spent enumerating.</param>
@@ -20,6 +20,14 @@ public sealed class RecycleBinContents
         Items = items;
         Failures = failures;
         Elapsed = elapsed;
+
+        long total = 0;
+        foreach (var item in items)
+        {
+            total += item.Size;
+        }
+
+        TotalSize = total;
     }
 
     /// <summary>The items that were read.</summary>
@@ -31,6 +39,6 @@ public sealed class RecycleBinContents
     /// <summary>Wall-clock time spent enumerating.</summary>
     public TimeSpan Elapsed { get; }
 
-    /// <summary>Sum of <see cref="RecycleBinItem.Size"/> over <see cref="Items"/>.</summary>
-    public long TotalSize { get; init; }
+    /// <summary>Sum of <see cref="RecycleBinItem.Size"/> over <see cref="Items"/>, derived when the listing was built.</summary>
+    public long TotalSize { get; }
 }

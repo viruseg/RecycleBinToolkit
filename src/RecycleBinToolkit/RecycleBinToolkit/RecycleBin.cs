@@ -54,10 +54,7 @@ public static class RecycleBin
 
         var items = Filter(collected.Items, volumeRoot);
 
-        return new RecycleBinContents(items, collected.Failures, stopwatch.Elapsed)
-        {
-            TotalSize = TotalSize(items)
-        };
+        return new RecycleBinContents(items, collected.Failures, stopwatch.Elapsed);
     }
 
     /// <summary>
@@ -117,10 +114,9 @@ public static class RecycleBin
 
         RecycleBinLister.TryEnumerate(items, failures);
 
-        return new RecycleBinContents(items, failures, TimeSpan.Zero)
-        {
-            TotalSize = TotalSize(items)
-        };
+        // The elapsed time is measured by the caller, around the wait for this worker, so that it covers
+        // what the caller waited rather than how long this part of it took.
+        return new RecycleBinContents(items, failures, TimeSpan.Zero);
     }
 
     /// <summary>
@@ -242,15 +238,4 @@ public static class RecycleBin
 
     private static string NormalizeRoot(string volumeRoot) =>
         RecycleBinVolumeState.NormalizeVolumeRoot(volumeRoot);
-
-    private static long TotalSize(IReadOnlyList<RecycleBinItem> items)
-    {
-        long total = 0;
-        foreach (var item in items)
-        {
-            total += item.Size;
-        }
-
-        return total;
-    }
 }

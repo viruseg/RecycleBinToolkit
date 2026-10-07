@@ -25,6 +25,7 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(VolumeRootIsAlwaysARootWithASeparator), VolumeRootIsAlwaysARootWithASeparator),
         new TestCase("ContractSuite." + nameof(ATargetCostsNoAllocationOfItsOwn), ATargetCostsNoAllocationOfItsOwn),
         new TestCase("ContractSuite." + nameof(ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed), ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed),
+        new TestCase("ContractSuite." + nameof(ContentsTotalIsDerivedNotDeclared), ContentsTotalIsDerivedNotDeclared),
     ];
 
     /// <summary>
@@ -69,6 +70,36 @@ internal static class ContractSuite
     /// and does not need to be: anything above zero per path means a target is still escaping.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// A constructed listing must already state its own total, and a listing built around items that were
+    /// added afterwards must not claim one.
+    /// </summary>
+    /// <remarks>
+    /// The total was a settable property alongside a public constructor, so a caller could build a
+    /// listing and leave it claiming zero bytes for a Recycle Bin holding files. It is now derived from
+    /// the items at construction, which is the only place the items and the total can disagree if the
+    /// type is ever changed again.
+    /// </remarks>
+    private static Task ContentsTotalIsDerivedNotDeclared(TestContext context)
+    {
+        var items = new[]
+        {
+            new RecycleBinItem("a.bin", @"E:\a.bin", @"E:\$Recycle.Bin\S\$RA.bin", 4096, default, false),
+            new RecycleBinItem("b.bin", @"E:\b.bin", @"E:\$Recycle.Bin\S\$RB.bin", 1024, default, false)
+        };
+
+        var contents = new RecycleBinContents(items, [], TimeSpan.FromMilliseconds(5));
+
+        Check.Equal(5120L, contents.TotalSize, "the total is the sum of the items' sizes");
+        Check.Equal(2, contents.Items.Count, "the items are carried through");
+        Check.Equal(TimeSpan.FromMilliseconds(5), contents.Elapsed, "the elapsed time is carried through");
+
+        var empty = new RecycleBinContents([], [], TimeSpan.Zero);
+        Check.Equal(0L, empty.TotalSize, "a listing with no items totals nothing rather than claiming a default");
+
+        return Task.CompletedTask;
+    }
+
     private static Task ATargetCostsNoAllocationOfItsOwn(TestContext context)
     {
         const int Count = 200_000;
