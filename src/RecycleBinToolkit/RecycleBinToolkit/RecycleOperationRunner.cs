@@ -51,12 +51,20 @@ internal sealed class RecycleOperationRunner
         private int[] _buildable = [];
         private int[] _queueable = [];
         private string[] _queuedPaths = [];
+        private bool[] _succeeded = [];
+        private IShellItem?[] _items = [];
 
         internal int[] Buildable => _buildable;
 
         internal int[] Queueable => _queueable;
 
         internal string[] QueuedPaths => _queuedPaths;
+
+        /// <summary>Per-item verdicts for the round about to run.</summary>
+        internal bool[] Succeeded => _succeeded;
+
+        /// <summary>The Shell item for each target, or <see langword="null"/> where none was built.</summary>
+        internal IShellItem?[] Items => _items;
 
         /// <summary>Grows the buffers so a batch of <paramref name="count"/> items fits without resizing mid-round.</summary>
         internal void EnsureCapacity(int count)
@@ -66,7 +74,26 @@ internal sealed class RecycleOperationRunner
                 _buildable = new int[count];
                 _queueable = new int[count];
                 _queuedPaths = new string[count];
+                _succeeded = new bool[count];
+                _items = new IShellItem?[count];
             }
+        }
+
+        /// <summary>
+        /// Prepares the buffers for a round over <paramref name="count"/> targets.
+        /// </summary>
+        /// <remarks>
+        /// The item buffer is cleared rather than assumed empty because a round writes only where a
+        /// Shell item was built. Without this, a target the Shell refuses would read as carrying the
+        /// previous round's item, and the stale reference would also keep that item's apartment object
+        /// alive for as long as the runner is.
+        /// </remarks>
+        internal void BeginRound(int count)
+        {
+            EnsureCapacity(count);
+
+            Array.Clear(_succeeded, 0, count);
+            Array.Clear(_items, 0, count);
         }
     }
 
@@ -401,12 +428,11 @@ internal sealed class RecycleOperationRunner
         RecycleFailureStage[] lastStage,
         RoundScratch scratch)
     {
-        var succeeded = new bool[targets.Count];
-        var items = new IShellItem?[targets.Count];
-
-        scratch.EnsureCapacity(targets.Count);
+        scratch.BeginRound(targets.Count);
         var buildable = scratch.Buildable;
         var queuedPaths = scratch.QueuedPaths;
+        var items = scratch.Items;
+        var succeeded = scratch.Succeeded;
         var buildableCount = 0;
 
         for (var i = 0; i < targets.Count; i++)
