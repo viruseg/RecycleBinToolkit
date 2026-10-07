@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace RecycleBinToolkit;
 
 /// <summary>
@@ -25,11 +27,9 @@ internal sealed class LongPathStager : IDisposable
 
     private const int NameAttempts = 8;
     private const int IdempotenceAttempts = 2;
-    private const int StageAttempts = 4;
 
     private readonly Dictionary<string, string> _byVolumeRoot = new(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly TimeSpan StageRetryDelay = TimeSpan.FromMilliseconds(60);
 
     private bool _released;
 
@@ -43,11 +43,16 @@ internal sealed class LongPathStager : IDisposable
     /// Moves an item to a short path on its own volume, creating that volume's staging directory the
     /// first time it is needed.
     /// </summary>
+    /// <remarks>
+    /// One attempt per call and no waiting between them. A rename that fails on a sharing violation is
+    /// usually a transient hold by the indexer or antivirus, so the caller retries; retrying a whole batch
+    /// at once rather than one path at a time is what keeps that backoff from being paid once per item.
+    /// </remarks>
     /// <returns>
     /// The extended-length staging path, or <see langword="null"/> when the move could not be made — a
     /// volume whose root is not writable, or an item locked by another process.
     /// </returns>
-    internal string? TryStage(string fullPath)
+    internal string? TryStageOnce(string fullPath)
     {
         ObjectDisposedException.ThrowIf(_released, this);
 
@@ -63,39 +68,26 @@ internal sealed class LongPathStager : IDisposable
             return null;
         }
 
-        // A rename that fails on a sharing violation is usually a transient hold by the indexer or
-        // antivirus, which the tests provoke constantly by creating and recycling files in one
-        // directory. Retrying costs a few milliseconds and turns a spurious failure into a successful
-        // recycle, which matters more here than anywhere else in the pipeline: the alternative is a
-        // long path the caller has to handle as an error.
-        for (var attempt = 1; ; attempt++)
+        var staged = Path.Combine(
+            stagingRoot,
+            string.Create(CultureInfo.InvariantCulture, $"{Guid.NewGuid():N}{Path.GetExtension(fullPath)}"));
+
+        try
         {
-            var staged = Path.Combine(
-                stagingRoot,
-                string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Guid.NewGuid():N}{Path.GetExtension(fullPath)}"));
-
-            try
+            if (Directory.Exists(fullPath))
             {
-                if (Directory.Exists(fullPath))
-                {
-                    Directory.Move(PathForIo(fullPath), PathForIo(staged));
-                }
-                else
-                {
-                    File.Move(PathForIo(fullPath), PathForIo(staged));
-                }
-
-                return PathForIo(staged);
+                Directory.Move(PathForIo(fullPath), PathForIo(staged));
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+            else
             {
-                if (attempt >= StageAttempts)
-                {
-                    return null;
-                }
-
-                Thread.Sleep(StageRetryDelay);
+                File.Move(PathForIo(fullPath), PathForIo(staged));
             }
+
+            return PathForIo(staged);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            return null;
         }
     }
 

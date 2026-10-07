@@ -22,6 +22,11 @@ internal sealed class RecycleOperationRunner
     private const double MaxJitterFraction = 0.25;
     private const double MaxDelayMilliseconds = 9.0e12;
 
+    /// <summary>How many times a rename into the staging directory is attempted before the path is refused.</summary>
+    private const int StageAttempts = 4;
+
+    private static readonly TimeSpan StageRetryDelay = TimeSpan.FromMilliseconds(60);
+
     /// <summary>Value meaning "this item has no verdict yet". Never a real Shell code.</summary>
     private const int NoVerdict = 0;
 
@@ -267,6 +272,8 @@ internal sealed class RecycleOperationRunner
         LongPathStager stager,
         List<RecycleFailure> failures)
     {
+        var awaitingStaging = new List<RecycleTarget>();
+
         foreach (var target in unrecyclable)
         {
             if (options.LongPathFailureAction == LongPathFailureAction.DeletePermanently)
@@ -286,14 +293,59 @@ internal sealed class RecycleOperationRunner
 
             if (options.LongPathFailureAction == LongPathFailureAction.ShortenPathAndRecycle)
             {
-                var stagedPath = stager.TryStage(target.FullPath);
+                awaitingStaging.Add(target);
+                continue;
+            }
+
+            failures.Add(new RecycleFailure(target.InputPath, PathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable));
+        }
+
+        StageWithBatchRetries(awaitingStaging, staged, stager, failures);
+    }
+
+    /// <summary>
+    /// Stages a batch of long paths, giving every one of them an attempt before any of them waits.
+    /// </summary>
+    /// <remarks>
+    /// A rename that loses a race with the indexer or antivirus is worth retrying, and the tests provoke
+    /// exactly that by creating and recycling thousands of files in one directory. Retrying per path
+    /// means a contended batch pays the whole backoff once per item, on the one thread every other Shell
+    /// caller queues behind. Attempting the batch first and only then waiting turns that into a single
+    /// backoff for the batch, at the same cost to each individual path.
+    /// </remarks>
+    private static void StageWithBatchRetries(
+        List<RecycleTarget> awaitingStaging,
+        List<StagedTarget> staged,
+        LongPathStager stager,
+        List<RecycleFailure> failures)
+    {
+        for (var attempt = 1; attempt <= StageAttempts && awaitingStaging.Count > 0; attempt++)
+        {
+            if (attempt > 1)
+            {
+                Thread.Sleep(StageRetryDelay);
+            }
+
+            var stillWaiting = new List<RecycleTarget>();
+
+            foreach (var target in awaitingStaging)
+            {
+                var stagedPath = stager.TryStageOnce(target.FullPath);
                 if (stagedPath is not null)
                 {
                     staged.Add(new StagedTarget(target.WithShellPath(stagedPath), target.FullPath));
-                    continue;
+                }
+                else
+                {
+                    stillWaiting.Add(target);
                 }
             }
 
+            awaitingStaging = stillWaiting;
+        }
+
+        foreach (var target in awaitingStaging)
+        {
             failures.Add(new RecycleFailure(target.InputPath, PathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable));
         }
     }

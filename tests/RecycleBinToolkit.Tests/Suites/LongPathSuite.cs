@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
@@ -38,7 +39,74 @@ internal static class LongPathSuite
         new TestCase("LongPathSuite." + nameof(StagingKeepsAnythingItCouldNotRecover), StagingKeepsAnythingItCouldNotRecover),
         new TestCase("LongPathSuite." + nameof(PermanentDeleteIsStillReportedAlongsideAValidationFailure), PermanentDeleteIsStillReportedAlongsideAValidationFailure),
         new TestCase("LongPathSuite." + nameof(LockedLongPathFailsTheBatchInsteadOfThrowing), LockedLongPathFailsTheBatchInsteadOfThrowing),
+        new TestCase("LongPathSuite." + nameof(AContendedBatchIsNotRetriedOnePathAtATime), AContendedBatchIsNotRetriedOnePathAtATime),
     ];
+
+    /// <summary>
+    /// The wait between staging retries must be paid once for the batch, not once per path.
+    /// </summary>
+    /// <remarks>
+    /// Staging is a rename, and a rename can lose a race with the indexer or antivirus, so it is
+    /// retried. Doing that per path means a batch of contended paths spends the whole backoff sequence
+    /// on each one in turn — and the Shell worker is a single thread that everything else queues behind,
+    /// so that is dead time for every other caller in the process. Trying each path once first and only
+    /// then retrying what failed collapses it to one sequence.
+    /// <para>
+    /// The bound is loose on purpose: serial retry of six paths needs at least six times the backoff,
+    /// batched needs about one, and anything in between would mean the two are not as different as the
+    /// shape of the loop suggests.
+    /// </para>
+    /// </remarks>
+    private static async Task AContendedBatchIsNotRetriedOnePathAtATime(TestContext context)
+    {
+        const int pathCount = 6;
+
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        try
+        {
+            var held = new List<FileStream>(pathCount);
+            var paths = new List<string>(pathCount);
+
+            for (var i = 0; i < pathCount; i++)
+            {
+                var extendedPath = BuildLongPath((char)('a' + i)).ExtendedPath;
+                File.WriteAllBytes(extendedPath, new byte[4096]);
+
+                held.Add(new FileStream(extendedPath, FileMode.Open, FileAccess.Read, FileShare.Read));
+                paths.Add(ScratchWorkspace.Root + Path.GetFileName(extendedPath));
+            }
+
+            var options = new RecycleBinOptions
+            {
+                ThrowOnError = false,
+                LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
+            };
+
+            var stopwatch = Stopwatch.StartNew();
+            var result = await FileRecycler.MoveToRecycleBinAsync(paths, options, context.CancellationToken);
+            stopwatch.Stop();
+
+            foreach (var stream in held)
+            {
+                stream.Dispose();
+            }
+
+            Check.False(result.Succeeded, "every path is held, so none of them can be staged");
+            Check.Equal(pathCount, result.Failures.Count, "and every one of them is reported");
+
+            const int SerialRetryFloorMs = 900;
+            Check.True(
+                stopwatch.ElapsedMilliseconds < SerialRetryFloorMs,
+                $"{pathCount} contended paths are retried as a batch, not one after another (took {stopwatch.ElapsedMilliseconds} ms, " +
+                $"a per-path retry sequence for {pathCount} paths would not fit under {SerialRetryFloorMs} ms)");
+        }
+        finally
+        {
+            workspace.Dispose();
+        }
+    }
 
     /// <summary>
     /// A per-item failure is data, never an exception. One locked file in a batch has to cost that file
@@ -215,7 +283,7 @@ internal static class LongPathSuite
             var stager = new LongPathStager();
             var file = workspace.CreateRandomFile(4096);
 
-            var staged = stager.TryStage(file);
+            var staged = stager.TryStageOnce(file);
             Check.NotNull(staged, $"the item was staged ({staged})");
             Check.False(File.Exists(file), "the item left its original location");
 
