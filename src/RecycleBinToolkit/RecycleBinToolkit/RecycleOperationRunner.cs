@@ -30,6 +30,12 @@ internal sealed class RecycleOperationRunner
     /// <summary>Value meaning "this item has no verdict yet". Never a real Shell code.</summary>
     private const int NoVerdict = 0;
 
+    /// <summary>
+    /// How the per-item bookkeeping compares the caller's paths, so that two spellings of one path cannot
+    /// end up with separate verdicts.
+    /// </summary>
+    private static readonly StringComparer PathComparer = StringComparer.OrdinalIgnoreCase;
+
     /// <summary>Win32 <c>ERROR_FILENAME_EXCED_RANGE</c>, used to mark a path the Shell cannot recycle.</summary>
     private const int PathTooLong = unchecked((int)0x800700CE);
 
@@ -191,9 +197,14 @@ internal sealed class RecycleOperationRunner
             ? recyclable
             : [.. recyclable, .. staged.Select(entry => entry.Target)];
 
-        var attempts = new int[pending.Count];
-        var lastHResult = new int[pending.Count];
-        var lastStage = new RecycleFailureStage[pending.Count];
+        // Verdicts are held in dictionaries keyed by the caller's own path rather than by position in the
+        // pending list. A round that succeeds for some items shortens that list, so an array would slide
+        // every remaining verdict up a slot and a later round would read one item's code back against
+        // another item — reporting a failure that names one file and gives it another's error code and
+        // stage. Keys are unique because the batch is collapsed before this point.
+        var attempts = new Dictionary<string, int>(pending.Count, PathComparer);
+        var lastHResult = new Dictionary<string, int>(pending.Count, PathComparer);
+        var lastStage = new Dictionary<string, RecycleFailureStage>(pending.Count, PathComparer);
         var scratch = new RoundScratch();
         var deadline = _stopwatch.Elapsed + options.OverallTimeout;
 
@@ -203,15 +214,15 @@ internal sealed class RecycleOperationRunner
 
             var outcome = RunRound(pending, options, lastHResult, lastStage, scratch);
 
-            for (var i = 0; i < pending.Count; i++)
-            {
-                attempts[i] = round;
+for (var i = 0; i < pending.Count; i++)
+        {
+            attempts[pending[i].InputPath] = round;
 
-                if (outcome.Succeeded[i])
-                {
-                    recycled.Add(pending[i].InputPath);
-                }
+            if (outcome.Succeeded[i])
+            {
+                recycled.Add(pending[i].InputPath);
             }
+        }
 
             var stillPending = new List<RecycleTarget>(pending.Count);
             for (var i = 0; i < pending.Count; i++)
@@ -235,9 +246,13 @@ internal sealed class RecycleOperationRunner
             }
         }
 
-        for (var i = 0; i < pending.Count; i++)
+        foreach (var target in pending)
         {
-            failures.Add(new RecycleFailure(pending[i].InputPath, lastHResult[i], attempts[i], lastStage[i]));
+            failures.Add(new RecycleFailure(
+                target.InputPath,
+                lastHResult.GetValueOrDefault(target.InputPath),
+                attempts.GetValueOrDefault(target.InputPath),
+                lastStage.GetValueOrDefault(target.InputPath, RecycleFailureStage.Performing)));
         }
 
         RestoreUnrecycledStagedItems(staged, recyclable);
@@ -450,8 +465,8 @@ internal sealed class RecycleOperationRunner
     private RoundOutcome RunRound(
         IReadOnlyList<RecycleTarget> targets,
         RecycleBinOptions options,
-        int[] lastHResult,
-        RecycleFailureStage[] lastStage,
+        Dictionary<string, int> lastHResult,
+        Dictionary<string, RecycleFailureStage> lastStage,
         RoundScratch scratch)
     {
         scratch.BeginRound(targets.Count);
@@ -470,7 +485,7 @@ internal sealed class RecycleOperationRunner
             }
             else
             {
-                RecordVerdict(lastHResult, lastStage, i, itemHResult, RecycleFailureStage.ShellItemCreation);
+                RecordVerdict(lastHResult, lastStage, targets[i].InputPath, itemHResult, RecycleFailureStage.ShellItemCreation);
             }
         }
 
@@ -498,7 +513,7 @@ internal sealed class RecycleOperationRunner
             }
             else
             {
-                RecordVerdict(lastHResult, lastStage, i, queueHResult, RecycleFailureStage.Queueing);
+                RecordVerdict(lastHResult, lastStage, targets[i].InputPath, queueHResult, RecycleFailureStage.Queueing);
             }
         }
 
@@ -515,7 +530,7 @@ internal sealed class RecycleOperationRunner
             if (!sink.TryGetOutcome(target.ShellPath, out var hResult, out var newItemPath))
             {
                 // Queued but the Shell never reported on it: unfinished, not a success.
-                RecordVerdict(lastHResult, lastStage, i, hResult, RecycleFailureStage.Performing);
+                RecordVerdict(lastHResult, lastStage, targets[i].InputPath, hResult, RecycleFailureStage.Performing);
                 continue;
             }
 
@@ -528,7 +543,7 @@ internal sealed class RecycleOperationRunner
 
             if (stage is not null)
             {
-                RecordVerdict(lastHResult, lastStage, i, hResult, stage.Value);
+                RecordVerdict(lastHResult, lastStage, targets[i].InputPath, hResult, stage.Value);
                 continue;
             }
 
@@ -585,20 +600,19 @@ internal sealed class RecycleOperationRunner
     /// cause, so reporting it would send an integrator looking for the wrong problem.
     /// </summary>
     private static void RecordVerdict(
-        int[] lastHResult,
-        RecycleFailureStage[] lastStage,
-        int index,
+        Dictionary<string, int> lastHResult,
+        Dictionary<string, RecycleFailureStage> lastStage,
+        string path,
         int hResult,
         RecycleFailureStage stage)
     {
-        var existing = lastHResult[index];
-        if (existing != NoVerdict && existing != RecycleProgressSink.Unreported)
+        if (lastHResult.TryGetValue(path, out var existing) && existing != NoVerdict && existing != RecycleProgressSink.Unreported)
         {
             return;
         }
 
-        lastHResult[index] = hResult;
-        lastStage[index] = stage;
+        lastHResult[path] = hResult;
+        lastStage[path] = stage;
     }
 
     /// <summary>

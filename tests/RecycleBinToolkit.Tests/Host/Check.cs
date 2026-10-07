@@ -62,6 +62,14 @@ internal static class Check
         throw new CheckFailedException($"expected {typeof(TException).Name} but nothing was thrown: {because}");
     }
 
+    internal static void NotEqual<T>(T unexpected, T actual, string because)
+    {
+        if (EqualityComparer<T>.Default.Equals(unexpected, actual))
+        {
+            throw new CheckFailedException($"expected anything but {Format(unexpected)}: {because}");
+        }
+    }
+
     private static string Format<T>(T value) => value switch
     {
         null => "<null>",

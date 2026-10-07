@@ -15,7 +15,87 @@ internal static class RunnerSuite
         new TestCase("RunnerSuite." + nameof(ReceiptRecognisesOnlyRecycleBinPaths), ReceiptRecognisesOnlyRecycleBinPaths),
         new TestCase("RunnerSuite." + nameof(OverallTimeoutStopsFurtherRounds), OverallTimeoutStopsFurtherRounds),
         new TestCase("RunnerSuite." + nameof(FirstShellVerdictSurvivesALaterMissingPath), FirstShellVerdictSurvivesALaterMissingPath),
+        new TestCase("RunnerSuite." + nameof(EachFailureKeepsItsOwnVerdictAcrossRounds), EachFailureKeepsItsOwnVerdictAcrossRounds),
     ];
+
+    /// <summary>
+    /// A retry round works on fewer items than the round before it, so the verdicts recorded for them have
+    /// to travel with the item they belong to.
+    /// </summary>
+    /// <remarks>
+    /// The batch here is three items with three different outcomes, and the retry is what makes the
+    /// bookkeeping visible: the first item succeeds and leaves the list, so the two that remain slide down
+    /// a slot each. A verdict held by position rather than by item is then read back against the wrong
+    /// path — the report names one file and gives it another file's error code and stage, which is worse
+    /// than no code at all because it sends an integrator after the wrong problem.
+    /// <para>
+    /// The three are chosen so their codes are unmistakably different: a locked file, which the Shell
+    /// refuses with a sharing violation, and a path that is not there, which never becomes a Shell item at
+    /// all. Any mix-up between them is visible in the stage alone.
+    /// </para>
+    /// </remarks>
+    private static Task EachFailureKeepsItsOwnVerdictAcrossRounds(TestContext context)
+    {
+        const int FileNotFound = unchecked((int)0x80070002);
+
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var files = workspace.CreateRandomFiles(1, 4096);
+        var recycled = files[0];
+        var locked = workspace.CreateRandomFile(4096);
+        var absent = Path.Combine(ScratchWorkspace.Root, "definitely-absent.bin");
+
+        var targets = new List<RecycleTarget>
+        {
+            new(recycled, recycled, recycled),
+            new(locked, locked, locked),
+            new(absent, absent, absent)
+        };
+
+        var options = new RecycleBinOptions
+        {
+            MaxAttempts = 2,
+            InitialRetryDelay = TimeSpan.Zero,
+            OverallTimeout = TimeSpan.FromSeconds(30)
+        };
+
+        // Opened without delete sharing, so the Shell refuses this one on every round.
+        using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var result = StaThread.Run(() =>
+            {
+                using var shell = ShellOperationContext.Create();
+                return new RecycleOperationRunner(shell).Run(targets, options, context.CancellationToken);
+            });
+
+            Check.False(File.Exists(recycled), "the unlocked file was recycled on the first round");
+            Check.True(File.Exists(locked), "the locked file is still there, as the Shell refused it");
+
+            var lockedFailure = result.Failures.FirstOrDefault(f => f.Path == locked);
+            Check.NotNull(lockedFailure, "the locked file is reported as a failure");
+
+            var absentFailure = result.Failures.FirstOrDefault(f => f.Path == absent);
+            Check.NotNull(absentFailure, "the absent path is reported as a failure");
+
+            Check.Equal(
+                RecycleFailureStage.Performing,
+                lockedFailure!.Stage,
+                "the locked file failed while being performed, and says so");
+            Check.Equal(
+                RecycleFailureStage.ShellItemCreation,
+                absentFailure!.Stage,
+                "the absent path never became a Shell item, and says so rather than inheriting the other file's stage");
+            Check.NotEqual(
+                lockedFailure.HResult,
+                absentFailure.HResult,
+                "the two failures carry different codes, so neither can be the other's");
+            Check.Equal(FileNotFound, absentFailure.HResult, "the absent path carries the code the Shell gave for it");
+        }
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// <see cref="RecycleBinOptions.OverallTimeout"/> is documented as an upper bound on the
