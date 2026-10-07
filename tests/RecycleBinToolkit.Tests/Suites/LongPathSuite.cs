@@ -64,9 +64,10 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        var held = new List<FileStream>(pathCount);
+
         try
         {
-            var held = new List<FileStream>(pathCount);
             var paths = new List<string>(pathCount);
 
             for (var i = 0; i < pathCount; i++)
@@ -76,6 +77,16 @@ internal static class LongPathSuite
 
                 held.Add(new FileStream(extendedPath, FileMode.Open, FileAccess.Read, FileShare.Read));
                 paths.Add(ScratchWorkspace.Root + Path.GetFileName(extendedPath));
+            }
+
+            // This is a test about the staging backoff, so the paths have to actually reach the staging
+            // code. Where the volume hands out 8.3 aliases they would be recycled directly instead, the
+            // run would measure the Shell's own retry policy, and the bound below would say nothing about
+            // the thing it names. Skipping is the honest outcome on such a volume, not a pass.
+            if (ShortPathResolver.TryResolveShort(paths[0]) is not null)
+            {
+                Console.WriteLine("        skipped: this volume issues 8.3 names, so long paths never reach the staging backoff");
+                return;
             }
 
             var options = new RecycleBinOptions
@@ -88,11 +99,6 @@ internal static class LongPathSuite
             var result = await FileRecycler.MoveToRecycleBinAsync(paths, options, context.CancellationToken);
             stopwatch.Stop();
 
-            foreach (var stream in held)
-            {
-                stream.Dispose();
-            }
-
             Check.False(result.Succeeded, "every path is held, so none of them can be staged");
             Check.Equal(pathCount, result.Failures.Count, "and every one of them is reported");
 
@@ -104,6 +110,11 @@ internal static class LongPathSuite
         }
         finally
         {
+            foreach (var stream in held)
+            {
+                stream.Dispose();
+            }
+
             workspace.Dispose();
         }
     }

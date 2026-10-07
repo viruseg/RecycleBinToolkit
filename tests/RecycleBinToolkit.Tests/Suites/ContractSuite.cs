@@ -24,11 +24,42 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsOnlyValidWhereItIs), ExtendedPrefixIsOnlyValidWhereItIs),
         new TestCase("ContractSuite." + nameof(VolumeRootIsAlwaysARootWithASeparator), VolumeRootIsAlwaysARootWithASeparator),
         new TestCase("ContractSuite." + nameof(ATargetCostsNoAllocationOfItsOwn), ATargetCostsNoAllocationOfItsOwn),
-        new TestCase("ContractSuite." + nameof(ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed), ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed),
         new TestCase("ContractSuite." + nameof(ContentsTotalIsDerivedNotDeclared), ContentsTotalIsDerivedNotDeclared),
         new TestCase("ContractSuite." + nameof(FailureHResultIsNotClobberedByTheSeverityBitTest), FailureHResultIsNotClobberedByTheSeverityBitTest),
         new TestCase("ContractSuite." + nameof(PathsThatResolveToOneShellItemRecycleOnce), PathsThatResolveToOneShellItemRecycleOnce),
     ];
+
+    /// <summary>
+    /// The Recycle Bin folder is a whole path segment, and the cases below are the ones where a substring
+    /// search would answer wrongly.
+    /// </summary>
+    /// <remarks>
+    /// A characterisation test, not a regression test: the scan has always compared whole segments. It
+    /// exists because the loop was rewritten while removing a dead separator lookup, and a rewrite of a
+    /// loop that decides whether a delete can be recovered deserves a test either side of it. The two
+    /// rejected shapes are what would have been accepted by matching the name anywhere in the path.
+    /// </remarks>
+    private static Task ReceiptMatchesWholeSegmentsOnly(TestContext context)
+    {
+        const string original = @"E:\work\report.bin";
+        const string recycled = @"E:\$Recycle.Bin\S-1-5-21-1-2-3-1001\$RABCDEF.bin";
+
+        Check.True(
+            RecycleBinReceipt.IsInsideRecycleBin(recycled, original),
+            "the folder itself is recognised wherever it sits in the path");
+
+        Check.False(
+            RecycleBinReceipt.IsInsideRecycleBin(@"E:\Downloads\$RECYCLE.BIN.zip", original),
+            "a file whose name merely starts with the folder name is not the Recycle Bin");
+        Check.False(
+            RecycleBinReceipt.IsInsideRecycleBin(@"E:\$Recycle.Bin.old\file.bin", original),
+            "a directory whose name merely starts with the folder name is not the Recycle Bin");
+        Check.False(
+            RecycleBinReceipt.IsInsideRecycleBin(@"E:\work\$RECYCLE.BIN", original),
+            "and neither is a file named exactly like the folder, elsewhere on the volume");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// Two paths that name one file must produce one Shell item, however differently they are written.
@@ -102,32 +133,6 @@ internal static class ContractSuite
     }
 
     /// <summary>
-    /// The Recycle Bin folder is the second segment of a physical path, so finding it is a matter of
-    /// comparing segments — but only whole segments.
-    /// </summary>
-    /// <remarks>
-    /// Scanning the whole string for the name would also match a file called <c>$RECYCLE.BIN.txt</c>
-    /// sitting in a directory the caller chose the name of. The check has to be on boundaries.
-    /// </remarks>
-    private static Task ReceiptSegmentLookupIgnoresThePathItAlreadyConsumed(TestContext context)
-    {
-        const string original = @"E:\work\report.bin";
-        const string recycled = @"E:\$Recycle.Bin\S-1-5-21-1-2-3-1001\$RABCDEF.bin";
-
-        Check.True(
-            RecycleBinReceipt.IsInsideRecycleBin(recycled, original),
-            "the folder itself is recognised wherever it sits in the path");
-
-        Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"E:\Downloads\$RECYCLE.BIN.zip", original),
-            "a file whose name merely starts with the folder name is not the Recycle Bin");
-        Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"E:\$Recycle.Bin.old\file.bin", original),
-            "a directory whose name merely starts with the folder name is not the Recycle Bin");
-
-        return Task.CompletedTask;
-    }
-
     /// <summary>
     /// A batch is a list of targets, and the list is held for the whole operation, so what a target costs
     /// is a per-path cost across every path the caller ever passes.
