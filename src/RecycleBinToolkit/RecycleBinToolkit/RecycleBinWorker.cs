@@ -190,7 +190,9 @@ internal static class RecycleBinWorker
             ThreadId = thread.ManagedThreadId;
 
             // Block until the apartment is warm, so the first caller never races Shell
-            // initialisation and thread startup is paid exactly once.
+            // initialisation and thread startup is paid exactly once. This wait is also what publishes
+            // StartupFailure: the worker thread writes it before signalling, and the wait below is the
+            // barrier that makes the write visible here.
             _warm.Wait();
 
             if (StartupFailure is not null)
@@ -208,11 +210,6 @@ internal static class RecycleBinWorker
 
         internal void Enqueue(WorkItem request)
         {
-            if (StartupFailure is not null)
-            {
-                RecycleBinThrowHelper.ThrowWorkerUnavailable(StartupFailure);
-            }
-
             lock (_queueGate)
             {
                 _queue.Enqueue(request);
@@ -241,29 +238,25 @@ internal static class RecycleBinWorker
 
             _warm.Set();
 
-            try
+            // No exit condition and no finally. The loop ends only if the thread is torn down, and a
+            // background thread that is torn down does not run managed finally blocks on the way — so a
+            // cleanup written there would look like it worked and never execute. The apartment is
+            // released by the process exiting, which is the same thing that ends this loop anyway.
+            while (true)
             {
-                while (true)
-                {
-                    _signal.Wait();
+                _signal.Wait();
 
-                    while (TryDequeue(out var request))
+                while (TryDequeue(out var request))
+                {
+                    try
                     {
-                        try
-                        {
-                            request!.Completion.TrySetResult(request.Execute(_runner));
-                        }
-                        catch (Exception ex)
-                        {
-                            request!.Completion.TrySetException(ex);
-                        }
+                        request!.Completion.TrySetResult(request.Execute(_runner));
+                    }
+                    catch (Exception ex)
+                    {
+                        request!.Completion.TrySetException(ex);
                     }
                 }
-            }
-            finally
-            {
-                context.Dispose();
-                FailPending(new ObjectDisposedException(nameof(RecycleBinWorker)));
             }
         }
 

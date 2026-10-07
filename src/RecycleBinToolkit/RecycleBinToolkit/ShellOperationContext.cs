@@ -34,7 +34,7 @@ internal sealed unsafe class ShellOperationContext : IDisposable
 
     private static readonly Guid ClsidFileOperation = new("3ad05575-8857-4850-9277-11b85bdb8e09");
 
-    private IFileOperation _fileOperation = null!;
+    private IFileOperation? _fileOperation;
     private bool _uninitializeRequired;
     private bool _disposed;
 
@@ -91,7 +91,25 @@ internal sealed unsafe class ShellOperationContext : IDisposable
     /// <summary>
     /// Applies the recycle flags. Must be called before every queueing round.
     /// </summary>
-    internal void SetFlags() => _fileOperation.SetOperationFlags(RecycleFlags);
+    internal void SetFlags() => Operation.SetOperationFlags(RecycleFlags);
+
+    /// <summary>
+    /// The operation object, or a fault if the context has already been disposed.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Dispose"/> nulls the field once the object is released, so the members go through this
+    /// rather than touching it directly. Letting a disposed context keep handing out the object it just
+    /// released would fault deeper down with a message about a COM pointer, which says nothing about
+    /// what the caller actually did.
+    /// </remarks>
+    private IFileOperation Operation
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _fileOperation!;
+        }
+    }
 
     /// <summary>
     /// Creates a Shell item for a path, falling back to its 8.3 short name when the Shell refuses
@@ -134,7 +152,7 @@ internal sealed unsafe class ShellOperationContext : IDisposable
 
         try
         {
-            _fileOperation.DeleteItem(item, sink);
+            Operation.DeleteItem(item, sink);
             hResult = Success;
             return true;
         }
@@ -152,11 +170,17 @@ internal sealed unsafe class ShellOperationContext : IDisposable
     /// The generated signature returns <see langword="void"/>: the Shell's overall HRESULT is not
     /// surfaced to the caller, so per-item outcomes must come from a progress sink.
     /// </remarks>
-    internal void Perform() => _fileOperation.PerformOperations();
+    internal void Perform() => Operation.PerformOperations();
 
     /// <summary>
-    /// Releases the thread's COM apartment. Must run on the creating thread.
+    /// Releases the operation object and then the thread's COM apartment. Must run on the creating thread.
     /// </summary>
+    /// <remarks>
+    /// The order is not incidental. An apartment torn down while a wrapper it created is still alive
+    /// leaves the release to happen at an arbitrary later point, on whatever thread the finalizer runs,
+    /// which for an object that must be released on one thread is a leak rather than a cleanup. So the
+    /// object goes first, deterministically, and only then is the apartment released.
+    /// </remarks>
     public void Dispose()
     {
         if (_disposed)
@@ -165,6 +189,12 @@ internal sealed unsafe class ShellOperationContext : IDisposable
         }
 
         _disposed = true;
+
+        if (_fileOperation is not null)
+        {
+            Marshal.ReleaseComObject(_fileOperation);
+            _fileOperation = null;
+        }
 
         if (_uninitializeRequired)
         {

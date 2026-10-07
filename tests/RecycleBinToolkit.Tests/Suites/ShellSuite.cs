@@ -17,7 +17,42 @@ internal static class ShellSuite
         new TestCase("ShellSuite." + nameof(UnreportedItemsAreNotReportedAsSuccess), UnreportedItemsAreNotReportedAsSuccess),
         new TestCase("ShellSuite." + nameof(UnidentifiedCallbacksConsumeQueuedPathsInOrder), UnidentifiedCallbacksConsumeQueuedPathsInOrder),
         new TestCase("ShellSuite." + nameof(ReportedPathsAreNotHandedOutAgain), ReportedPathsAreNotHandedOutAgain),
+        new TestCase("ShellSuite." + nameof(DisposedContextRefusesFurtherWork), DisposedContextRefusesFurtherWork),
     ];
+
+    /// <summary>
+    /// Disposing must release the operation object, and a released context must say so rather than
+    /// carrying on with it.
+    /// </summary>
+    /// <remarks>
+    /// The apartment is torn down in the same call, so an object still alive when that happens is
+    /// released later, on whichever thread the finalizer happens to run. For something that must be
+    /// released on the thread that created it, that is a leak rather than a cleanup, so the object is
+    /// released first and deterministically.
+    /// <para>
+    /// Every member checks the context, because releasing the object without noticing would leave the
+    /// context able to hand out an object it no longer owns. The check belongs in one place for that to
+    /// be true of all of them.
+    /// </para>
+    /// </remarks>
+    private static Task DisposedContextRefusesFurtherWork(TestContext context)
+    {
+        var shell = ShellOperationContext.Create();
+
+        shell.SetFlags();
+        shell.Dispose();
+
+        Check.Throws<ObjectDisposedException>(
+            () => shell.SetFlags(),
+            "applying flags to a disposed context is refused rather than using a released object");
+        Check.Throws<ObjectDisposedException>(
+            () => shell.Perform(),
+            "performing through a disposed context is refused");
+
+        shell.Dispose();
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// A path the Shell never reported on must read as "no outcome", not as a success. The Shell
