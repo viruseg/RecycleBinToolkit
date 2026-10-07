@@ -17,16 +17,25 @@ public sealed class RecycleBinOptions
     /// <summary>
     /// How many times an item is attempted before it is reported as a failure.
     /// </summary>
+    /// <remarks>
+    /// The default is <c>6</c>.
+    /// </remarks>
     public int MaxAttempts { get; init; } = 6;
 
     /// <summary>
     /// Delay before the first retry. It doubles on every subsequent attempt.
     /// </summary>
+    /// <remarks>
+    /// The default is <c>50</c> milliseconds.
+    /// </remarks>
     public TimeSpan InitialRetryDelay { get; init; } = TimeSpan.FromMilliseconds(50);
 
     /// <summary>
     /// Upper bound on the wall-clock time spent retrying the whole batch.
     /// </summary>
+    /// <remarks>
+    /// The default is <c>30</c> seconds.
+    /// </remarks>
     public TimeSpan OverallTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
@@ -39,12 +48,18 @@ public sealed class RecycleBinOptions
     /// deletes, and a missing location cannot be distinguished from a delete the Shell completed
     /// without recycling. Turning this off trades that check for slightly less work per item.
     /// </remarks>
+    /// <remarks>
+    /// The default is <c>true</c>.
+    /// </remarks>
     public bool VerifyRecycleBinReceipt { get; init; } = true;
 
     /// <summary>
     /// Whether a failure raises an exception instead of being reported through
     /// <see cref="RecycleBinResult.Failures"/>.
     /// </summary>
+    /// <remarks>
+    /// The default is <c>true</c>.
+    /// </remarks>
     public bool ThrowOnError { get; init; } = true;
 
     /// <summary>
@@ -55,6 +70,9 @@ public sealed class RecycleBinOptions
     /// <see cref="LongPathFailureAction.DeletePermanently"/> to remove it instead, in which case the
     /// path also appears in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
     /// </remarks>
+    /// <remarks>
+    /// The default is <c>LongPathFailureAction.Throw</c>.
+    /// </remarks>
     public LongPathFailureAction LongPathFailureAction { get; init; } = LongPathFailureAction.Throw;
 
     /// <summary>
@@ -62,6 +80,9 @@ public sealed class RecycleBinOptions
     /// 251-character path recycles, a 261-character path is removed permanently while the operation
     /// still reports success.
     /// </summary>
+    /// <remarks>
+    /// The default is <c>260</c>.
+    /// </remarks>
     public int MaxShellPathLength { get; init; } = 260;
 
     /// <summary>
