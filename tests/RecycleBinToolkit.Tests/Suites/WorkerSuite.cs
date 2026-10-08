@@ -155,7 +155,30 @@ internal static class WorkerSuite
             observedThreadIds.Add(RecycleBinWorker.ThreadId);
         }
 
-        Check.Equal(1, observedThreadIds.Count, "every batch ran on the same worker thread");
+        Check.Equal(
+            1,
+            observedThreadIds.Distinct().Count(),
+            "the worker names one thread, and it is the same one before and after every batch");
+
+        // A constant agrees with itself. RecycleBinWorker.ThreadId is assigned once when the worker is
+        // built and never changes, so reading it three times proves nothing about where the batches went.
+        // What can be asked instead is the only question that has an answer to be wrong about: the worker
+        // is asked to run something that reports its own thread, and that is compared against the id it
+        // publishes.
+        var named = RecycleBinWorker.ThreadId;
+
+        Check.NotEqual(0, named, "the worker exists once something has been submitted to it");
+        Check.NotEqual(Thread.CurrentThread.ManagedThreadId, named, "and it is not the thread that submitted the batches");
+
+        var observedInsideTheWorker = RecycleBinWorker
+            .RunAsync(() => Thread.CurrentThread.ManagedThreadId, context.CancellationToken)
+            .GetAwaiter()
+            .GetResult();
+
+        Check.Equal(
+            named,
+            observedInsideTheWorker,
+            "so work handed to the worker runs on the thread the worker says it is");
 
         workspace.Dispose();
         return Task.CompletedTask;
