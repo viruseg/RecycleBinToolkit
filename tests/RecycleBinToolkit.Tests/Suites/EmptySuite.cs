@@ -38,24 +38,40 @@ internal static class EmptySuite
     /// and the report are both taken against. Asserting on the exact string the caller wrote would pass
     /// against the wrong spelling being handed over; asserting on the normalised root catches that too.
     /// <para>
-    /// What it cannot catch is the machine with no volume to cover, where the set is empty and there is
-    /// nothing to compare against. That shape is pinned as a pure function in
-    /// <see cref="ContractSuite.TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured"/>; what this case adds
-    /// is that the one-volume path still works after the decision moved.
+    /// What this cannot decide, and why, is the one-root-versus-all-roots distinction itself. An empty
+    /// Recycle Bin is emptied successfully, so a result naming one volume comes back identically whether
+    /// the Shell was handed that volume or handed <c>null</c> — the check that would tell them apart needs
+    /// a second volume with something in its bin, and arranging that means either writing into a volume
+    /// the caller did not name or emptying one. So the decision is pinned as a pure function in
+    /// <see cref="ContractSuite.TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured"/>, where it can be,
+    /// and this case covers what only the public API can reach: that a named volume is emptied and
+    /// measured, after the decision moved.
     /// </para>
     /// </remarks>
     private static async Task NamingOneVolumeEmptiesThatVolumeAndNoOther(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
-        workspace.CreateRandomFiles(2, 4096);
 
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+        var files = workspace.CreateRandomFiles(2, 4096);
+
+        // Recycled first, so the empty has something to remove. An already-empty bin reports a success
+        // either way, which is what makes this case vacuous without them.
+        var recycled = await FileRecycler
+            .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.True(recycled.Succeeded, $"the files reached the volume's Recycle Bin (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
+        Check.Equal(files.Count, recycled.RecycledPaths.Count, "all of them did");
 
         var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(1, emptied.VolumesEmptied.Count, $"naming one volume covers one volume (got {string.Join(", ", emptied.VolumesEmptied)})");
         Check.Equal(volumeRoot, emptied.VolumesEmptied[0], "and it is that volume");
+        Check.Equal(0, emptied.Failures.Count, "with nothing left unreached");
+        Check.True(emptied.ItemsRemoved >= files.Count, $"and the entries really left it (got {emptied.ItemsRemoved})");
+        Check.True(emptied.BytesFreed >= files.Count * 4096L, $"and their bytes were measured as freed (got {emptied.BytesFreed})");
 
         workspace.Dispose();
     }
