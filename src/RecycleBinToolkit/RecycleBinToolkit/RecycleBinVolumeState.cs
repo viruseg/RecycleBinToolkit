@@ -133,7 +133,7 @@ internal static class RecycleBinVolumeState
     /// <para>
     /// The reduction drops the extended-length prefix and the trailing separator, but nothing else — a
     /// path that goes <em>past</em> the root has to stay distinguishable from the root. Comparing whole
-    /// roots instead would answer that <c>X:\RC\Test\</c> is the same volume as <c>X:\</c>.
+    /// roots instead would answer that <c>X:\work\</c> is the same volume as <c>X:\</c>.
     /// </para>
     /// <para>
     /// An empty path is refused before that comparison, because it is the one input with no root to

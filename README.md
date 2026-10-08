@@ -819,31 +819,41 @@ Stated plainly, because these are properties of Windows rather than choices.
 ## Testing
 
 ```bash
-dotnet run --project tests/RecycleBinToolkit.Tests -- --all
-dotnet run --project tests/RecycleBinToolkit.Tests -- --filter LongPathSuite
-dotnet run --project tests/RecycleBinToolkit.Tests -- --filter RecycleBinListingAgreesWithTheShellOracle
-dotnet run --project tests/RecycleBinToolkit.Tests -- --load
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --all
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --filter LongPathSuite
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --filter RecycleBinListingAgreesWithTheShellOracle
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --load
 ```
+
+`--scratch <root>` is required and names the volume to test on. It has to be a volume root — `D:\` or
+`\\server\share\`, or `//server/share` where the command line cannot carry two leading backslashes. A
+directory inside a volume is refused, and so is a bare drive letter, because both resolve against something
+other than the volume they name. Without the flag nothing runs and the exit code is 2: the suite writes
+files and removes directories, so the volume is yours to pick and not the runner's to guess.
+
+Inside the root the run creates `D:\{guid}` and works in `scratch` and `long` beneath it, then removes the
+whole tree when it finishes. Nothing is derived from the repository, so no test writes inside the working
+copy.
 
 `--filter` matches any part of a case name, and every case is named `<Suite>.<Case>`. It exits
 non-zero when a case fails.
 
-The suite needs the scratch volume — the one holding `X:\RC\Test` — to be recorded as recycling, which
+The suite needs the volume you name to be recorded as recycling, which
 Windows writes under `HKCU\...\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete=0` when "Don't move files to
 the Recycle Bin" is clear for that drive. Almost every case now recycles there, and a volume with no
 such key is answered `Indeterminate` or `NoRecycleBinOnVolume` — both refused by the default
 `NoRecycleBinAction.Throw`. The suite checks this before it deletes anything and names the key rather
 than failing a hundred cases at once.
 
-The suite is a console application with no external packages: 130 cases covering batch and single-path
+The suite is a console application with no external packages: 138 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies, a
 ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardware only, behind
 `--manual` — volumes with no Recycle Bin. Listing, emptying and status checking are covered by their own
-suites. The default run writes only to `X:\RC\Test` (or the project root) and moves the committed fixture
-files it uses; `--manual` writes wherever you tell it to.
+suites. The default run writes only inside the directory it claimed under `--scratch`; `--manual` writes
+wherever you tell it to.
 
-**The 130 cases divide into three groups, and `--all` runs 123 of them.** Four are load cases that run only
+**The 145 cases divide into three groups, and `--all` runs 138 of them.** Four are load cases that run only
 on request: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
 through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
 nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —
@@ -853,13 +863,14 @@ nothing else. Nothing is covered by them alone; the claims sit in ordinary cases
 ### `--manual` destroys files on the path you name
 
 ```bash
-dotnet run --project tests/RecycleBinToolkit.Tests -- --manual "F:\" --manual "//Virus_pc/123/"
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --manual "F:\" --manual "//Virus_pc/123/"
 ```
 
 `--manual` is repeatable, and every manual case runs once per root with that root handed to the case.
-**The root is yours, and one of the three cases deletes the file it creates there.** Each case creates a
-directory of its own beneath the root and removes only that directory, by full path; nothing beside it is
-touched. Pass a volume with no `$RECYCLE.BIN` — a removable drive, or a network share. A root that does
+**The root is yours, and one of the three cases deletes the file it creates there.** Each case claims a
+directory of its own beneath the root — a generated name that was checked, since the case's cleanup is a
+recursive delete — and removes only that directory, by full path; nothing beside it is touched. Pass a
+volume with no `$RECYCLE.BIN` — a removable drive, or a network share. A root that does
 recycle is refused rather than run, because `VolumeSuite.AStatusAndAnEmptyReadTheSameRootTheSameWay` would
 otherwise empty the Recycle Bin you were using; the run names the root and the reason.
 
@@ -872,7 +883,8 @@ otherwise empty the Recycle Bin you were using; the run names the root and the r
 **A share has to survive your command line.** `--manual "\\server\share\"` is right in PowerShell and in
 `cmd.exe`, which treat backslashes literally. It is wrong in anything that treats `\\` as an escape —
 bash, or any tool that unescapes the command string before the shell ever sees it — because what arrives
-is `\server\share\`, whose root is the *current drive*; a directory created from it lands on `X:\`. The
+is `\server\share\`, whose root is the *current drive*; a directory created from it lands wherever the
+process happens to be. The
 runner refuses a root that is not a volume root rather than acting on whatever drive is current, so the
 mistake goes red and costs nothing — but it goes red. Write the share as `//server/share/` there. The
 forward-slash spelling names the same volume, no shell rewrites it, and the runner reads it as the
