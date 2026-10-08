@@ -94,7 +94,7 @@ internal static class SubstitutedVolume
         {
             await RunSubst(letter, target: null, budget.Token).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or Win32Exception or CheckFailedException)
+        catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or Win32Exception or CheckFailedException)
         {
             // The mapping's fate is not this case's result, and reporting it here would replace the
             // failure the case is actually about.
@@ -150,8 +150,23 @@ internal static class SubstitutedVolume
             throw;
         }
 
-        process.WaitForExit();
+        // The token bounds the two stream reads, and nothing else. Reading them to the end says the
+        // pipes closed, which a child whose work is still going does not do -- so this wait needs its own
+        // bound, or a subst that closed its output and then lingered would hold the runner past the
+        // budget it sets. Eight cases run this from a finally, so an unbounded wait here is a hang on
+        // the failure path as much as on the passing one.
+        if (!process.WaitForExit(ExitTimeout))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException($"subst did not exit within {ExitTimeout}.");
+        }
 
         return (process.ExitCode, await standardOutput.ConfigureAwait(false) + await standardError.ConfigureAwait(false));
     }
+
+    /// <summary>
+    /// How long the child gets to exit once its output has been read. Generous for a mapping and short
+    /// enough that a wedged one fails its case rather than the run.
+    /// </summary>
+    private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(30);
 }
