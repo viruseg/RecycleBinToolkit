@@ -120,14 +120,14 @@ public static class RecycleBin
     /// <param name="cancellationToken">Cancels the wait.</param>
     /// <returns>The status of that volume.</returns>
     /// <remarks>
-    /// This answers what configuration says about the volume, and — for a volume configuration says
-    /// nothing about — whether the Shell reports a Recycle Bin on it at all. It does not predict the
-    /// next delete: a volume mounted after this call, or a policy applied after it, changes the answer
-    /// without this call being wrong.
+    /// This answers what configuration says about the volume, and — for a volume whose per-volume
+    /// setting cannot be looked up at all — whether the Shell reports a Recycle Bin on it. It does not
+    /// predict the next delete: a volume mounted after this call, or a policy applied after it, changes
+    /// the answer without this call being wrong.
     /// <para>
     /// It runs on the calling thread rather than on the Shell worker, so it never blocks behind an
-    /// in-flight batch. Asking the Shell is the slow half of the work, and it happens only for a volume
-    /// with no per-volume setting, where the question walks the bin's metadata.
+    /// in-flight batch. Asking the Shell is the slow half of the work, and it happens only for that same
+    /// volume, where the question walks the bin's metadata.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentException"><paramref name="volumeRoot"/> is null, empty or whitespace.</exception>
