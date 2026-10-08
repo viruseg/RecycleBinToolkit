@@ -53,7 +53,7 @@ internal static class RecycleBinWorker
             return Task.FromCanceled<RecycleBinResult>(cancellationToken);
         }
 
-        var request = new RecycleWorkItem(targets, options.Normalize());
+        var request = new RecycleWorkItem(targets, options.Normalize(), cancellationToken);
         EnsureWorker().Enqueue(request);
 
         return AwaitAsync<RecycleBinResult>(request, cancellationToken);
@@ -149,15 +149,27 @@ internal static class RecycleBinWorker
     {
         private readonly IReadOnlyList<RecycleTarget> _targets;
         private readonly RecycleBinOptions _options;
+        private readonly CancellationToken _cancellationToken;
 
-        internal RecycleWorkItem(IReadOnlyList<RecycleTarget> targets, RecycleBinOptions options)
+        internal RecycleWorkItem(
+            IReadOnlyList<RecycleTarget> targets,
+            RecycleBinOptions options,
+            CancellationToken cancellationToken)
         {
             _targets = targets;
             _options = options;
+            _cancellationToken = cancellationToken;
         }
 
+        /// <remarks>
+        /// The caller's token is handed to the runner rather than replaced, so a cancellation stops the
+        /// retry loop between rounds as well as releasing the caller. Handing over
+        /// <see cref="CancellationToken.None"/> instead left the loop walking its whole attempt budget on
+        /// the one worker thread every other caller queues behind, for a batch its own caller had
+        /// already stopped waiting for.
+        /// </remarks>
         internal override object? Execute(RecycleOperationRunner runner) =>
-            runner.Run(_targets, _options, CancellationToken.None);
+            runner.Run(_targets, _options, _cancellationToken);
     }
 
     private sealed class DelegateWorkItem<T> : WorkItem

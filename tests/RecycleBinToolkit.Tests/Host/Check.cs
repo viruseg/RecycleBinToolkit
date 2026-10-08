@@ -62,6 +62,32 @@ internal static class Check
         throw new CheckFailedException($"expected {typeof(TException).Name} but nothing was thrown: {because}");
     }
 
+    /// <summary>
+    /// Asserts that awaiting <paramref name="action"/> throws <typeparamref name="TException"/>.
+    /// </summary>
+    /// <returns>The thrown exception, so callers can assert on it further.</returns>
+    internal static async Task<TException> ThrowsAsync<TException>(Func<Task> action, string because)
+        where TException : Exception
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        try
+        {
+            await action().ConfigureAwait(false);
+        }
+        catch (TException expected)
+        {
+            return expected;
+        }
+        catch (Exception unexpected)
+        {
+            throw new CheckFailedException(
+                $"expected {typeof(TException).Name} but got {unexpected.GetType().Name} ({unexpected.Message}): {because}");
+        }
+
+        throw new CheckFailedException($"expected {typeof(TException).Name} but nothing was thrown: {because}");
+    }
+
     internal static void NotEqual<T>(T unexpected, T actual, string because)
     {
         if (EqualityComparer<T>.Default.Equals(unexpected, actual))

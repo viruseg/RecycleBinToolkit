@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
@@ -11,7 +12,67 @@ internal static class WorkerSuite
         new TestCase("WorkerSuite." + nameof(SequentialSubmitsAllSucceed), SequentialSubmitsAllSucceed),
         new TestCase("WorkerSuite." + nameof(ConcurrentSubmitsAllSucceed), ConcurrentSubmitsAllSucceed),
         new TestCase("WorkerSuite." + nameof(CallFromStaCallerDoesNotDeadlock), CallFromStaCallerDoesNotDeadlock),
+        new TestCase("WorkerSuite." + nameof(CancellationReachesTheRetryLoop), CancellationReachesTheRetryLoop),
     ];
+
+    /// <summary>
+    /// Cancelling the wait must also reach the retry loop the worker is running. A batch that can never
+    /// succeed on its own — a file held open, with an attempt budget worth seconds of backoff — is the
+    /// case that tells the two apart. If the loop never sees the token it walks the whole budget on the
+    /// one worker thread every other caller in the process queues behind, so a caller arriving straight
+    /// after the cancellation is made to wait for work nobody is waiting for any more.
+    /// </summary>
+    /// <remarks>
+    /// What is measured is the wait of the second caller, not the elapsed time of the cancelled one: the
+    /// cancelled caller is released the moment its wait ends either way, so its own timing says nothing
+    /// about what the worker went on to do.
+    /// </remarks>
+    private static async Task CancellationReachesTheRetryLoop(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var locked = workspace.CreateRandomFile(4096);
+        var second = workspace.CreateRandomFile(4096);
+
+        // Twenty rounds of a quarter-second of backoff is about five seconds of worker time the cancelled
+        // batch would spend if its token never reached the loop.
+        var options = new RecycleBinOptions
+        {
+            MaxAttempts = 20,
+            InitialRetryDelay = TimeSpan.FromMilliseconds(250),
+            OverallTimeout = TimeSpan.FromSeconds(30)
+        };
+
+        var stopwatch = Stopwatch.StartNew();
+
+        using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (var cts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken))
+        {
+            var cancelled = RecycleBinWorker.SubmitAsync(Targets([locked]), options, cts.Token);
+
+            await cts.CancelAsync();
+
+            await Check.ThrowsAsync<OperationCanceledException>(
+                () => cancelled,
+                "the cancelled caller is told so rather than waiting out the retry budget");
+
+            var after = await RecycleBinWorker
+                .SubmitAsync(Targets([second]), RecycleBinOptions.Default, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            var waited = stopwatch.Elapsed;
+
+            Check.True(after.Succeeded, "the caller behind the cancelled one still gets its work done");
+            Check.False(File.Exists(second), "and its file was really recycled");
+
+            Check.True(
+                waited < TimeSpan.FromSeconds(2),
+                $"the cancelled batch did not keep the worker busy for the rest of its retry budget (waited {waited.TotalSeconds:0.0}s)");
+        }
+
+        workspace.Dispose();
+    }
 
     private static Task SequentialSubmitsAllSucceed(TestContext context)
     {
