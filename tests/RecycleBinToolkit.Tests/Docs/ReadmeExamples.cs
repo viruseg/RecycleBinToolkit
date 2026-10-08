@@ -206,7 +206,11 @@ internal static class ReadmeExamples
         //
         // A directory left here still holds an item that could neither be recycled nor moved back. The
         // item is never deleted in that state, so it is recoverable — the caller has to move it out.
-        Console.WriteLine(result.LeftoverStagingDirectory);
+        // A batch spanning volumes can leave more than one, so read the list when that is possible.
+        foreach (var directory in result.LeftoverStagingDirectories)
+        {
+            Console.Error.WriteLine($"still holding your data: {directory}");
+        }
     }
 
     internal static async Task OptInToPermanentDeletion()

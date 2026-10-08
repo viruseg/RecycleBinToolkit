@@ -486,13 +486,15 @@ internal static class LongPathSuite
 
             var leftover = stager.Release();
 
-            Check.NotNull(leftover, "a staging directory that still holds the item is not deleted");
-            Check.True(Directory.Exists(leftover!), "the leftover directory is still there");
+            Check.Equal(1, leftover.Count, "a staging directory that still holds the item is reported");
+            Check.True(Directory.Exists(leftover[0]), "the leftover directory is still there");
             Check.True(File.Exists(staged!), "the item inside it is still there, so nothing was destroyed");
+
+            Check.Equal(0, stager.Release().Count, "releasing again reports nothing left, because nothing was tried");
 
             try
             {
-                Directory.Delete(leftover!, recursive: true);
+                Directory.Delete(leftover[0], recursive: true);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

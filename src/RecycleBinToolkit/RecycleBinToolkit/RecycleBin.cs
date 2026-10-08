@@ -25,6 +25,9 @@ public static class RecycleBin
     /// <summary>Win32 <c>ERROR_NOT_SET</c>, used when the Shell gives no error code of its own.</summary>
     private const int UnreadableVolume = unchecked((int)0x80070490);
 
+    /// <summary>Win32 <c>ERROR_PATH_NOT_FOUND</c>, for a path that is not a volume root.</summary>
+    private const int VolumeNotFound = unchecked((int)0x800703FE);
+
     /// <summary>
     /// Reads the contents of the Recycle Bin.
     /// </summary>
@@ -61,7 +64,9 @@ public static class RecycleBin
     /// Empties the Recycle Bin.
     /// </summary>
     /// <param name="volumeRoot">
-    /// Volume root to empty, such as <c>"E:\\"</c>, or <see langword="null"/> for every volume.
+    /// Volume root to empty, such as <c>"E:\\"</c>, or <see langword="null"/> for every volume. A path
+    /// inside a volume is not a volume root and is reported in
+    /// <see cref="RecycleBinEmptyResult.Failures"/> rather than emptied as that whole volume.
     /// </param>
     /// <param name="cancellationToken">
     /// Cancels the wait. An empty already handed to the Shell always finishes.
@@ -80,6 +85,15 @@ public static class RecycleBin
         }
 
         var targets = ResolveVolumes(volumeRoot);
+        if (targets is null)
+        {
+            return new RecycleBinEmptyResult(
+                [],
+                0,
+                0,
+                [new RecycleFailure(volumeRoot!, VolumeNotFound, 0, RecycleFailureStage.PathValidation)],
+                TimeSpan.Zero);
+        }
 
         // Started before the work is queued so that Elapsed covers the wait for the Shell worker as well
         // as the empty itself. Every operation in this library queues behind one thread, so time spent
@@ -197,15 +211,26 @@ public static class RecycleBin
     /// Chooses the volumes an operation covers: exactly the one asked for, or every mounted volume
     /// that can hold a Recycle Bin.
     /// </summary>
+    /// <returns>
+    /// The volume roots to act on. <see langword="null"/> when the caller named a path that is not a
+    /// volume root, which is answered as not found rather than quietly widened to the volume containing it.
+    /// </returns>
     /// <remarks>
     /// Network drives have no Recycle Bin, so measuring them would report a problem the caller cannot
     /// act on.
+    /// <para>
+    /// A path inside a volume is refused rather than resolved to that volume. Emptying is not a read:
+    /// asking about <c>E:\some\folder</c> and clearing every recycled item on <c>E:\</c> is a much larger
+    /// action than the one that was asked for, and a caller who mistyped a root deserves to be told the
+    /// path was not one rather than to find out from what disappeared. <see cref="GetStatusAsync"/>
+    /// answers the same input the same way.
+    /// </para>
     /// </remarks>
-    private static IReadOnlyList<string> ResolveVolumes(string? volumeRoot)
+    private static IReadOnlyList<string>? ResolveVolumes(string? volumeRoot)
     {
         if (volumeRoot is not null)
         {
-            return [NormalizeRoot(volumeRoot)];
+            return IsVolumeRoot(volumeRoot) ? [NormalizeRoot(volumeRoot)] : null;
         }
 
         var drives = DriveInfo.GetDrives();
@@ -221,6 +246,13 @@ public static class RecycleBin
 
         return roots;
     }
+
+    /// <summary>
+    /// Whether the path is a volume root rather than something inside one — the trailing separator, or
+    /// its absence for a bare drive letter, is what separates them and what callers get wrong.
+    /// </summary>
+    private static bool IsVolumeRoot(string path) =>
+        string.Equals(path, Path.GetPathRoot(path), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Keeps only the entries that were deleted from <paramref name="volumeRoot"/>.

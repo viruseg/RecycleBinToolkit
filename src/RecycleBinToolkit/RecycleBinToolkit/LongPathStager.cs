@@ -115,20 +115,28 @@ internal sealed class LongPathStager : IDisposable
     }
 
     /// <summary>
-    /// Removes the staging directories this instance created, and reports any that could not be
-    /// removed because something is still inside them.
+    /// Removes the staging directories this instance created, and reports every one that could not be
+    /// removed because something is still inside it.
     /// </summary>
-    /// <returns>The first directory left in place, or <see langword="null"/> when all were removed.</returns>
-    internal string? Release()
+    /// <remarks>
+    /// All of them, not the first. A batch can span several volumes, each with its own staging
+    /// directory, and a leftover on one of them is as much the caller's problem as a leftover on any
+    /// other: it still holds their data, and it is still on their disk. Reporting one and dropping the
+    /// rest would leave directories holding files that nothing now knows about.
+    /// </remarks>
+    /// <returns>
+    /// The directories left in place, in the order they were created, empty when all were removed.
+    /// </returns>
+    internal IReadOnlyList<string> Release()
     {
         if (_released)
         {
-            return null;
+            return [];
         }
 
         _released = true;
 
-        string? leftover = null;
+        List<string>? leftover = null;
 
         foreach (var directory in _byVolumeRoot.Values)
         {
@@ -142,11 +150,11 @@ internal sealed class LongPathStager : IDisposable
                 continue;
             }
 
-            leftover ??= directory;
+            (leftover ??= []).Add(directory);
         }
 
         _byVolumeRoot.Clear();
-        return leftover;
+        return leftover ?? (IReadOnlyList<string>)[];
     }
 
     /// <summary>

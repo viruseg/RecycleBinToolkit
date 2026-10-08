@@ -95,13 +95,13 @@ public sealed class RecycleBinResult
         IReadOnlyList<string> permanentlyDeletedPaths,
         IReadOnlyList<RecycleFailure> failures,
         TimeSpan elapsed,
-        string? leftoverStagingDirectory)
+        IReadOnlyList<string> leftoverStagingDirectories)
     {
         RecycledPaths = recycledPaths;
         PermanentlyDeletedPaths = permanentlyDeletedPaths;
         Failures = failures;
         Elapsed = elapsed;
-        LeftoverStagingDirectory = leftoverStagingDirectory;
+        LeftoverStagingDirectories = leftoverStagingDirectories;
     }
 
     /// <summary>
@@ -138,8 +138,27 @@ public sealed class RecycleBinResult
     /// <remarks>
     /// Only reachable with <see cref="LongPathFailureAction.ShortenPathAndRecycle"/>, and only when
     /// both the recycle and the move back failed.
+    /// <para>
+    /// The first entry of <see cref="LeftoverStagingDirectories"/>, or <see langword="null"/> when there
+    /// are none. Kept as its own property because a leftover on one volume does not make a leftover on
+    /// another go away, so a batch spanning volumes needs the whole list; read that one when you have
+    /// more than one volume in play.
+    /// </para>
     /// </remarks>
-    public string? LeftoverStagingDirectory { get; }
+    public string? LeftoverStagingDirectory => LeftoverStagingDirectories.Count > 0
+        ? LeftoverStagingDirectories[0]
+        : null;
+
+    /// <summary>
+    /// Every directory left on a volume because it still holds an item the operation could neither
+    /// recycle nor move back, in the order they were created. Empty when nothing was left behind.
+    /// </summary>
+    /// <remarks>
+    /// Each entry holds the caller's own data: nothing is deleted to tidy up, so an item here has to be
+    /// moved out by the caller rather than recovered from somewhere else. A batch that spans volumes
+    /// stages per volume, so more than one can be left behind at once and all of them are named.
+    /// </remarks>
+    public IReadOnlyList<string> LeftoverStagingDirectories { get; }
 
     /// <summary>
     /// The first recorded failure, or <see langword="null"/> when the operation succeeded.
@@ -153,17 +172,17 @@ public sealed class RecycleBinResult
     /// <param name="permanentlyDeletedPaths">Paths removed permanently instead of recycled.</param>
     /// <param name="failures">Paths that were not handled at all.</param>
     /// <param name="elapsed">Wall-clock time spent on the operation.</param>
-    /// <param name="leftoverStagingDirectory">
-    /// A staging directory that still holds an item the operation could neither recycle nor move back,
-    /// or <see langword="null"/> when everything was cleaned up.
+    /// <param name="leftoverStagingDirectories">
+    /// Staging directories that still hold an item the operation could neither recycle nor move back,
+    /// empty when everything was cleaned up.
     /// </param>
     public static RecycleBinResult Create(
         IReadOnlyList<string> recycledPaths,
         IReadOnlyList<string> permanentlyDeletedPaths,
         IReadOnlyList<RecycleFailure> failures,
         TimeSpan elapsed,
-        string? leftoverStagingDirectory = null) =>
-        new(recycledPaths, permanentlyDeletedPaths, failures, elapsed, leftoverStagingDirectory);
+        IReadOnlyList<string>? leftoverStagingDirectories = null) =>
+        new(recycledPaths, permanentlyDeletedPaths, failures, elapsed, leftoverStagingDirectories ?? []);
 
     /// <summary>
     /// Returns a copy whose failures are exactly <paramref name="failures"/>, keeping every other part of
@@ -172,13 +191,13 @@ public sealed class RecycleBinResult
     /// <remarks>
     /// A batch that rejects some of its paths before the Shell is reached comes back needing the two
     /// failure lists joined. Rebuilding it through the constructor that has no
-    /// <see cref="PermanentlyDeletedPaths"/> or <see cref="LeftoverStagingDirectory"/> would quietly
+    /// <see cref="PermanentlyDeletedPaths"/> or <see cref="LeftoverStagingDirectories"/> would quietly
     /// reset both, and those are the two fields a caller needs to learn that a file was removed for good
     /// or that one could not be put back.
     /// </remarks>
     /// <param name="failures">The failures the copy should carry, in the order they should be read.</param>
     internal RecycleBinResult WithFailures(IReadOnlyList<RecycleFailure> failures) =>
-        new(RecycledPaths, PermanentlyDeletedPaths, failures, Elapsed, LeftoverStagingDirectory);
+        new(RecycledPaths, PermanentlyDeletedPaths, failures, Elapsed, LeftoverStagingDirectories);
 
     /// <summary>
     /// Creates a result with nothing removed permanently.
@@ -189,5 +208,5 @@ public sealed class RecycleBinResult
     public static RecycleBinResult Create(
         IReadOnlyList<string> recycledPaths,
         IReadOnlyList<RecycleFailure> failures,
-        TimeSpan elapsed) => new(recycledPaths, [], failures, elapsed, null);
+        TimeSpan elapsed) => new(recycledPaths, [], failures, elapsed, []);
 }

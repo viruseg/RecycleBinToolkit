@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.Versioning;
+using RecycleBinToolkit;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 
@@ -19,7 +20,47 @@ internal static class EmptySuite
         new TestCase("EmptySuite." + nameof(EmptyIsSafeToRunOnAnAlreadyEmptyVolume), EmptyIsSafeToRunOnAnAlreadyEmptyVolume),
         new TestCase("EmptySuite." + nameof(EmptyOnAnAbsentVolumeIsReportedNotThrown), EmptyOnAnAbsentVolumeIsReportedNotThrown),
         new TestCase("EmptySuite." + nameof(ElapsedCoversTheWaitAsWellAsTheEmpty), ElapsedCoversTheWaitAsWellAsTheEmpty),
+        new TestCase("EmptySuite." + nameof(APathInsideAVolumeIsNotAVolumeToEmpty), APathInsideAVolumeIsNotAVolumeToEmpty),
     ];
+
+    /// <summary>
+    /// Emptying is the widest thing this library does, so it has to be pointed at the volume the caller
+    /// named. A path inside a volume names no volume of its own, and clearing every recycled item on that
+    /// whole volume in answer to it is not a smaller version of what was asked for.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RecycleBin.GetStatusAsync"/> answers the same input with VolumeNotFound rather than
+    /// reporting on the volume containing it, so the two agree on what a volume root is.
+    /// </remarks>
+    private static async Task APathInsideAVolumeIsNotAVolumeToEmpty(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var file = workspace.CreateRandomFile(4096);
+
+        // Something on the volume, so a silent widening would have something to destroy.
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "there is an entry on the volume for the check to be about");
+
+        var (countBefore, _) = RecycleBinProbe.Measure(@"E:\");
+
+        var result = await RecycleBin.EmptyAsync(ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(0, result.VolumesEmptied.Count, "a directory inside a volume is not a volume that got emptied");
+        Check.Equal(0, result.ItemsRemoved, "and nothing was removed in answer to it");
+        Check.Equal(1, result.Failures.Count, "the caller is told the path was not one");
+
+        var failure = result.Failures[0];
+        Check.Equal(RecycleFailureStage.PathValidation, failure.Stage, "as a path that was not a volume root");
+        Check.Equal(ScratchWorkspace.Root, failure.Path, "naming the path the caller passed");
+
+        var (countAfter, _) = RecycleBinProbe.Measure(@"E:\");
+        Check.Equal(countBefore, countAfter, "and the volume the path lives in is untouched");
+
+        workspace.Dispose();
+    }
 
     /// <summary>
     /// Every operation queues behind one Shell worker, so time spent waiting for it is part of what the

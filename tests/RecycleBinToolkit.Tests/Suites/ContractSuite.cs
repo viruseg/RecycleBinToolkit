@@ -20,6 +20,7 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ReceiptAcceptsAnExtendedLengthOriginal), ReceiptAcceptsAnExtendedLengthOriginal),
         new TestCase("ContractSuite." + nameof(ReceiptRejectsWhatItCannotProve), ReceiptRejectsWhatItCannotProve),
         new TestCase("ContractSuite." + nameof(JoiningFailuresKeepsTheRestOfTheOutcome), JoiningFailuresKeepsTheRestOfTheOutcome),
+        new TestCase("ContractSuite." + nameof(EveryLeftoverIsNamedNotOnlyTheFirst), EveryLeftoverIsNamedNotOnlyTheFirst),
         new TestCase("ContractSuite." + nameof(ItemOutcomeNamesTheStageItFailedAt), ItemOutcomeNamesTheStageItFailedAt),
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsOnlyValidWhereItIs), ExtendedPrefixIsOnlyValidWhereItIs),
         new TestCase("ContractSuite." + nameof(VolumeRootIsAlwaysARootWithASeparator), VolumeRootIsAlwaysARootWithASeparator),
@@ -351,7 +352,7 @@ internal static class ContractSuite
             permanentlyDeletedPaths: [@"E:\long.bin"],
             failures: [fromShell],
             elapsed: TimeSpan.FromMilliseconds(40),
-            leftoverStagingDirectory: @"E:\$RCW-leftover");
+            leftoverStagingDirectories: [@"E:\$RCW-leftover"]);
 
         var joined = original.WithFailures([validated, fromShell]);
 
@@ -366,8 +367,45 @@ internal static class ContractSuite
             @"E:\$RCW-leftover",
             joined.LeftoverStagingDirectory,
             "a staging directory left behind survives the join, which is the only trace the data is there");
+        Check.Equal(
+            1,
+            joined.LeftoverStagingDirectories.Count,
+            "and the whole list survives with it, so a batch spanning volumes loses nothing");
         Check.Equal(1, joined.RecycledPaths.Count, "the recycled paths survive too");
         Check.Equal(original.Elapsed, joined.Elapsed, "and so does the elapsed time");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A leftover on one volume does not make a leftover on another go away, so a batch that staged on
+    /// several volumes has to be able to name every directory it could not clean up.
+    /// </summary>
+    /// <remarks>
+    /// The single-directory property is kept because a leftover is not usually plural, and a caller
+    /// handling one volume should not have to think about the rest. It is also defined as the first
+    /// entry rather than as an independent value, so the two can never disagree about the same directory.
+    /// </remarks>
+    private static Task EveryLeftoverIsNamedNotOnlyTheFirst(TestContext context)
+    {
+        var first = @"E:\$RCW-one";
+        var second = @"C:\$RCW-two";
+
+        var result = RecycleBinResult.Create(
+            recycledPaths: [],
+            permanentlyDeletedPaths: [],
+            failures: [],
+            elapsed: TimeSpan.FromMilliseconds(5),
+            leftoverStagingDirectories: [first, second]);
+
+        Check.Equal(2, result.LeftoverStagingDirectories.Count, "both staging directories are named");
+        Check.Equal(first, result.LeftoverStagingDirectories[0], "the first is where it was created first");
+        Check.Equal(second, result.LeftoverStagingDirectories[1], "and the second is not dropped");
+        Check.Equal(first, result.LeftoverStagingDirectory, "the single-directory view is the first of them");
+
+        var none = RecycleBinResult.Create([], [], TimeSpan.Zero);
+        Check.Equal(0, none.LeftoverStagingDirectories.Count, "a clean run leaves no staging directories");
+        Check.True(none.LeftoverStagingDirectory is null, "and the single-directory view has nothing to show");
 
         return Task.CompletedTask;
     }

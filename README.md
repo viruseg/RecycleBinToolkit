@@ -236,7 +236,7 @@ library must never put a dialog on a caller's desktop.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `volumeRoot` | `string?` | Volume root to empty, or `null` for every volume, in which case every mounted Fixed or Removable volume is covered in a single Shell call. |
+| `volumeRoot` | `string?` | Volume root to empty, or `null` for every volume, in which case every mounted Fixed or Removable volume is covered in a single Shell call. A path inside a volume is not a volume root: it is reported in `Failures` rather than emptied as that whole volume. |
 | `cancellationToken` | `CancellationToken` | Cancels the wait. An empty already handed to the Shell always finishes. |
 
 **Returns** a `RecycleBinEmptyResult`.
@@ -318,7 +318,8 @@ The outcome of a batch. Immutable.
 | `PermanentlyDeletedPaths` | `IReadOnlyList<string>` | Paths removed permanently instead of recycled, because you opted in. Empty unless that happened. |
 | `Failures` | `IReadOnlyList<RecycleFailure>` | Paths that were not handled. Empty when `Succeeded`. |
 | `Elapsed` | `TimeSpan` | Wall-clock time the caller waited, including any queueing behind other Shell work. |
-| `LeftoverStagingDirectory` | `string?` | A staging directory that still holds an item, or `null`. See [Limitations](#limitations). |
+| `LeftoverStagingDirectory` | `string?` | The first staging directory that still holds an item, or `null`. See [Limitations](#limitations). |
+| `LeftoverStagingDirectories` | `IReadOnlyList<string>` | Every staging directory still holding an item. A batch spanning volumes can leave more than one, and each holds your data. Empty when nothing was left. |
 | `FirstFailure` | `RecycleFailure?` | The first recorded failure, or `null`. |
 | `Create(...)` | `static RecycleBinResult` | Constructs a result. Useful in tests, rarely in application code. |
 
@@ -590,7 +591,11 @@ var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
 //
 // A directory left here still holds an item that could neither be recycled nor moved back. The
 // item is never deleted in that state, so it is recoverable — the caller has to move it out.
-Console.WriteLine(result.LeftoverStagingDirectory);
+// A batch spanning volumes can leave more than one, so read the list when that is possible.
+foreach (var directory in result.LeftoverStagingDirectories)
+{
+    Console.Error.WriteLine($"still holding your data: {directory}");
+}
 ```
 
 ### Never let a file be destroyed without a decision
@@ -713,7 +718,7 @@ Stated plainly, because these are properties of Windows rather than choices.
   short-name generation is a per-volume setting. Where it is disabled, only the policies above apply.
 - **The Shell is Windows-only.** There is no cross-platform fallback.
 - **A staging directory can survive a crash.** It is named `$RCW-<32 hex>` so a leftover is
-  recognisable. Its presence is reported in `LeftoverStagingDirectory` when the process lives long
+  recognisable. Its presence is reported in `LeftoverStagingDirectories` when the process lives long
   enough to notice.
 - **A recycled directory reports `Size` as zero.** Its contents cannot be enumerated without
   elevation, and the Shell reports those as zero too, so there is no figure to give. `IsDirectory` is
