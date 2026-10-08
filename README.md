@@ -325,10 +325,10 @@ The outcome of a batch. Immutable.
 
 | Member | Type | Description |
 | --- | --- | --- |
-| `Succeeded` | `bool` | `true` when every requested path is gone. |
+| `Succeeded` | `bool` | `true` when every requested path is gone and nothing was left behind in a staging directory. |
 | `RecycledPaths` | `IReadOnlyList<string>` | Paths, as you supplied them, confirmed recycled. |
 | `PermanentlyDeletedPaths` | `IReadOnlyList<string>` | Paths removed permanently instead of recycled, because you opted in. Empty unless that happened. |
-| `Failures` | `IReadOnlyList<RecycleFailure>` | Paths that were not handled. Empty when `Succeeded`. |
+| `Failures` | `IReadOnlyList<RecycleFailure>` | Paths that were not handled. Empty when `Succeeded`. An unsuccessful result can still have none — see below. |
 | `Elapsed` | `TimeSpan` | Wall-clock time the caller waited, including any queueing behind other Shell work. |
 | `LeftoverStagingDirectory` | `string?` | The first staging directory that still holds an item, or `null`. See [Limitations](#limitations). |
 | `LeftoverStagingDirectories` | `IReadOnlyList<string>` | Every staging directory still holding an item. A batch spanning volumes can leave more than one, and each holds your data. Empty when nothing was left. |
@@ -337,6 +337,11 @@ The outcome of a batch. Immutable.
 
 > `Succeeded` means **gone from disk**, not necessarily recycled. A file removed permanently under an
 > explicit policy counts as success. Check `PermanentlyDeletedPaths` when that distinction matters.
+>
+> It is also `false` when an item was moved aside to reach the Shell and could be neither recycled nor
+> moved back: your data is in a staging directory, not where you left it, and no path failed, so
+> `Failures` is empty while `LeftoverStagingDirectories` is not. Check that list too, or a batch that
+> spans volumes can leave more than one behind.
 
 ```csharp
 // Create exists so a test can hold a result without touching the file system. In application
@@ -344,7 +349,9 @@ The outcome of a batch. Immutable.
 var result = RecycleBinResult.Create(["a"], [], [], TimeSpan.Zero);
 
 // Succeeded means gone from disk, not necessarily recycled: a file removed permanently under an
-// explicit policy counts as a success. Check PermanentlyDeletedPaths when that matters.
+// explicit policy counts as a success. Check PermanentlyDeletedPaths when that matters. It is
+// also false when an item was left in a staging directory, so check LeftoverStagingDirectories
+// too rather than trusting one property to be the whole answer.
 Console.WriteLine($"{result.Succeeded} {result.Elapsed} {result.FirstFailure is null}");
 ```
 
@@ -861,7 +868,7 @@ ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardw
 suites. The default run writes only inside the directory it claimed under `--scratch`; `--manual` writes
 wherever you tell it to.
 
-**The 148 cases divide into three groups, and `--all` runs 141 of them.** Four are load cases that run only
+**The 149 cases divide into three groups, and `--all` runs 142 of them.** Four are load cases that run only
 on request: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
 through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
 nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —

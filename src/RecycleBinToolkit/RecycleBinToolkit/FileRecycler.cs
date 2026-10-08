@@ -78,7 +78,7 @@ public static class FileRecycler
 
         if (effective.ThrowOnError)
         {
-            ThrowForSinglePath(result.FirstFailure!);
+            ThrowForSinglePath(result);
         }
 
         return false;
@@ -160,8 +160,24 @@ public static class FileRecycler
             .WithPermanentlyDeleted([.. permanentlyDeleted, .. result.PermanentlyDeletedPaths]);
     }
 
-    private static void ThrowForSinglePath(RecycleFailure failure)
+    /// <summary>
+    /// Raises what the single-path caller is told, from the outcome the batch came back with.
+    /// </summary>
+    /// <remarks>
+    /// Takes the whole outcome rather than the first failure because one shape of unsuccessful result
+    /// carries no failure to name: an item that had to be moved aside to reach the Shell and could be
+    /// neither recycled nor moved back is the caller's data at a path they never chose, and nothing was
+    /// recorded against any path. Reading <c>FirstFailure</c> there would fault on a null, which says
+    /// nothing about what happened.
+    /// </remarks>
+    private static void ThrowForSinglePath(RecycleBinResult result)
     {
+        if (result.FirstFailure is not { } failure)
+        {
+            RecycleBinThrowHelper.ThrowItemNotPutBack(result.LeftoverStagingDirectories);
+            return;
+        }
+
         switch (failure.Stage)
         {
             case RecycleFailureStage.LongPathNotRecyclable:

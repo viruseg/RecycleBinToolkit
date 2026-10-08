@@ -14,6 +14,7 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(OptionsAreClampedByNormalize), OptionsAreClampedByNormalize),
         new TestCase("ContractSuite." + nameof(ResultSucceedsWhenNoFailures), ResultSucceedsWhenNoFailures),
         new TestCase("ContractSuite." + nameof(ResultFailsWhenAnyFailure), ResultFailsWhenAnyFailure),
+        new TestCase("ContractSuite." + nameof(ResultFailsWhenAnItemCouldNotBePutBack), ResultFailsWhenAnItemCouldNotBePutBack),
         new TestCase("ContractSuite." + nameof(ThrowRecycleFailedCarriesHResult), ThrowRecycleFailedCarriesHResult),
         new TestCase("ContractSuite." + nameof(TargetKeepsInputAndFullPath), TargetKeepsInputAndFullPath),
         new TestCase("ContractSuite." + nameof(TargetCarriesBothPathForms), TargetCarriesBothPathForms),
@@ -34,6 +35,40 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(EveryReasonAndActionPairIsPinned), EveryReasonAndActionPairIsPinned),
         new TestCase("ContractSuite." + nameof(TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured), TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured),
     ];
+
+    /// <summary>
+    /// An item the Shell would not take, moved aside to a short path, that could neither be recycled nor
+    /// moved back is the caller's data sitting where the caller did not put it. No path failed, so nothing
+    /// was recorded as a failure — but a requested path is not gone either, and that is exactly what
+    /// <see cref="RecycleBinResult.Succeeded"/> promises.
+    /// </summary>
+    /// <remarks>
+    /// Reading it as a success is the failure this library exists to prevent, one level down: the caller
+    /// checks one property, sees success, and never reads <see cref="RecycleBinResult.LeftoverStagingDirectories"/>.
+    /// </remarks>
+    private static Task ResultFailsWhenAnItemCouldNotBePutBack(TestContext context)
+    {
+        var leftover = RecycleBinResult.Create(
+            ["a"],
+            [],
+            [],
+            TimeSpan.Zero,
+            [@"X:\$RCW-0123456789abcdef0123456789abcdef\"]);
+
+        Check.False(
+            leftover.Succeeded,
+            "an item left where the caller did not put it is not every requested path gone, however few failures there are");
+
+        Check.Equal(0, leftover.Failures.Count, "and nothing was recorded as a failure, which is the shape this has to catch");
+        Check.True(leftover.FirstFailure is null, "so there is no first failure to point at either");
+        Check.Equal(1, leftover.LeftoverStagingDirectories.Count, "the directory holding it is named");
+
+        Check.True(
+            RecycleBinResult.Create(["a"], [], TimeSpan.Zero).Succeeded,
+            "and an operation that put everything back is still a success");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// <c>SHEmptyRecycleBin</c> reads a null root as "every volume on the machine", which is a much larger

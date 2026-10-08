@@ -46,6 +46,23 @@ internal static class RecycleBinThrowHelper
         throw new InvalidOperationException(
             "The Recycle Bin worker thread could not be initialised.",
             inner);
+
+    /// <summary>
+    /// Reports that the caller's own data is sitting in a staging directory, where it was moved to reach
+    /// the Shell and could not be moved back.
+    /// </summary>
+    /// <remarks>
+    /// A different failure from every other one here: nothing was refused, and no path failed, so there is
+    /// no code to carry and no path to name. What there is is a directory the caller has to move the item
+    /// out of, and naming it is the whole answer. Every one is named, because a batch spanning volumes
+    /// stages per volume and a leftover on one does not make a leftover on another go away.
+    /// </remarks>
+    [DoesNotReturn]
+    internal static void ThrowItemNotPutBack(IReadOnlyList<string> leftoverStagingDirectories) =>
+        throw new InvalidOperationException(
+            $"The item was moved to a short path to reach the Recycle Bin and could be neither recycled nor " +
+            $"moved back, so it is at {string.Join(" and ", leftoverStagingDirectories.Select(d => $"'{d}'"))} " +
+            "rather than where it was left. Nothing was deleted. Move it out of that directory.");
 }
 
 /// <summary>

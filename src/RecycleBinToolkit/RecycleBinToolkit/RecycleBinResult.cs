@@ -138,7 +138,15 @@ public sealed class RecycleBinResult
     /// <see langword="true"/> when every requested path is gone: either recycled, or removed
     /// permanently because the caller asked for that.
     /// </summary>
-    public bool Succeeded => Failures.Count == 0;
+    /// <remarks>
+    /// A path is gone when it is where the caller left it, or nowhere at all. An item that had to be moved
+    /// aside to reach the Shell and could be neither recycled nor moved back is neither: it is the
+    /// caller's data at a path the caller never chose, so a result carrying one is not a success even
+    /// though nothing was recorded as a failure. The directories holding it are named in
+    /// <see cref="LeftoverStagingDirectories"/>, and a caller that reads this property as the whole answer
+    /// needs to read those too — which is why this one says so rather than answering <see langword="true"/>.
+    /// </remarks>
+    public bool Succeeded => Failures.Count == 0 && LeftoverStagingDirectories.Count == 0;
 
     /// <summary>Paths, as supplied by the caller, that were confirmed recycled.</summary>
     public IReadOnlyList<string> RecycledPaths { get; }
@@ -156,7 +164,8 @@ public sealed class RecycleBinResult
 
     /// <summary>
     /// Paths that did not reach the Recycle Bin. Empty when <see cref="Succeeded"/> is
-    /// <see langword="true"/>.
+    /// <see langword="true"/>, and empty of that guarantee the other way round: a result can be
+    /// unsuccessful with nothing recorded here when an item was left in a staging directory.
     /// </summary>
     public IReadOnlyList<RecycleFailure> Failures { get; }
 
@@ -194,7 +203,8 @@ public sealed class RecycleBinResult
     public IReadOnlyList<string> LeftoverStagingDirectories { get; }
 
     /// <summary>
-    /// The first recorded failure, or <see langword="null"/> when the operation succeeded.
+    /// The first recorded failure, or <see langword="null"/> when none was. An unsuccessful result can
+    /// still have none: see <see cref="Succeeded"/>.
     /// </summary>
     public RecycleFailure? FirstFailure => Failures.Count > 0 ? Failures[0] : null;
 
