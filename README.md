@@ -114,9 +114,15 @@ if (!result.Succeeded)
 {
     foreach (var failure in result.Failures)
     {
-        // Attempts is 0 when the item never reached the Shell, so the HRESULT is 0 too.
         Console.Error.WriteLine(
             $"{failure.Path}: {failure.Stage} (0x{failure.HResult:X8}) after {failure.Attempts} attempt(s)");
+    }
+
+    // Succeeded can also be false with nothing in Failures, when an item was left in a staging
+    // directory. Your data is there, not where you left it, and only this list says so.
+    foreach (var directory in result.LeftoverStagingDirectories)
+    {
+        Console.Error.WriteLine($"still holding your data: {directory}");
     }
 }
 ```
@@ -136,6 +142,11 @@ if (!result.Succeeded)
     foreach (var failure in result.Failures)
     {
         Console.Error.WriteLine($"recycle failed for {failure.Path}: {failure.Stage} 0x{failure.HResult:X8}");
+    }
+
+    foreach (var directory in result.LeftoverStagingDirectories)
+    {
+        Console.Error.WriteLine($"recycle left your data here: {directory}");
     }
 }
 ```
@@ -620,7 +631,14 @@ if (!status.IsEnabled)
 IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
 var result = await FileRecycler.MoveToRecycleBinAsync(paths);
 
-Console.WriteLine(result.Succeeded ? "recycled" : $"{result.Failures.Count} failed");
+if (result.Succeeded)
+{
+    Console.WriteLine("recycled");
+}
+else
+{
+    Console.WriteLine($"{result.Failures.Count} failed, and {result.LeftoverStagingDirectories.Count} staging director(ies) left holding data");
+}
 ```
 
 ### Report every failure with its reason
