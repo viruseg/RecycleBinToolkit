@@ -23,7 +23,91 @@ internal static class EmptySuite
         new TestCase("EmptySuite." + nameof(APathInsideAVolumeIsNotAVolumeToEmpty), APathInsideAVolumeIsNotAVolumeToEmpty),
         new TestCase("EmptySuite." + nameof(ABareDriveLetterEmptiesTheVolumeItNames), ABareDriveLetterEmptiesTheVolumeItNames),
         new TestCase("EmptySuite." + nameof(AnExtendedLengthRootIsTheVolumeToEmpty), AnExtendedLengthRootIsTheVolumeToEmpty),
+        new TestCase("EmptySuite." + nameof(AnEmptyPathIsNotAVolumeToEmpty), AnEmptyPathIsNotAVolumeToEmpty),
+        new TestCase("EmptySuite." + nameof(AForwardSlashSpellingIsTheVolumeToEmpty), AForwardSlashSpellingIsTheVolumeToEmpty),
     ];
+
+    /// <summary>
+    /// An empty string names no volume, so the empty has to refuse it. Reading it as a root instead is
+    /// worse than a refusal: the caller is answered for the whole drive while believing they asked about
+    /// nothing in particular.
+    /// </summary>
+    /// <remarks>
+    /// The refusal has to happen before the Shell is reached. An empty string reduced to a root is
+    /// <c>"\</c>, and handing that to <c>SHEmptyRecycleBin</c> is a question about a volume that does not
+    /// exist — or, worse, about no volume at all. A refusal cannot do that, so the path is checked before
+    /// the Shell is asked anything.
+    /// <para>
+    /// <see cref="RecycleBin.GetStatusAsync"/> throws on the same string rather than refusing it, because
+    /// it takes no <see langword="null"/> to mean "everything"; that difference is its own and predates
+    /// this case.
+    /// </para>
+    /// </remarks>
+    private static async Task AnEmptyPathIsNotAVolumeToEmpty(TestContext context)
+    {
+        Check.False(
+            RecycleBinVolumeState.IsVolumeRoot(string.Empty),
+            "an empty string is not a volume root, however it is reduced");
+
+        var result = await RecycleBin.EmptyAsync(string.Empty, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(0, result.VolumesEmptied.Count, "no volume is emptied in answer to an empty path");
+        Check.Equal(0, result.ItemsRemoved, "and nothing is removed");
+        Check.Equal(1, result.Failures.Count, "the caller is told the path was not one");
+
+        var failure = result.Failures[0];
+        Check.Equal(RecycleFailureStage.PathValidation, failure.Stage, "as a path that was not a volume root, before the Shell was asked");
+        Check.Equal(string.Empty, failure.Path, "naming the path the caller passed");
+    }
+
+    /// <summary>
+    /// The status and the empty both decide what a volume root is, so a root they disagree about splits
+    /// one library into two answers for one string. A root spelled with a forward slash is where that
+    /// happened, and it needs no network to show it.
+    /// </summary>
+    /// <remarks>
+    /// <c>Path.GetPathRoot("E:/")</c> answers <c>E:\</c>, so comparing a caller's spelling against its
+    /// root as typed calls that a path inside a volume — while a reduced comparison calls it the root,
+    /// which is what it is. The two public methods used to reduce differently, and one of them refused
+    /// this string while the other answered for <c>E:\</c>.
+    /// <para>
+    /// This is the guard for that duplication on a local drive. <c>\\?\E:\</c> is not: the Shell hands
+    /// that spelling back as its own root, so both predicates read it as a root and
+    /// <see cref="AnExtendedLengthRootIsTheVolumeToEmpty"/> cannot tell them apart. A share root can tell
+    /// them apart, and is the later manual group's case to make, because the empty hands an accepted share
+    /// to the Shell and the default run must not reach for the network.
+    /// </para>
+    /// </remarks>
+    private static async Task AForwardSlashSpellingIsTheVolumeToEmpty(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var file = workspace.CreateRandomFile(4096);
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+        var forwardSlash = volumeRoot.Replace('\\', '/');
+
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
+
+        var status = await RecycleBin.GetStatusAsync(forwardSlash, context.CancellationToken).ConfigureAwait(false);
+        Check.Equal(volumeRoot, status.VolumeRoot, "the status reads a forward-slash root as the volume it is");
+
+        var result = await RecycleBin.EmptyAsync(forwardSlash, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(
+            0,
+            result.Failures.Count,
+            result.Failures.Count == 0
+                ? "and the empty reads it the same way, instead of refusing it"
+                : $"and the empty reads it the same way, instead of refusing it (first failure: {result.Failures[0].Stage} 0x{result.Failures[0].HResult:X8})");
+        Check.Equal(1, result.VolumesEmptied.Count, "so one volume is emptied rather than none");
+        Check.Equal(volumeRoot, result.VolumesEmptied[0], "and it is the volume the status named");
+        Check.True(result.ItemsRemoved >= 1, $"and the entry really went (removed {result.ItemsRemoved})");
+
+        workspace.Dispose();
+    }
 
     /// <summary>
     /// A bare drive letter names its volume, and so does the same root written with its separator.

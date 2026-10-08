@@ -114,7 +114,8 @@ internal static class RecycleBinVolumeState
     /// <param name="root">A path or volume root, in any spelling.</param>
     /// <returns>
     /// <see langword="true"/> for a UNC path, including the extended-length spelling; otherwise
-    /// <see langword="false"/>.
+    /// <see langword="false"/>. A share written with forward slashes is not recognised — see
+    /// <see cref="RootForm(string)"/>.
     /// </returns>
     internal static bool IsUncRoot(string root) =>
         RecycleTarget.StripExtendedPrefix(root).StartsWith(@"\\", StringComparison.Ordinal);
@@ -123,19 +124,26 @@ internal static class RecycleBinVolumeState
     /// Whether the path names a volume root rather than something inside one. A path is told from its
     /// root by what follows it, not by how the root happens to be spelled.
     /// </summary>
-    /// <remarks>
+/// <remarks>
     /// The two sides are compared in a reduced form rather than as the caller typed them, because
     /// <see cref="Path.GetPathRoot(string)"/> does not spell a root the way its caller did:
     /// <c>\\server\share</c> is the root of both <c>\\server\share</c> and <c>\\server\share\</c>, and
-    /// the root it derives from <c>\\?\UNC\server\share\</c> still carries the prefix. Comparing either
+    /// the root it derives from <c>\\?\UNC\server\share</c> still carries the prefix. Comparing either
     /// pair verbatim calls one share two volumes, and the caller gets two answers to one question.
     /// <para>
     /// The reduction drops the extended-length prefix and the trailing separator, but nothing else — a
     /// path that goes <em>past</em> the root has to stay distinguishable from the root. Comparing whole
     /// roots instead would answer that <c>E:\RC\Test\</c> is the same volume as <c>E:\</c>.
     /// </para>
+    /// <para>
+    /// An empty path is refused before that comparison, because it is the one input with no root to
+    /// reduce: <see cref="Path.GetPathRoot(string)"/> answers nothing for it, and an absent answer on both
+    /// sides would agree. Left alone, a caller passing an empty string gets a root of <c>"\</c> — which
+    /// the Shell accepts as a volume and reports emptied.
+    /// </para>
     /// </remarks>
     internal static bool IsVolumeRoot(string volumeRoot) =>
+        !string.IsNullOrEmpty(volumeRoot) &&
         string.Equals(RootForm(volumeRoot), RootForm(Path.GetPathRoot(volumeRoot)), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
@@ -147,6 +155,10 @@ internal static class RecycleBinVolumeState
     /// slashes in backslashes, so <c>//server/share</c> is not reduced to the same form as
     /// <c>\\server\share</c> and is not read as a root — which is also how it read before this reduction
     /// existed.
+    /// <para>
+    /// A path with no root at all reduces to the empty string, which is what
+    /// <see cref="IsVolumeRoot"/> then refuses rather than comparing.
+    /// </para>
     /// </remarks>
     private static string RootForm(string? path) =>
         string.IsNullOrEmpty(path)
