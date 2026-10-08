@@ -48,7 +48,15 @@ internal static class RecycleBinThrowHelper
 internal sealed class RecycleFailedException : IOException
 {
     internal RecycleFailedException(RecycleFailure failure)
-        : base(BuildMessage(failure), new COMException(BuildComMessage(failure), failure.HResult))
+        : base(
+            BuildMessage(failure),
+            // The Shell's own code is carried as an inner exception because it is the only exception type
+            // that takes an HRESULT verbatim, and it never escapes: it is always inside this IOException,
+            // whose own HResult is the Shell's code as well.
+#pragma warning disable CA2201 // Reserved exception type, used only as an HRESULT carrier.
+            new COMException(BuildComMessage(failure), failure.HResult)
+#pragma warning restore CA2201
+        )
     {
         HResult = failure.HResult;
         Failure = failure;

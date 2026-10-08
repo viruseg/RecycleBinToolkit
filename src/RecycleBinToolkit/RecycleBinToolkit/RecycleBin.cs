@@ -152,7 +152,7 @@ public static class RecycleBin
     /// experiences. <see cref="EmptyAsync"/> measures around the wait instead, the same way
     /// <see cref="GetItemsAsync"/> does, so both results mean the same thing.
     /// </remarks>
-    private static RecycleBinEmptyResult Empty(IReadOnlyList<string> targets, string? volumeRoot)
+    private static RecycleBinEmptyResult Empty(List<string> targets, string? volumeRoot)
     {
         var failures = new List<RecycleFailure>();
         var emptied = new List<string>(targets.Count);
@@ -226,7 +226,7 @@ public static class RecycleBin
     /// answers the same input the same way.
     /// </para>
     /// </remarks>
-    private static IReadOnlyList<string>? ResolveVolumes(string? volumeRoot)
+    private static List<string>? ResolveVolumes(string? volumeRoot)
     {
         if (volumeRoot is not null)
         {

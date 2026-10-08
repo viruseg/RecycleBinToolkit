@@ -10,6 +10,18 @@
              a malformed comment, a param for a parameter that does not exist and an unresolvable cref
              are all silent. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+        <!-- A warning nobody has to read is a warning nobody reads. The whole surface is
+             source-generated COM and interop, so the analyzers that know about those have something to
+             say here, and the compiler's own suggestions are part of what is being checked. -->
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <AnalysisLevel>latest-recommended</AnalysisLevel>
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+        <!-- The AOT analyzer is on, the trim analyser is not: this library is COM from top to bottom and
+             the trimming analyser's verdict on it ("correctness of COM interop cannot be guaranteed")
+             is a property of COM rather than something a consumer's publish settings can fix. -->
+        <EnableAotAnalyzer>true</EnableAotAnalyzer>
     </PropertyGroup>
 
     <ItemGroup>

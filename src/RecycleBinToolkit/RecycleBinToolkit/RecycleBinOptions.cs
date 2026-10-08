@@ -87,10 +87,34 @@ public sealed class RecycleBinOptions
     {
         MaxAttempts = Math.Max(1, MaxAttempts),
         InitialRetryDelay = InitialRetryDelay < TimeSpan.Zero ? TimeSpan.Zero : InitialRetryDelay,
-        OverallTimeout = OverallTimeout < TimeSpan.Zero ? TimeSpan.Zero : OverallTimeout,
+        OverallTimeout = ClampTimeout(OverallTimeout),
         VerifyRecycleBinReceipt = VerifyRecycleBinReceipt,
         ThrowOnError = ThrowOnError,
         LongPathFailureAction = LongPathFailureAction,
         MaxShellPathLength = Math.Max(1, MaxShellPathLength)
     };
+
+    /// <summary>
+    /// Keeps the overall budget short enough that adding the time already spent cannot overflow.
+    /// </summary>
+    /// <remarks>
+    /// The deadline is the elapsed time plus this budget, and a caller is free to set a budget close to
+    /// <see cref="TimeSpan.MaxValue"/>. That addition throws, and it throws from the retry loop of an
+    /// operation documented never to throw — before any retry decision has been made at all.
+    /// </remarks>
+    private static TimeSpan ClampTimeout(TimeSpan overallTimeout)
+    {
+        if (overallTimeout < TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var headroom = TimeSpan.MaxValue - MaxElapsedAllowance;
+        return overallTimeout > headroom ? headroom : overallTimeout;
+    }
+
+    /// <summary>
+    /// Longest run the elapsed time is allowed to reach, which bounds the addition above.
+    /// </summary>
+    private static readonly TimeSpan MaxElapsedAllowance = TimeSpan.FromDays(365);
 }

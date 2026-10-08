@@ -181,7 +181,13 @@ internal static class RecycleBinWorker
         internal override object? Execute(RecycleOperationRunner runner) => _work();
     }
 
+    // The two wait handles are held for the lifetime of the process on purpose, so there is no point at
+    // which releasing them would be observable. They belong to a worker whose thread never returns, and
+    // releasing them would only mean the next Release threw ObjectDisposedException on a thread that has
+    // already gone.
+#pragma warning disable CA1001 // Types that own disposable fields should be disposable.
     private sealed unsafe class Worker
+#pragma warning restore CA1001
     {
         private readonly Queue<WorkItem> _queue = [];
         private readonly object _queueGate = new();

@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using RecycleBinToolkit.Tests.Host;
+using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
 
 namespace RecycleBinToolkit.Tests.Suites;
@@ -21,6 +22,7 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ReceiptRejectsWhatItCannotProve), ReceiptRejectsWhatItCannotProve),
         new TestCase("ContractSuite." + nameof(JoiningFailuresKeepsTheRestOfTheOutcome), JoiningFailuresKeepsTheRestOfTheOutcome),
         new TestCase("ContractSuite." + nameof(EveryLeftoverIsNamedNotOnlyTheFirst), EveryLeftoverIsNamedNotOnlyTheFirst),
+        new TestCase("ContractSuite." + nameof(AnAbsurdRetryBudgetDoesNotOverflowTheDeadline), AnAbsurdRetryBudgetDoesNotOverflowTheDeadline),
         new TestCase("ContractSuite." + nameof(ItemOutcomeNamesTheStageItFailedAt), ItemOutcomeNamesTheStageItFailedAt),
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsOnlyValidWhereItIs), ExtendedPrefixIsOnlyValidWhereItIs),
         new TestCase("ContractSuite." + nameof(VolumeRootIsAlwaysARootWithASeparator), VolumeRootIsAlwaysARootWithASeparator),
@@ -375,6 +377,47 @@ internal static class ContractSuite
         Check.Equal(original.Elapsed, joined.Elapsed, "and so does the elapsed time");
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Every knob has to be survivable, because every knob is public. A budget near
+    /// <see cref="TimeSpan.MaxValue"/> used to overflow when the runner added the time already spent to
+    /// it, and a doubled delay large enough to outgrow the wait window used to throw out of
+    /// <c>TimeSpan.FromMilliseconds</c>. Both are arithmetic, not failure: there is nothing for a caller
+    /// to do differently, so neither may reach them.
+    /// </summary>
+    private static async Task AnAbsurdRetryBudgetDoesNotOverflowTheDeadline(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var file = workspace.CreateRandomFile(4096);
+
+        var absurd = new RecycleBinOptions
+        {
+            // The budget that overflows when added to a non-zero elapsed time, and an attempt count large
+            // enough that the doubled delay would exceed what a wait can express if the operation ever
+            // had to wait at all.
+            MaxAttempts = 200,
+            InitialRetryDelay = TimeSpan.FromDays(1),
+            OverallTimeout = TimeSpan.MaxValue,
+            ThrowOnError = false
+        };
+
+        var normalized = absurd.Normalize();
+
+        Check.True(
+            normalized.OverallTimeout < TimeSpan.MaxValue,
+            $"the budget is pulled back far enough that adding the elapsed time cannot overflow (got {normalized.OverallTimeout})");
+
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync([file], absurd, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.True(result.Succeeded, $"an absurd budget still recycles the file (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.False(File.Exists(file), "and really removed it");
+
+        workspace.Dispose();
     }
 
     /// <summary>

@@ -61,7 +61,11 @@ internal sealed unsafe class ShellOperationContext : IDisposable
                 if (coInit.Value != ChangedModeHResult)
                 {
                     RecycleBinThrowHelper.ThrowWorkerUnavailable(
+                        // Carried as an inner exception because it is the only type that takes an HRESULT
+                        // verbatim; it never escapes, since ThrowWorkerUnavailable wraps it.
+#pragma warning disable CA2201 // Reserved exception type, used only as an HRESULT carrier.
                         new COMException($"CoInitializeEx failed with 0x{coInit.Value:X8}.", coInit.Value));
+#pragma warning restore CA2201
                 }
             }
             else
@@ -90,7 +94,11 @@ internal sealed unsafe class ShellOperationContext : IDisposable
         if (hrCreate.Failed)
         {
             RecycleBinThrowHelper.ThrowWorkerUnavailable(
+                // Carried as an inner exception because it is the only type that takes an HRESULT
+                // verbatim; it never escapes, since ThrowWorkerUnavailable wraps it.
+#pragma warning disable CA2201 // Reserved exception type, used only as an HRESULT carrier.
                 new COMException($"Could not create the Shell file operation object (0x{hrCreate.Value:X8}).", hrCreate.Value));
+#pragma warning restore CA2201
         }
 
         _fileOperation = fileOperation;

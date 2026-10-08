@@ -21,7 +21,11 @@ internal sealed class RecycleOperationRunner
 {
     private const int SuccessSeverityMask = unchecked((int)0x80000000);
     private const double MaxJitterFraction = 0.25;
-    private const double MaxDelayMilliseconds = 9.0e12;
+    /// <summary>
+    /// Longest backoff this library will ever ask to wait, in milliseconds. Just under a day, which is
+    /// far beyond any sensible retry policy and keeps the wait inside what a platform wait can express.
+    /// </summary>
+    private const double MaxWaitableMilliseconds = 86_400_000;
 
     /// <summary>How many times a rename into the staging directory is attempted before the path is refused.</summary>
     private const int StageAttempts = 4;
@@ -169,7 +173,7 @@ internal sealed class RecycleOperationRunner
         var stager = new LongPathStager();
         try
         {
-            return RunOperation(targets, options, cancellationToken, stager);
+            return RunOperation(targets, options, stager, cancellationToken);
         }
         finally
         {
@@ -180,8 +184,8 @@ internal sealed class RecycleOperationRunner
     private RecycleBinResult RunOperation(
         IReadOnlyList<RecycleTarget> targets,
         RecycleBinOptions options,
-        CancellationToken cancellationToken,
-        LongPathStager stager)
+        LongPathStager stager,
+        CancellationToken cancellationToken)
     {
         var pending = CollapseEquivalentPaths(targets);
         var recycled = new List<string>(pending.Count);
@@ -206,7 +210,7 @@ internal sealed class RecycleOperationRunner
                 ? recyclable
                 : [.. recyclable, .. staged.Select(entry => entry.Target)];
 
-            return RunRounds(withStaged, staged, options, cancellationToken, stager, permanentlyDeleted, recycled, failures);
+            return RunRounds(withStaged, staged, options, stager, permanentlyDeleted, recycled, failures, cancellationToken);
         }
         catch
         {
@@ -225,11 +229,11 @@ internal sealed class RecycleOperationRunner
         List<RecycleTarget> pending,
         List<StagedTarget> staged,
         RecycleBinOptions options,
-        CancellationToken cancellationToken,
         LongPathStager stager,
         List<string> permanentlyDeleted,
         List<string> recycled,
-        List<RecycleFailure> failures)
+        List<RecycleFailure> failures,
+        CancellationToken cancellationToken)
     {
         // Verdicts are held in dictionaries keyed by the caller's own path rather than by position in the
         // pending list. A round that succeeds for some items shortens that list, so an array would slide
@@ -525,7 +529,7 @@ internal sealed class RecycleOperationRunner
     }
 
     private RoundOutcome RunRound(
-        IReadOnlyList<RecycleTarget> targets,
+        List<RecycleTarget> targets,
         RecycleBinOptions options,
         Dictionary<string, int> lastHResult,
         Dictionary<string, RecycleFailureStage> lastStage,
@@ -668,7 +672,7 @@ internal sealed class RecycleOperationRunner
     private bool TrySetFlags(
         Dictionary<string, int> lastHResult,
         Dictionary<string, RecycleFailureStage> lastStage,
-        IReadOnlyList<RecycleTarget> targets,
+        List<RecycleTarget> targets,
         int[] buildable,
         int buildableCount)
     {
@@ -701,7 +705,7 @@ internal sealed class RecycleOperationRunner
     private bool TryPerform(
         Dictionary<string, int> lastHResult,
         Dictionary<string, RecycleFailureStage> lastStage,
-        IReadOnlyList<RecycleTarget> targets,
+        List<RecycleTarget> targets,
         int[] queueable,
         int queueableCount)
     {
@@ -762,7 +766,12 @@ internal sealed class RecycleOperationRunner
     {
         var exponential = options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, round - 1);
         var jittered = exponential * (1 + ((Random.Shared.NextDouble() * 2 - 1) * MaxJitterFraction));
-        var delay = TimeSpan.FromMilliseconds(Math.Clamp(jittered, 0, MaxDelayMilliseconds));
+
+        // Clamped to the window a wait can actually be expressed in, before it becomes a TimeSpan.
+        // A caller is free to set an attempt budget large enough that the doubled delay outgrows
+        // TimeSpan.MaxValue, and FromMilliseconds throws on that — from an operation documented never to
+        // throw, and for a batch nobody asked to run for a hundred thousand days.
+        var delay = TimeSpan.FromMilliseconds(Math.Clamp(jittered, 0, MaxWaitableMilliseconds));
 
         var remaining = deadline - _stopwatch.Elapsed;
         if (remaining <= TimeSpan.Zero || delay >= remaining)
@@ -770,8 +779,16 @@ internal sealed class RecycleOperationRunner
             return false;
         }
 
-        cancellationToken.WaitHandle.WaitOne(delay);
-        return true;
+        // cancellationToken.WaitHandle allocates a manual-reset event on the token's source and is
+        // documented as something to avoid. A token that cannot be cancelled needs no handle at all,
+        // and that is the common case — a caller that passed nothing.
+        if (!cancellationToken.CanBeCanceled)
+        {
+            Thread.Sleep(delay);
+            return true;
+        }
+
+        return !cancellationToken.WaitHandle.WaitOne(delay);
     }
 
     /// <summary>
