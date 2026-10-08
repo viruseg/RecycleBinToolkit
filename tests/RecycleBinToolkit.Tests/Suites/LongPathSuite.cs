@@ -45,7 +45,68 @@ internal static class LongPathSuite
         new TestCase("LongPathSuite." + nameof(StagedItemThatCouldNotBeRecycledIsPutBack), StagedItemThatCouldNotBeRecycledIsPutBack),
         new TestCase("LongPathSuite." + nameof(AnExceptionDuringTheOperationStillPutsStagedItemsBack), AnExceptionDuringTheOperationStillPutsStagedItemsBack),
         new TestCase("LongPathSuite." + nameof(DeletePermanentlyRemovesALongDirectoryToo), DeletePermanentlyRemovesALongDirectoryToo),
+        new TestCase("LongPathSuite." + nameof(AFaultAfterStagingStillPutsTheItemBack), AFaultAfterStagingStillPutsTheItemBack),
     ];
+
+    /// <summary>
+    /// Staging happens before the retry loop, so an operation that faults after that point has already
+    /// moved the caller's file and never got to do anything useful with it. The move back has to happen
+    /// on that path too, or the bytes are left in a staging directory the caller was told nothing about.
+    /// </summary>
+    /// <remarks>
+    /// The runner is driven directly rather than through <see cref="FileRecycler"/>, because that is the
+    /// only way to place a fault after staging. <c>SubmitAsync</c> checks the token before the batch is
+    /// ever queued, so a cancelled call through the public API never starts staging and cannot show this.
+    /// Here the token is already cancelled when the runner is entered, so the batch is staged and then
+    /// throws on the loop's first cancellation check — after the file has left its original location.
+    /// </remarks>
+    private static Task AFaultAfterStagingStillPutsTheItemBack(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var (plainPath, extendedPath) = BuildLongPath('z');
+
+        File.WriteAllBytes(extendedPath, new byte[4096]);
+
+        // Same reason the backoff case skips: where the volume issues 8.3 names the path is recycled
+        // directly and never staged, so there would be nothing here to put back.
+        if (ShortPathResolver.TryResolveShort(plainPath) is not null)
+        {
+            Console.WriteLine("        skipped: this volume issues 8.3 names, so long paths never reach staging");
+            workspace.Dispose();
+            return Task.CompletedTask;
+        }
+
+        var options = new RecycleBinOptions
+        {
+            ThrowOnError = false,
+            LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
+        };
+
+        var targets = new List<RecycleTarget>
+        {
+            new(plainPath, extendedPath, RecycleTarget.StripExtendedPrefix(extendedPath))
+        };
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        Check.Throws<OperationCanceledException>(
+            () => StaThread.Run(() =>
+            {
+                using var shell = ShellOperationContext.Create();
+                return new RecycleOperationRunner(shell).Run(targets, options, cancelled.Token);
+            }),
+            "the runner reports the fault rather than swallowing it");
+
+        Check.True(
+            File.Exists(extendedPath),
+            "and the item it had already moved aside is back where the caller had it");
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// The direct-removal policy answers the same way for a directory as for a file. Removing a file
