@@ -6,8 +6,8 @@ namespace RecycleBinToolkit;
 /// <remarks>
 /// The members are numbered explicitly because this is a public enum and the numbers are part of its
 /// contract: an implicit value renumbers every member declared after an insertion, which compiles
-/// everywhere and silently breaks every caller that persisted one. Appending a stage therefore costs a
-/// number and nothing else.
+/// everywhere and silently breaks every caller that persisted one. Adding a stage is therefore a matter
+/// of picking the next number, and of nothing else.
 /// </remarks>
 public enum RecycleFailureStage
 {

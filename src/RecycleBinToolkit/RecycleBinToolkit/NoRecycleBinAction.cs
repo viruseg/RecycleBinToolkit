@@ -42,6 +42,15 @@ public enum NoRecycleBinAction
     /// <remarks>
     /// It is never listed in <see cref="RecycleBinResult.RecycledPaths"/>: calling a permanent deletion
     /// recycled would tell the caller the opposite of what happened.
+    /// <para>
+    /// That contract is not implemented yet. This value declines to refuse, so a path whose volume answers
+    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> or
+    /// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/> is handed to the Shell — which on
+    /// such a volume removes the file for good and reports success. The outcome described above therefore
+    /// arrives in <see cref="RecycleBinResult.RecycledPaths"/>, and
+    /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> stays empty until this value is wired to a
+    /// permanent delete.
+    /// </para>
     /// </remarks>
     DeletePermanently
 }
