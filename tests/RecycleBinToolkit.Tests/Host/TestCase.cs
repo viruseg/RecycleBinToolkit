@@ -14,6 +14,21 @@ internal enum TestKind
     /// its failures are about the machine's state rather than about the code.
     /// </summary>
     Load,
+
+    /// <summary>
+    /// A case that needs hardware this repository cannot arrange — a removable volume or a network share
+    /// with no Recycle Bin — and <b>destroys files on the path the caller names</b>.
+    /// </summary>
+    /// <remarks>
+    /// It runs only when <c>--manual &lt;root&gt;</c> is passed, once per root given, and is never
+    /// selected by <c>--all</c>, <c>--filter</c> or <c>--load</c>: a default run must not depend on a
+    /// flash drive being plugged in or on somebody's share being reachable.
+    /// <para>
+    /// Nothing hard-codes a root. The caller owns the path, and a case that treats it as a scratch
+    /// directory is why this group is behind a flag rather than in the default run.
+    /// </para>
+    /// </remarks>
+    Manual,
 }
 
 /// <summary>
@@ -32,10 +47,24 @@ internal sealed record TestCase(string Name, Func<TestContext, Task> Body, TestK
 /// </summary>
 internal sealed class TestContext
 {
-    internal TestContext(CancellationToken cancellationToken) => CancellationToken = cancellationToken;
+    internal TestContext(CancellationToken cancellationToken, string? manualRoot = null)
+    {
+        CancellationToken = cancellationToken;
+        ManualRoot = manualRoot;
+    }
 
     /// <summary>
     /// Cancelled when the test exceeds its time budget or when the runner is asked to stop.
     /// </summary>
     public CancellationToken CancellationToken { get; }
+
+    /// <summary>
+    /// The path <c>--manual</c> was given for this run, in the caller's own spelling, or
+    /// <see langword="null"/> in every other group.
+    /// </summary>
+    /// <remarks>
+    /// A case may destroy files under it. It is the caller's volume or share, not a scratch directory, so
+    /// anything a manual case creates belongs in a subdirectory of its own and is removed by full path.
+    /// </remarks>
+    public string? ManualRoot { get; }
 }
