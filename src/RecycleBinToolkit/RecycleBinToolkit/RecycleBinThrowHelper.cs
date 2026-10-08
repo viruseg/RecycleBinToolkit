@@ -35,6 +35,21 @@ internal static class RecycleBinThrowHelper
             "The file was left in place. Set LongPathFailureAction to DeletePermanently to remove it instead.");
 
     /// <summary>
+    /// Reports a path that names its volume by GUID, which nothing above this library can read.
+    /// </summary>
+    /// <remarks>
+    /// A different answer from every other one here, because nothing failed: the Shell was never asked,
+    /// so there is no code of its to carry and no code is carried. What there is is a spelling of the same
+    /// location that works, and saying so is the whole answer.
+    /// </remarks>
+    [DoesNotReturn]
+    internal static void ThrowVolumeNotAddressableByGuid(RecycleFailure failure) =>
+        throw new NotSupportedException(
+            $"'{failure.Path}' names its volume by GUID, which the Shell will not parse and this library " +
+            "cannot measure, so it was refused before either was asked. Address the same location by drive " +
+            "letter or mount point instead, such as \"X:\\path\".");
+
+    /// <summary>
     /// Reports that the Recycle Bin worker thread could not be brought up, so no operation can be performed.
     /// </summary>
     /// <remarks>

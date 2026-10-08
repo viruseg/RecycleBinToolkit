@@ -491,8 +491,9 @@ internal static class ContractSuite
         Check.Equal(6, (int)RecycleFailureStage.Enumeration, "Enumeration keeps number 6");
         Check.Equal(7, (int)RecycleFailureStage.PermanentDeleteFailed, "PermanentDeleteFailed keeps number 7");
         Check.Equal(8, (int)RecycleFailureStage.NoRecycleBinOnVolume, "NoRecycleBinOnVolume keeps number 8, declared above the two that follow it in the source");
+        Check.Equal(9, (int)RecycleFailureStage.VolumeGuidPathNotAddressable, "VolumeGuidPathNotAddressable takes number 9");
         Check.Equal(
-            9,
+            10,
             Enum.GetValues<RecycleFailureStage>().Length,
             "and the numbers run without a gap, so the next stage is the next number rather than a guess");
 

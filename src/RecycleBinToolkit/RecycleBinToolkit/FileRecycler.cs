@@ -184,6 +184,10 @@ public static class FileRecycler
                 RecycleBinThrowHelper.ThrowPathTooLong(failure);
                 break;
 
+            case RecycleFailureStage.VolumeGuidPathNotAddressable:
+                RecycleBinThrowHelper.ThrowVolumeNotAddressableByGuid(failure);
+                break;
+
             case RecycleFailureStage.PathValidation when !string.IsNullOrEmpty(failure.Path):
                 RecycleBinThrowHelper.ThrowFileNotFound(failure.Path);
                 break;
@@ -435,6 +439,15 @@ public static class FileRecycler
         if (string.IsNullOrWhiteSpace(rawPath))
         {
             return new RecycleFailure(rawPath ?? string.Empty, 0, 0, RecycleFailureStage.PathValidation);
+        }
+
+        // Nothing can be asked about this path, so nothing is. Refused before a probe, before the volume is
+        // inspected and before the Shell is reached, because every one of those answers about something
+        // else: the Shell cannot parse the form, and the volume inspection would read a path with no drive
+        // letter and report on it as though it were a network share.
+        if (RecycleTarget.IsVolumeGuidPath(rawPath))
+        {
+            return new RecycleFailure(rawPath, 0, 0, RecycleFailureStage.VolumeGuidPathNotAddressable);
         }
 
         string fullPath;

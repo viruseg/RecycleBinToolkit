@@ -395,6 +395,7 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `NoRecycleBinOnVolume` | The volume holding the path cannot recycle it and the caller asked for a Recycle Bin, so the path was never handed over and the file is where the caller left it. `Attempts` is `0`, and `HResult` carries the Shell's own code where the Shell named the volume — `0x80070003` on a substituted drive, `0x80004005` on a removable volume with no `$RECYCLE.BIN` — and `0` where no Shell refusal backs the record, whether the refusal was settled from configuration or a bin appeared between the probe and the code's own query. |
 | `PermanentDeleteFailed` | You asked for a path to be removed for good — `LongPathFailureAction.DeletePermanently` for a path too long for the Shell, `NoRecycleBinAction.DeletePermanently` for one whose volume cannot recycle it — and the file system refused: a handle is held, the attributes are read-only. The file is exactly as you left it. |
 | `Enumeration` | The Shell would not describe a Recycle Bin entry, or a volume could not be read. Only reachable while reading or emptying the Recycle Bin. |
+| `VolumeGuidPathNotAddressable` | The path names its volume by GUID, as `\\?\Volume{GUID}\…`. The Shell's item parser rejects that form and the volume has no drive letter to be measured, emptied or reported against, so the path was refused before anything was asked: `Attempts` is `0` and `HResult` is `0`. Address the same location by drive letter or mount point instead. |
 
 `HResult` carries the Shell's own code, or the file system's where the file system refused, or the
 probe's own where the Shell named the volume before anything was handed to it. Test
@@ -868,7 +869,7 @@ ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardw
 suites. The default run writes only inside the directory it claimed under `--scratch`; `--manual` writes
 wherever you tell it to.
 
-**The 149 cases divide into three groups, and `--all` runs 142 of them.** Four are load cases that run only
+**The 150 cases divide into three groups, and `--all` runs 143 of them.** Four are load cases that run only
 on request: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
 through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
 nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —

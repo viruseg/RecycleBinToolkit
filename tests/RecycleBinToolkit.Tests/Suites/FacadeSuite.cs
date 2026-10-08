@@ -32,7 +32,44 @@ internal static class FacadeSuite
         new TestCase("FacadeSuite." + nameof(DeletePermanentlyRemovesADirectory), DeletePermanentlyRemovesADirectory),
         new TestCase("FacadeSuite." + nameof(DeletePermanentlyReportsAFileSystemRefusal), DeletePermanentlyReportsAFileSystemRefusal),
         new TestCase("FacadeSuite." + nameof(APathIsNeverBothRecycledAndPermanentlyDeleted), APathIsNeverBothRecycledAndPermanentlyDeleted),
+        new TestCase("FacadeSuite." + nameof(AVolumeGuidPathIsSettledOnceRatherThanRetried), AVolumeGuidPathIsSettledOnceRatherThanRetried),
     ];
+
+    /// <summary>
+    /// A volume named by its GUID has no spelling the Shell parses, and none this library can measure,
+    /// empty or report against. Handed over, it was refused by the volume gate as though it were a
+    /// network share — a statement about the wrong thing, about a local volume that recycles perfectly
+    /// well under the spelling the caller did not use.
+    /// </summary>
+    /// <remarks>
+    /// Refused at the path rather than settled against the Shell, so nothing is spent on it: no filesystem
+    /// probe, no volume inspection, no round. <see cref="RecycleFailure.Attempts"/> is therefore zero,
+    /// which is what "nothing was attempted" means.
+    /// </remarks>
+    private static async Task AVolumeGuidPathIsSettledOnceRatherThanRetried(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var guid = RecycleBinVolumeState.TryGetVolumeGuidKeyName(Path.GetPathRoot(ScratchWorkspace.Root)!)
+            ?? throw new CheckFailedException("the scratch volume has no GUID to address it by");
+
+        var file = $@"\\?\Volume{guid}\addressed-by-guid.bin";
+        File.WriteAllBytes(file, new byte[4096]);
+
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.False(result.Succeeded, $"a path nothing above the library can read is not recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.Equal(1, result.Failures.Count, "exactly one failure is reported");
+        Check.Equal(RecycleFailureStage.VolumeGuidPathNotAddressable, result.FirstFailure!.Stage, "the path itself is what could not be used");
+        Check.Equal(0, result.FirstFailure.Attempts, "and it was settled before any round, rather than retried for every attempt the caller asked for");
+        Check.Equal(0, result.FirstFailure.HResult, "carrying no code, because nothing was ever asked");
+        Check.True(File.Exists(file), "the file is exactly where it was left");
+
+        workspace.Dispose();
+    }
 
     /// <summary>
     /// A volume with no Recycle Bin must not lose the file while the library reports a successful

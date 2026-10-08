@@ -67,7 +67,23 @@ public enum RecycleFailureStage
     /// is exactly as the caller left it, and the caller is the one who asked for the removal to happen at
     /// all.
     /// </remarks>
-    PermanentDeleteFailed = 7
+    PermanentDeleteFailed = 7,
+
+    /// <summary>
+    /// The path names its volume by GUID, and nothing above this library can read such a path: the Shell's
+    /// item parser rejects the form and the volume has no drive letter to be measured, emptied or reported
+    /// against. It was refused before either was asked.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="NoRecycleBinOnVolume"/> because that one is a statement about a volume
+    /// this library can name — a policy, a per-volume setting, a volume type that never had a bin. Here
+    /// there is no such statement to make, and reporting one would send an integrator after a volume that
+    /// very likely recycles perfectly well under the spelling they did not use.
+    /// <para>
+    /// Nothing was attempted, which is what <see cref="RecycleFailure.Attempts"/> reports as zero.
+    /// </para>
+    /// </remarks>
+    VolumeGuidPathNotAddressable = 9
 }
 
 /// <summary>
