@@ -23,12 +23,6 @@ internal sealed class ScratchWorkspace : IDisposable
     private const int MaxDeleteAttempts = 12;
 
     /// <summary>
-    /// Extended-length prefix. Without it the standard file APIs fail on a path past MAX_PATH, so the
-    /// scratch root can hold a file whose full path the Shell is being asked to refuse.
-    /// </summary>
-    private const string ExtendedPrefix = @"\\?\";
-
-    /// <summary>
     /// Size of the standard fixture set. Large enough that a load case recycles a batch worth measuring,
     /// which is why a case that only needs a handful of files asks for fewer rather than creating these
     /// and discarding the rest.
@@ -308,8 +302,13 @@ internal sealed class ScratchWorkspace : IDisposable
 
         // The extended-length prefix is what makes the standard file APIs work on a path the tests
         // deliberately build past MAX_PATH. Without it, cleanup throws and the deep tree is left
-        // behind, where a workspace file listing trips over paths it cannot enumerate.
-        var root = ExtendedPrefix + ScratchWorkspace.Root.TrimEnd(Path.DirectorySeparatorChar);
+        // behind, where a workspace file listing trips over paths it cannot enumerate. LongPathStager's
+        // own spelling of the prefix is used rather than a second copy of it here, because that one also
+        // knows a share is written \\?\UNC\... and not \\?\\server\share\... -- the second is a path that
+        // begins with a separator, resolves against the current drive, and would raise
+        // DirectoryNotFoundException, which Remove reads as "already gone". The run would then leave its
+        // whole tree on the share it was pointed at and report success.
+        var root = LongPathStager.PathForIo(ScratchWorkspace.Root.TrimEnd(Path.DirectorySeparatorChar));
 
         for (var attempt = 1; ; attempt++)
         {

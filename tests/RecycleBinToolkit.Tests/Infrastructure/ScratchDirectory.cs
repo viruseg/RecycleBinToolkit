@@ -16,9 +16,6 @@ internal sealed class ScratchDirectory
     /// <summary>How many names a claim may try before it gives up rather than spin.</summary>
     private const int MaxNameAttempts = 64;
 
-    /// <summary>Extended-length prefix, without which the standard file APIs fail on a path past MAX_PATH.</summary>
-    private const string ExtendedPrefix = @"\\?\";
-
     /// <summary>How many times a removal is retried while something still holds a file.</summary>
     private const int MaxDeleteAttempts = 12;
 
@@ -149,7 +146,7 @@ internal sealed class ScratchDirectory
             return;
         }
 
-        var target = ExtendedPrefix + FullPath.TrimEnd(System.IO.Path.DirectorySeparatorChar);
+        var target = LongPathStager.PathForIo(FullPath.TrimEnd(System.IO.Path.DirectorySeparatorChar));
 
         for (var attempt = 1; ; attempt++)
         {
