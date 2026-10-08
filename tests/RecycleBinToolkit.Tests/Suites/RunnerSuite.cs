@@ -246,19 +246,25 @@ internal static class RunnerSuite
         var options = new RecycleBinOptions
         {
             MaxAttempts = 4,
-            InitialRetryDelay = TimeSpan.FromMilliseconds(60),
+
+            // Rounds then start at roughly 0, 250, 750 and 1750 ms. The window between the second round
+            // and the third is what the delete below has to land in, and at 60 ms of initial delay that
+            // window was the 60 ms before round 2 -- which the first round's own Shell work, thread start
+            // and CoCreateInstance could eat on a loaded machine, leaving the case asserting a verdict it
+            // had not arranged.
+            InitialRetryDelay = TimeSpan.FromMilliseconds(250),
             OverallTimeout = TimeSpan.FromSeconds(20)
         };
 
         RecycleBinResult result;
 
-        // Hold the file so round 1 is refused by the Shell, then remove it entirely so the next
+        // Hold the file so the first rounds are refused by the Shell, then remove it entirely so a later
         // round cannot even build a Shell item for it.
         using (var holder = new FileStream(files[0], FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             var remover = Task.Run(() =>
             {
-                Thread.Sleep(TimeSpan.FromMilliseconds(120));
+                Thread.Sleep(TimeSpan.FromMilliseconds(600));
                 holder.Dispose();
                 File.Delete(files[0]);
             });
@@ -269,7 +275,9 @@ internal static class RunnerSuite
                 return new RecycleOperationRunner(shell).Run(targets, options, context.CancellationToken);
             });
 
-            remover.Wait(TimeSpan.FromSeconds(30));
+            Check.True(
+                remover.Wait(TimeSpan.FromSeconds(30)),
+                "the background removal finished, rather than being waited on and not looked at");
         }
 
         Check.False(result.Succeeded, "the item is reported as a failure");
