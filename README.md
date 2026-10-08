@@ -767,6 +767,11 @@ Stated plainly, because these are properties of Windows rather than choices.
   configured for a volume, not whether the next delete will land there. A volume mounted after the
   call, or a policy applied after it, changes the answer without the call having been wrong. It is also
   not consulted by anything else in this library: `FileRecycler` reports what the Shell actually did.
+- **A per-volume key that outlives its bin still reads `Enabled`.** Windows records a volume's Recycle
+  Bin setting when it configures one, and nothing removes that record when the bin later goes. A key
+  left behind on a volume with no `$RECYCLE.BIN` is therefore treated as evidence that the volume
+  recycles, because configuration is the evidence throughout — the mirror image of the case above,
+  where no key meant no bin and the Shell was asked instead.
 - **The per-volume Recycle Bin capacity is not treated as a switch.** A capacity of `0` is not
   reported as disabled, because the Recycle Bin dialog offers no such setting and no measurement of its
   behaviour is recorded here.

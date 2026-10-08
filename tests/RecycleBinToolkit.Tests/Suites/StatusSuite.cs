@@ -80,14 +80,17 @@ internal static class StatusSuite
     /// volume that has no bin as one that does.
     /// </summary>
     /// <remarks>
-    /// The volume is a <c>subst</c> mapping again, because it is the one shape on which the setting is
-    /// guaranteed absent rather than merely absent today: no GUID resolves, so no subkey is named, so
-    /// there is nothing for <c>RegGetValueW</c> to find.
+    /// Two shapes produce an unknown setting, and only the second is the one that loses files. A
+    /// <c>subst</c> mapping has no GUID at all, so there is no subkey name to read; a real volume whose
+    /// GUID resolves can still have no key under the volume list, because Windows writes that key only
+    /// for volumes it has configured a bin for. The second shape is checked with a freshly minted GUID,
+    /// which the volume list cannot contain — so the check is read-only, writes nothing, and leaves
+    /// nothing to clean up.
     /// <para>
-    /// The second half pins where the downgrade happens. <see cref="RecycleBinVolumePolicy.Classify"/>
-    /// still says Enabled for a fixed volume with no overrides, so the Unknown state cannot be honoured
-    /// inside the registry reader — it has to reach the caller as a three-state answer that
-    /// <see cref="RecycleBinVolumeState.Inspect"/> acts on.
+    /// The last assertion pins that this cannot be honoured anywhere downstream of the reader.
+    /// <see cref="RecycleBinVolumePolicy.Classify"/> still answers Enabled for a fixed volume with no
+    /// overrides, so Unknown has to survive as a three-state value reaching the caller rather than
+    /// being flattened to a bool on the way.
     /// </para>
     /// </remarks>
     private static async Task AMissingPerVolumeKeyIsNotAnEnabledVolume(TestContext context)
@@ -109,10 +112,14 @@ internal static class StatusSuite
                 RecycleBinRegistry.ReadNukeOnDelete(keyName),
                 "a volume whose per-volume setting cannot be looked up is unknown, not a volume that recycles");
 
-            Check.NotEqual(
-                RecycleBinVolumePolicy.VolumeRecycleSetting.Nukes,
-                RecycleBinRegistry.ReadNukeOnDelete(keyName),
-                "an absent setting is not read as 'deletes outright' either, which is what makes it a third state");
+            // The volume API resolving a GUID says nothing about whether the volume recycles, and this
+            // is the shape the subst case above cannot reach: a name the volume list is free to not
+            // contain. A GUID minted here is such a name by construction, and no key is written or
+            // deleted, so the check is read-only and leaves nothing behind.
+            Check.Equal(
+                RecycleBinVolumePolicy.VolumeRecycleSetting.Unknown,
+                RecycleBinRegistry.ReadNukeOnDelete(Guid.NewGuid().ToString("B")),
+                "a volume GUID with no key under the volume list is unknown, not a volume that recycles");
 
             Check.Equal(
                 RecycleBinAvailabilityReason.Enabled,
@@ -121,7 +128,7 @@ internal static class StatusSuite
                     DriveType.Fixed,
                     disabledByPolicy: false,
                     nukeOnDelete: false),
-                "the decision itself still cannot see an unknown setting, so the downgrade happens in Inspect and is not hidden in the registry reader");
+                "the decision still cannot see an unknown setting, so a three-state answer has to reach the caller for a volume with no key to stop reading as enabled");
         }
         finally
         {

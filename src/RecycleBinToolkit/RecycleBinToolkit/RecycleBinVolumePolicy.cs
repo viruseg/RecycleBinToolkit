@@ -63,18 +63,20 @@ internal static class RecycleBinVolumePolicy
     }
 
     /// <summary>
-    /// What a volume's own per-entry Recycle Bin setting says, in the three states the registry can
-    /// actually be in.
+    /// What a volume's own per-entry Recycle Bin setting says, in the three states a registry read can
+    /// actually distinguish.
     /// </summary>
     /// <remarks>
-    /// The three states exist because absence is not the same fact as zero. A volume Windows has
-    /// recorded recycles; a volume recorded as deleting outright does not; a volume recorded at all
-    /// neither — including one Windows never configured, which has no key under the volume list to read.
+    /// The three states exist because absence is not the same fact as zero. A volume whose setting was
+    /// read as recycling recycles; one read as deleting outright does not; one whose setting yielded
+    /// nothing usable is unknown — which covers both a volume Windows never configured, with no key
+    /// under the volume list, and a value present under a type or width this reader does not accept.
     /// </remarks>
     internal enum VolumeRecycleSetting
     {
         /// <summary>
-        /// Nothing was recorded for the volume, so what its deletes do is not known.
+        /// Nothing usable was recorded for the volume, or what was recorded could not be read, so what
+        /// its deletes do is not known.
         /// </summary>
         Unknown,
 

@@ -124,8 +124,8 @@ internal static partial class RecycleBinRegistry
         IsFlagSet(LocalMachine, PolicySubKey, "NoRecycleFiles");
 
     /// <summary>
-    /// What this volume's own Recycle Bin setting says, keeping "nothing was recorded" apart from
-    /// "recorded as recycling".
+    /// What this volume's own Recycle Bin setting says, keeping "nothing usable came back" apart from
+    /// "a value came back saying it recycles".
     /// </summary>
     /// <remarks>
     /// The per-volume state is keyed on the volume's GUID in braces, not on its drive letter, which is
@@ -145,8 +145,10 @@ internal static partial class RecycleBinRegistry
     /// API would not resolve one and there is therefore no key to look under.
     /// </param>
     /// <returns>
-    /// <see cref="RecycleBinVolumePolicy.VolumeRecycleSetting.Unknown"/> when no key name was supplied or
-    /// the value was not there to be read.
+    /// <see cref="RecycleBinVolumePolicy.VolumeRecycleSetting.Unknown"/> when no key name was supplied,
+    /// when there is no value under it, or when the value is there under a type or width
+    /// <see cref="TryReadFlag"/> does not accept. Every one of those is unknown rather than a
+    /// recycler's answer, because none of them says the volume recycles.
     /// </returns>
     internal static RecycleBinVolumePolicy.VolumeRecycleSetting ReadNukeOnDelete(string? volumeGuidKeyName)
     {
