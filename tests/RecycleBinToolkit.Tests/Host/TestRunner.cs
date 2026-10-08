@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using RecycleBinToolkit;
 
 namespace RecycleBinToolkit.Tests.Host;
 
@@ -38,7 +39,9 @@ internal sealed class TestRunner
             Console.Error.WriteLine(
                 "--manual takes a path to test, such as --manual \"F:\\\" or --manual \"\\\\server\\share\\\". The manual " +
                 "cases destroy files on the path you name, so none of them runs until you give one, and a flag " +
-                "after --manual is read as a missing path rather than as a root.");
+                "after --manual is read as a missing path rather than as a root. A command line that cannot " +
+                "carry two leading backslashes may name the share as //server/share/ instead, which is read " +
+                "as the same volume.");
             return 2;
         }
 
@@ -274,12 +277,28 @@ internal sealed class TestRunner
                 return false;
             }
 
-            roots.Add(value);
+            roots.Add(ManualRootInTheLibrarysSpelling(value));
             i++;
         }
 
         return true;
     }
+
+    /// <summary>
+    /// The root as the library spells a volume root, which is what the manual cases hand to it.
+    /// </summary>
+    /// <remarks>
+    /// A share is accepted written the way <see cref="Path"/> spells one and as <c>//server\share</c>.
+    /// The second spelling exists because not every command line can carry two leading backslashes: one
+    /// that collapses them delivers <c>\server\share\</c>, which <see cref="Path.GetPathRoot(string)"/> answers
+    /// <c>\"</c> for and which therefore resolves against the current drive rather than naming a volume.
+    /// The library deliberately refuses the forward-slash form — it is not the spelling Windows writes —
+    /// so the conversion belongs here, where the command line is read, and not in the library.
+    /// </remarks>
+    private static string ManualRootInTheLibrarysSpelling(string root) =>
+        root.StartsWith("//", StringComparison.Ordinal)
+            ? RecycleBinVolumeState.NormalizeVolumeRoot(root)
+            : root;
 
     private static string? ParseFilter(string[] args)
     {

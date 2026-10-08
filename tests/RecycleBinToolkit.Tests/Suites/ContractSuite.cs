@@ -20,6 +20,7 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsStrippedForTheShell), ExtendedPrefixIsStrippedForTheShell),
         new TestCase("ContractSuite." + nameof(ReceiptAcceptsAnExtendedLengthOriginal), ReceiptAcceptsAnExtendedLengthOriginal),
         new TestCase("ContractSuite." + nameof(ReceiptRejectsWhatItCannotProve), ReceiptRejectsWhatItCannotProve),
+        new TestCase("ContractSuite." + nameof(ReceiptMatchesWholeSegmentsOnly), ReceiptMatchesWholeSegmentsOnly),
         new TestCase("ContractSuite." + nameof(JoiningFailuresKeepsTheRestOfTheOutcome), JoiningFailuresKeepsTheRestOfTheOutcome),
         new TestCase("ContractSuite." + nameof(EveryLeftoverIsNamedNotOnlyTheFirst), EveryLeftoverIsNamedNotOnlyTheFirst),
         new TestCase("ContractSuite." + nameof(AnAbsurdRetryBudgetDoesNotOverflowTheDeadline), AnAbsurdRetryBudgetDoesNotOverflowTheDeadline),
@@ -115,6 +116,13 @@ internal static class ContractSuite
     /// exists because the loop was rewritten while removing a dead separator lookup, and a rewrite of a
     /// loop that decides whether a delete can be recovered deserves a test either side of it. The two
     /// rejected shapes are what would have been accepted by matching the name anywhere in the path.
+    /// <para>
+    /// The case was written and not registered, so it had never run. Registering it turned up a third
+    /// shape the scan got wrong: a path that <em>ends</em> at a segment called <c>$RECYCLE.BIN</c> is a
+    /// file with that name, and it was accepted as an entry inside the folder — a permanent deletion
+    /// reported as recycled, which is the one mistake this check exists to catch. The spec says the
+    /// receipt must resolve under <c>&lt;volume&gt;\$RECYCLE.BIN\</c>, which is a directory.
+    /// </para>
     /// </remarks>
     private static Task ReceiptMatchesWholeSegmentsOnly(TestContext context)
     {

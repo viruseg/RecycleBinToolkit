@@ -37,9 +37,17 @@ cases.
 One run selects one group. `--manual <root> --load` selects the manual group and prints that it ignored
 `--load`, because a flag that vanishes quietly is the failure the deferral lines exist to prevent. A
 `--manual` with no path after it, or with a flag after it, is a usage error rather than a root: the
-argument the cases delete against is the one thing that must not be guessed. Write a share in backslashes
-— `--manual "\\server\share\"` — because a forward-slash share is not recognised as a volume root and every
-case would go red on it.
+argument the cases delete against is the one thing that must not be guessed.
+
+**A share has to survive the command line, and the documented spelling does not everywhere.**
+`--manual "\\server\share\"` arrives intact in PowerShell and `cmd.exe`, which treat backslashes literally.
+Anything that reads `\\` as an escape delivers `\server\share\` instead, whose `Path.GetPathRoot` is `\` —
+a path on the *current drive*, so the directory the cases create lands on `E:\`. That has already cost this
+repository one. `--manual "//server/share/"` is the spelling to use from such a shell: the forward-slash
+form reaches the runner intact, and `TestRunner.ManualRootInTheLibrarysSpelling` converts it, because the
+library deliberately refuses it (`RecycleBinVolumeState.RootForm` only reduces backslashes) and the
+conversion belongs where the command line is read. A root that is not a volume root at all is refused by
+`VolumeSuite.RequireAVolumeWithoutARecycleBin`, before anything is created on it.
 
 **The manual group needs real hardware, and it destroys files on the path you name.** A removable drive
 with no `$RECYCLE.BIN` and a network share are the two volumes the ordinary run cannot produce, which is
@@ -58,6 +66,10 @@ the hardware adds is the only thing allowed to stay behind the flag.
 | `VolumeSuite.AVolumeWithoutARecycleBinIsRefused` | `FacadeSuite.RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff` |
 | `VolumeSuite.AVolumeWithoutARecycleBinCanBeDeletedOnRequest` | `FacadeSuite.DeletePermanentlyRemovesTheFileAndNamesIt` |
 | `VolumeSuite.AStatusAndAnEmptyReadTheSameRootTheSameWay` | `EmptySuite.AForwardSlashSpellingIsTheVolumeToEmpty`, `EmptySuite.AnExtendedLengthRootIsTheVolumeToEmpty` |
+
+The group is three cases. With four load cases that leaves 123 of the 130 registered cases in the default
+run; `--all` prints all three numbers, so a count in a document that disagrees with it is the document
+being wrong.
 
 ## Load tests
 

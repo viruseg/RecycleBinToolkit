@@ -62,8 +62,8 @@ internal sealed class TestContext
     public CancellationToken CancellationToken { get; }
 
     /// <summary>
-    /// The path <c>--manual</c> was given for this run, in the caller's own spelling, or
-    /// <see langword="null"/> in every other group.
+    /// The path <c>--manual</c> was given for this run, in the spelling the library reads a volume root in,
+    /// or <see langword="null"/> in every other group.
     /// </summary>
     /// <remarks>
     /// A case may destroy files under it. It is the caller's volume or share, not a scratch directory, so

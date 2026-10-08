@@ -290,14 +290,40 @@ internal static class VolumeSuite
     /// root to empty without consulting a counter first, so "the Shell did not answer here" is what stands in
     /// for "there is nothing to empty". That is the limit of this gate, stated where the gate is.
     /// </para>
+    /// <para>
+    /// Both accepted reasons are ones the machine produces rather than guesses at. A removable volume with
+    /// no <c>$RECYCLE.BIN</c> reaches the probe and is answered <c>NoRecycleBinOnVolume</c> with the Shell's
+    /// own <c>0x80004005</c>; a share is settled <c>UnsupportedVolumeType</c> from its own path before the
+    /// probe is reached, so the direct query answers <c>0x80070003</c> and the refusal a case asserts later
+    /// carries no code at all. One reason, two volumes, two different codes — which is why
+    /// <see cref="AVolumeWithoutARecycleBinIsRefused"/> branches rather than pinning one value.
+    /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">The runner selected this case without a root.</exception>
-    /// <exception cref="CheckFailedException">The root is not a volume with no Recycle Bin.</exception>
+    /// <exception cref="CheckFailedException">
+    /// The root is not a volume root at all, or not a volume with no Recycle Bin.
+    /// </exception>
     private static async Task<VolumeWithNoRecycleBin> RequireAVolumeWithoutARecycleBin(TestContext context)
     {
         var requested = context.ManualRoot
             ?? throw new InvalidOperationException(
                 "A manual case is run once per --manual root; this one was given none.");
+
+        // Refused before anything is created on it. A command line that cannot carry two leading
+        // backslashes delivers \server\share\, which Path.GetPathRoot answers "\" for and which therefore
+        // names a path on the current drive rather than a volume -- so the directory a case would make is
+        // on E:\ and not on the share the caller named. That has already cost this repository a
+        // directory, and a refusal naming the cause beats a CheckFailedException about a Recycle Bin.
+        if (!RecycleBinVolumeState.IsVolumeRoot(requested))
+        {
+            throw new CheckFailedException(
+                $"{requested} is not a volume root: Path.GetPathRoot answers \"{Path.GetPathRoot(requested)}\" " +
+                "for it. --manual needs a drive letter or a share, because the cases create and remove a " +
+                "directory of their own there. A share written as \\\\server\\share\\ reaches this as a share " +
+                "only if the command line carried both leading backslashes; one that collapses them leaves a " +
+                "path on the current drive, which is what this is. Write it as //server/share/ instead, which " +
+                "no shell rewrites.");
+        }
 
         var status = await RecycleBin.GetStatusAsync(requested, context.CancellationToken).ConfigureAwait(false);
 

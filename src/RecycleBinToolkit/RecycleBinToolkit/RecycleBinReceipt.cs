@@ -70,30 +70,31 @@ internal static class RecycleBinReceipt
     }
 
     /// <summary>
-    /// Whether any whole segment after the volume root is the Recycle Bin folder.
+    /// Whether a whole directory segment after the volume root is the Recycle Bin folder.
     /// </summary>
     /// <remarks>
     /// Compared segment by segment rather than by searching the string, so that a file called
     /// <c>$RECYCLE.BIN.zip</c> in a directory the caller happened to name that way is not mistaken for
     /// the folder itself.
+    /// <para>
+    /// The last segment of the path is never the folder, because a receipt has to be an entry
+    /// <em>inside</em> it: a path ending at a segment called <c>$RECYCLE.BIN</c> is a file with that name,
+    /// and accepting it would report a permanent deletion as recycled.
+    /// </para>
     /// </remarks>
     private static bool ContainsRecycleBinSegment(ReadOnlySpan<char> pathAfterRoot)
     {
-        while (!pathAfterRoot.IsEmpty)
+        var separator = pathAfterRoot.IndexOf(Path.DirectorySeparatorChar);
+
+        while (separator >= 0)
         {
-            var separator = pathAfterRoot.IndexOf(Path.DirectorySeparatorChar);
-
-            if (separator < 0)
-            {
-                return pathAfterRoot.Equals(RecycleBinSegment, StringComparison.OrdinalIgnoreCase);
-            }
-
             if (pathAfterRoot[..separator].Equals(RecycleBinSegment, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
 
             pathAfterRoot = pathAfterRoot[(separator + 1)..];
+            separator = pathAfterRoot.IndexOf(Path.DirectorySeparatorChar);
         }
 
         return false;

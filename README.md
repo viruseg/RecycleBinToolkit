@@ -835,19 +835,48 @@ such key is answered `Indeterminate` or `NoRecycleBinOnVolume` — both refused 
 `NoRecycleBinAction.Throw`. The suite checks this before it deletes anything and names the key rather
 than failing a hundred cases at once.
 
-The suite is a console application with no external packages: 129 cases covering batch and single-path
+The suite is a console application with no external packages: 130 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
-concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies,
-volumes with no Recycle Bin, and a ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing,
-emptying and status checking are covered by their own suites. It writes only to `E:\RC\Test` (or the
-project root) and moves the committed fixture files it uses.
+concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies, a
+ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardware only, behind
+`--manual` — volumes with no Recycle Bin. Listing, emptying and status checking are covered by their own
+suites. The default run writes only to `E:\RC\Test` (or the project root) and moves the committed fixture
+files it uses; `--manual` writes wherever you tell it to.
 
-**Four of the 129 are load cases and run only on request.** They are the ones that work the disk hard enough
-to notice: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
+**The 130 cases divide into three groups, and `--all` runs 123 of them.** Four are load cases that run only
+on request: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
 through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
 nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —
 `WorkflowSuite.FiveTouchedFilesAreAllRecycled` and `EmptySuite.EmptyReportsWhatItFreed` for the batch,
-`FacadeSuite.LargeFileIsRecycled` for the bytes.
+`FacadeSuite.LargeFileIsRecycled` for the bytes. Three more run only behind `--manual`, and are below.
+
+### `--manual` destroys files on the path you name
+
+```bash
+dotnet run --project tests/RecycleBinToolkit.Tests -- --manual "F:\" --manual "//Virus_pc/123/"
+```
+
+`--manual` is repeatable, and every manual case runs once per root with that root handed to the case.
+**The root is yours, and one of the three cases deletes the file it creates there.** Each case creates a
+directory of its own beneath the root and removes only that directory, by full path; nothing beside it is
+touched. Pass a volume with no `$RECYCLE.BIN` — a removable drive, or a network share. A root that does
+recycle is refused rather than run, because `VolumeSuite.AStatusAndAnEmptyReadTheSameRootTheSameWay` would
+otherwise empty the Recycle Bin you were using; the run names the root and the reason.
+
+| Manual case | What only the hardware can answer |
+| --- | --- |
+| `VolumeSuite.AVolumeWithoutARecycleBinIsRefused` | The Shell's own code for a volume Windows never configured a bin for, measured on the volume itself |
+| `VolumeSuite.AVolumeWithoutARecycleBinCanBeDeletedOnRequest` | The opposite answer on that same volume: `NoRecycleBinAction.DeletePermanently` removes the file and names it in `PermanentlyDeletedPaths` |
+| `VolumeSuite.AStatusAndAnEmptyReadTheSameRootTheSameWay` | That `GetStatusAsync` and `EmptyAsync` agree on a *share* root. A drive-letter root is one `NormalizeVolumeRoot` and `Path.GetPathRoot` already agree on, so a local volume cannot witness it |
+
+**A share has to survive your command line.** `--manual "\\server\share\"` is right in PowerShell and in
+`cmd.exe`, which treat backslashes literally. It is wrong in anything that treats `\\` as an escape —
+bash, or any tool that unescapes the command string before the shell ever sees it — because what arrives
+is `\server\share\`, whose root is the *current drive*; a directory created from it lands on `E:\`. The
+runner refuses a root that is not a volume root rather than acting on whatever drive is current, so the
+mistake goes red and costs nothing — but it goes red. Write the share as `//server/share/` there. The
+forward-slash spelling names the same volume, no shell rewrites it, and the runner reads it as the
+backslash root Windows writes.
 
 **The Recycle Bin suites empty it.** `EmptySuite` removes what the earlier suites recycled, and it is
 the only way to assert that an entry really left. Everything else only ever adds to it.
