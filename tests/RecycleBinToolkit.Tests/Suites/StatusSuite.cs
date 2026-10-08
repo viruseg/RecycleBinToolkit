@@ -28,7 +28,6 @@ internal static class StatusSuite
         new TestCase("StatusSuite." + nameof(NoRecycleBinVolumeIsNamedNotIndeterminate), NoRecycleBinVolumeIsNamedNotIndeterminate),
         new TestCase("StatusSuite." + nameof(AMissingPerVolumeKeyIsNotAnEnabledVolume), AMissingPerVolumeKeyIsNotAnEnabledVolume),
         new TestCase("StatusSuite." + nameof(OneShareHasOneSpelling), OneShareHasOneSpelling),
-        new TestCase("StatusSuite." + nameof(OneShareIsTheSameHoweverItIsNamed), OneShareIsTheSameHoweverItIsNamed),
         new TestCase("StatusSuite." + nameof(AnUncRootIsRecognised), AnUncRootIsRecognised),
         ];
 
@@ -84,29 +83,6 @@ internal static class StatusSuite
                 RecycleBinVolumeState.IsVolumeRoot(spelling),
                 $"'{spelling}' is recognised as the root of a volume rather than as a path inside one");
         }
-
-        return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// A caller naming the share and a caller naming a path inside it are asking about one volume, so
-    /// both have to reduce to the same root. This is what makes a filtered listing keep the same entries
-    /// whichever of the two the caller passed.
-    /// </summary>
-    private static Task OneShareIsTheSameHoweverItIsNamed(TestContext context)
-    {
-        var share = RecycleBinVolumeState.NormalizeVolumeRoot(@"\\server\share");
-        var inside = RecycleBinVolumeState.NormalizeVolumeRoot(@"\\server\share\deep\inside");
-
-        Check.Equal(
-            @"\\server\share\",
-            share,
-            "the share itself reduces to the share root");
-
-        Check.Equal(
-            share,
-            inside,
-            "a path inside the share reduces to the same root, so both callers ask about the same volume");
 
         return Task.CompletedTask;
     }

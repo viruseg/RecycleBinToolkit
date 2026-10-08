@@ -98,7 +98,7 @@ internal static class RecycleBinVolumeState
 
     /// <summary>
     /// Whether the path names a network share, decided from the path itself rather than by asking the
-    /// machine. Pure, and true for every spelling of a share.
+    /// machine. Answers for a path inside a share as well as for the share root.
     /// </summary>
     /// <remarks>
     /// The extended-length prefix comes off first: <c>\\?\UNC\server\share</c> names a share as plainly
@@ -120,8 +120,8 @@ internal static class RecycleBinVolumeState
         RecycleTarget.StripExtendedPrefix(root).StartsWith(@"\\", StringComparison.Ordinal);
 
     /// <summary>
-    /// Whether the path is a volume root rather than something inside one. The trailing separator is
-    /// what separates them, and it is what callers get wrong.
+    /// Whether the path names a volume root rather than something inside one. A path is told from its
+    /// root by what follows it, not by how the root happens to be spelled.
     /// </summary>
     /// <remarks>
     /// The two sides are compared in a reduced form rather than as the caller typed them, because
@@ -139,9 +139,15 @@ internal static class RecycleBinVolumeState
         string.Equals(RootForm(volumeRoot), RootForm(Path.GetPathRoot(volumeRoot)), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// One spelling of a root reduced to the form every spelling of it shares: no extended-length prefix,
-    /// no trailing separator. Two spellings of one volume are equal here and unequal anywhere else.
+    /// One spelling of a root reduced to the form the spellings callers and Windows write share: no
+    /// extended-length prefix, no trailing separator.
     /// </summary>
+    /// <remarks>
+    /// The scope is those spellings and no wider. <c>Path</c> answers a share written with forward
+    /// slashes in backslashes, so <c>//server/share</c> is not reduced to the same form as
+    /// <c>\\server\share</c> and is not read as a root — which is also how it read before this reduction
+    /// existed.
+    /// </remarks>
     private static string RootForm(string? path) =>
         string.IsNullOrEmpty(path)
             ? string.Empty
@@ -149,9 +155,7 @@ internal static class RecycleBinVolumeState
 
     private static DriveType ReadDriveType(string root)
     {
-        // A share is asked about its own path rather than through DriveInfo, which throws on a UNC path
-        // and would leave the type Unknown and the volume Indeterminate — a guess about a location that
-        // named itself.
+        // A share is asked about its own path, because DriveInfo throws on one rather than answering.
         if (IsUncRoot(root))
         {
             return DriveType.Network;

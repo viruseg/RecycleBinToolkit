@@ -242,7 +242,7 @@ public static class RecycleBin
     {
         if (volumeRoot is not null)
         {
-            return IsVolumeRoot(volumeRoot) ? [NormalizeRoot(volumeRoot)] : null;
+            return RecycleBinVolumeState.IsVolumeRoot(volumeRoot) ? [NormalizeRoot(volumeRoot)] : null;
         }
 
         var drives = DriveInfo.GetDrives();
@@ -258,13 +258,6 @@ public static class RecycleBin
 
         return roots;
     }
-
-    /// <summary>
-    /// Whether the path is a volume root rather than something inside one — the trailing separator, or
-    /// its absence for a bare drive letter, is what separates them and what callers get wrong.
-    /// </summary>
-    private static bool IsVolumeRoot(string path) =>
-        string.Equals(path, Path.GetPathRoot(path), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Keeps only the entries that were deleted from <paramref name="volumeRoot"/>.

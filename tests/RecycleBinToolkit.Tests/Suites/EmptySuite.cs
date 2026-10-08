@@ -22,6 +22,7 @@ internal static class EmptySuite
         new TestCase("EmptySuite." + nameof(ElapsedCoversTheWaitAsWellAsTheEmpty), ElapsedCoversTheWaitAsWellAsTheEmpty),
         new TestCase("EmptySuite." + nameof(APathInsideAVolumeIsNotAVolumeToEmpty), APathInsideAVolumeIsNotAVolumeToEmpty),
         new TestCase("EmptySuite." + nameof(ABareDriveLetterEmptiesTheVolumeItNames), ABareDriveLetterEmptiesTheVolumeItNames),
+        new TestCase("EmptySuite." + nameof(AnExtendedLengthRootIsTheVolumeToEmpty), AnExtendedLengthRootIsTheVolumeToEmpty),
     ];
 
     /// <summary>
@@ -59,6 +60,56 @@ internal static class EmptySuite
                 : $"a bare drive letter is a volume root (first failure: {result.Failures[0].Stage} 0x{result.Failures[0].HResult:X8})");
         Check.Equal(1, result.VolumesEmptied.Count, "and one volume is reported as emptied");
         Check.Equal(volumeRoot, result.VolumesEmptied[0], "named with its separator, however the caller spelled it");
+        Check.True(result.ItemsRemoved >= 1, $"and the entry really went (removed {result.ItemsRemoved})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The empty and the status both decide what a volume root is, and they have to decide it the same
+    /// way: a caller asking both about one string is asking one question. Here they are asked about a root
+    /// written with the extended-length prefix, and the empty has to act on the volume the status named
+    /// rather than on the prefixed spelling of it.
+    /// </summary>
+    /// <remarks>
+    /// The two used to carry a copy of that decision each, and the empty's copy compared the caller's
+    /// spelling as typed — which is how a share root came back refused by one and answered by the other.
+    /// <para>
+    /// A share root is the spelling that first showed it, and it cannot be the one pinned here: once the
+    /// empty accepts a share it goes on to query that share's bin and hand it an empty, and neither is a
+    /// question to ask of a name that may turn out to be somebody's real share. What this case does pin is
+    /// the prefix side of the same predicate — <c>Path.GetPathRoot</c> hands <c>\\?\E:\</c> back
+    /// verbatim, so that root was never the one the two disagreed about, and its value is the agreement
+    /// itself: both public methods reading a root as a root, and the empty reporting which volume it
+    /// emptied.
+    /// </para>
+    /// </remarks>
+    private static async Task AnExtendedLengthRootIsTheVolumeToEmpty(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var file = workspace.CreateRandomFile(4096);
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+        var prefixed = @"\\?\" + volumeRoot;
+
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
+
+        var status = await RecycleBin.GetStatusAsync(prefixed, context.CancellationToken).ConfigureAwait(false);
+        Check.Equal(volumeRoot, status.VolumeRoot, "the status names the plain volume, so there is one volume to act on");
+
+        var result = await RecycleBin.EmptyAsync(prefixed, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(
+            0,
+            result.Failures.Count,
+            result.Failures.Count == 0
+                ? "a root written with the extended-length prefix is a volume root to empty"
+                : $"a root written with the extended-length prefix is a volume root to empty (first failure: {result.Failures[0].Stage} 0x{result.Failures[0].HResult:X8})");
+        Check.Equal(1, result.VolumesEmptied.Count, "and one volume is reported as emptied");
+        Check.Equal(volumeRoot, result.VolumesEmptied[0], "the same volume the status named, not the prefixed spelling");
         Check.True(result.ItemsRemoved >= 1, $"and the entry really went (removed {result.ItemsRemoved})");
 
         workspace.Dispose();

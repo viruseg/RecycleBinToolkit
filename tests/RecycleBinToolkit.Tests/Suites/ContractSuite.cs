@@ -294,6 +294,11 @@ internal static class ContractSuite
     /// <c>E:</c> for it, which is a drive-relative path rather than a root, and which
     /// <c>GetVolumeNameForVolumeMountPoint</c> rejects.
     /// </summary>
+    /// <remarks>
+    /// The extended-length root is a root by the same rule and not by luck: <c>Path.GetPathRoot</c> hands
+    /// <c>\\?\E:\</c> back verbatim, so reducing both sides makes them agree, where a prefixed path inside
+    /// the volume answers <c>\\?\E:\</c> for its root and so stays distinguishable from it.
+    /// </remarks>
     private static Task VolumeRootIsAlwaysARootWithASeparator(TestContext context)
     {
         Check.Equal(@"E:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"E:"), "a bare drive letter gains its separator");
@@ -309,6 +314,17 @@ internal static class ContractSuite
             @"\\server\share" + Path.DirectorySeparatorChar,
             RecycleBinVolumeState.NormalizeVolumeRoot(@"\\server\share\work\report.bin"),
             "a path inside a UNC share collapses to the share root");
+
+        Check.Equal(
+            @"E:\",
+            RecycleBinVolumeState.NormalizeVolumeRoot(@"\\?\E:\"),
+            "an extended-length root loses its prefix and keeps its separator");
+        Check.True(
+            RecycleBinVolumeState.IsVolumeRoot(@"\\?\E:\"),
+            "and is read as the root of a volume, since the path hands its own spelling back as the root");
+        Check.False(
+            RecycleBinVolumeState.IsVolumeRoot(@"\\?\E:\work\report.bin"),
+            "while a prefixed path inside one is not, because its root is the shorter string");
 
         return Task.CompletedTask;
     }
