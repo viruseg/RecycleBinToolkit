@@ -96,6 +96,14 @@ internal static class WorkerSuite
             OverallTimeout = TimeSpan.FromSeconds(30)
         };
 
+        // The worker is brought up before anything is measured, and before the locked batch is
+        // submitted. Bringing it up here rather than just above the clock is the whole point: the worker
+        // is one thread with one FIFO queue, so anything enqueued while the locked batch is still running
+        // waits for that batch to finish. A barrier placed there would have drained the very batch this
+        // case is about and then timed a second caller against an idle worker, which no regression in the
+        // retry loop could fail.
+        RecycleBinWorker.RunAsync(() => 0, context.CancellationToken).GetAwaiter().GetResult();
+
         using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
         using (var cts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken))
         {
@@ -107,13 +115,10 @@ internal static class WorkerSuite
                 () => cancelled,
                 "the cancelled caller is told so rather than waiting out the retry budget");
 
-            // Brought up before the clock starts, so the second caller queues behind a batch that is
-            // already running rather than behind the worker's own construction. The first submit is what
-            // starts the worker: its thread startup and CoCreateInstance are part of that wait and have
-            // nothing to do with the cancelled batch, so timing from above would charge them to it.
-            RecycleBinWorker.RunAsync(() => 0, context.CancellationToken).GetAwaiter().GetResult();
-
+            // Started here, so what it covers is the wait this caller actually makes: its own submit,
+            // queued behind a batch whose token has just been cancelled.
             var stopwatch = Stopwatch.StartNew();
+
 
             var after = await RecycleBinWorker
                 .SubmitAsync(Targets([second]), RecycleBinOptions.Default, context.CancellationToken)
