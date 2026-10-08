@@ -617,7 +617,7 @@ internal static class FacadeSuite
     /// </summary>
     /// <remarks>
     /// Depends on the mapping already being in place, so the file is written through the drive letter the
-    /// case then hands to the library. Writing it through <c>E:\</c> instead would put it on the healthy
+    /// case then hands to the library. Writing it through <c>X:\</c> instead would put it on the healthy
     /// volume and test nothing.
     /// </remarks>
     private static string CreateOnSubstitutedVolume(char letter)
@@ -724,13 +724,13 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
         var files = workspace.CreateRandomFiles(1, 4096);
-        var before = RecycleBinProbe.QueryItemCount(@"E:\");
+        var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
 
         var recycled = await FileRecycler.MoveToRecycleBinAsync(files[0], cancellationToken: context.CancellationToken);
 
         Check.True(recycled, "a single recycled file reports success");
         Check.False(File.Exists(files[0]), "the file is gone from disk");
-        Check.True(RecycleBinProbe.QueryItemCount(@"E:\") - before >= 1, "the Recycle Bin gained the item");
+        Check.True(RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - before >= 1, "the Recycle Bin gained the item");
 
         workspace.Dispose();
     }
@@ -745,7 +745,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
         var files = workspace.CreateFixtureSet();
-        var before = RecycleBinProbe.QueryItemCount(@"E:\");
+        var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
 
         var result = await FileRecycler.MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken);
 
@@ -758,7 +758,7 @@ internal static class FacadeSuite
             Check.False(File.Exists(file), $"{Path.GetFileName(file)} is gone from disk");
         }
 
-        Check.True(RecycleBinProbe.QueryItemCount(@"E:\") - before >= files.Count, "the Recycle Bin gained every generated file");
+        Check.True(RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - before >= files.Count, "the Recycle Bin gained every generated file");
 
         workspace.Dispose();
     }
@@ -834,12 +834,12 @@ internal static class FacadeSuite
         File.WriteAllText(Path.Combine(directory, "a.txt"), "hello");
         File.WriteAllText(Path.Combine(ScratchWorkspace.Root, "tree", "b.txt"), "world");
 
-        var before = RecycleBinProbe.QueryItemCount(@"E:\");
+        var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
         var result = await FileRecycler.MoveToRecycleBinAsync([directory], cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"a directory is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
         Check.False(Directory.Exists(directory), "the directory tree is gone from disk");
-        Check.True(RecycleBinProbe.QueryItemCount(@"E:\") - before >= 1, "the Recycle Bin gained the directory");
+        Check.True(RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - before >= 1, "the Recycle Bin gained the directory");
 
         workspace.Dispose();
     }
@@ -880,13 +880,13 @@ internal static class FacadeSuite
 
         const int size = 10 * 1024 * 1024;
         var files = workspace.CreateRandomFiles(1, size);
-        var before = RecycleBinProbe.QuerySize(@"E:\");
+        var before = RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot);
 
         var result = await FileRecycler.MoveToRecycleBinAsync([files[0]], cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"a 10 MB file is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
         Check.False(File.Exists(files[0]), "the 10 MB file is gone from disk");
-        Check.True(RecycleBinProbe.QuerySize(@"E:\") - before >= size, "the Recycle Bin grew by the full 10 MB, so the bytes were really moved");
+        Check.True(RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot) - before >= size, "the Recycle Bin grew by the full 10 MB, so the bytes were really moved");
 
         workspace.Dispose();
     }

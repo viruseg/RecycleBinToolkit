@@ -39,21 +39,21 @@ internal static class RecycleBinProbe
     /// <summary>
     /// Number of entries the given volume's Recycle Bin holds.
     /// </summary>
-    /// <param name="volumeRoot">Volume root, for example <c>"E:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root, for example <c>"X:\\"</c>.</param>
     /// <returns>The entry count, or <c>-1</c> when the volume could not be read.</returns>
     public static long QueryItemCount(string volumeRoot) => Measure(volumeRoot).Items;
 
     /// <summary>
     /// Total size of the entries the given volume's Recycle Bin holds.
     /// </summary>
-    /// <param name="volumeRoot">Volume root, for example <c>"E:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root, for example <c>"X:\\"</c>.</param>
     /// <returns>The size in bytes, or <c>-1</c> when the volume could not be read.</returns>
     public static long QuerySize(string volumeRoot) => Measure(volumeRoot).Bytes;
 
     /// <summary>
     /// Both quantities from a single query, for assertions that need them together.
     /// </summary>
-    /// <param name="volumeRoot">Volume root, for example <c>"E:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root, for example <c>"X:\\"</c>.</param>
     /// <returns>The entry count and size in bytes, each <c>-1</c> when the volume could not be read.</returns>
     public static (long Items, long Bytes) Measure(string volumeRoot) =>
         RecycleBinCounter.TryQuery(WithSeparator(volumeRoot), out var items, out var bytes)

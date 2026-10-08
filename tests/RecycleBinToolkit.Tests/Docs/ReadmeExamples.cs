@@ -21,7 +21,7 @@ internal static class ReadmeExamples
         await FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip");
 
         await RecycleBin.GetItemsAsync();
-        await RecycleBin.EmptyAsync(@"E:\");
+        await RecycleBin.EmptyAsync(@"X:\");
     }
 
     internal static async Task BatchReportingFailures()
@@ -123,7 +123,7 @@ internal static class ReadmeExamples
     {
         // The Recycle Bin is one Shell folder spanning every mounted volume, so this filters an
         // enumeration that has already happened rather than being a cheaper query.
-        var onE = await RecycleBin.GetItemsAsync(@"E:\");
+        var onE = await RecycleBin.GetItemsAsync(@"X:\");
 
         foreach (var failure in onE.Failures)
         {
@@ -135,7 +135,7 @@ internal static class ReadmeExamples
     {
         // Confirmation, progress window and sound are always suppressed: an unattended library must
         // never put a dialog on a caller's desktop.
-        var emptied = await RecycleBin.EmptyAsync(@"E:\");
+        var emptied = await RecycleBin.EmptyAsync(@"X:\");
 
         // SHEmptyRecycleBin says nothing about how much it removed, so both figures are measured per
         // volume before and after. Neither is ever negative.
@@ -150,7 +150,7 @@ internal static class ReadmeExamples
     internal static async Task ActOnAVolumeWhoseRecycleBinIsOff()
     {
         // A volume root, not a directory inside one.
-        var status = await RecycleBin.GetStatusAsync(@"E:\");
+        var status = await RecycleBin.GetStatusAsync(@"X:\");
 
         if (!status.IsEnabled)
         {

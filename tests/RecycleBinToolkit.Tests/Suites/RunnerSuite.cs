@@ -384,17 +384,17 @@ internal static class RunnerSuite
 
     private static Task ReceiptRecognisesOnlyRecycleBinPaths(TestContext context)
     {
-        const string original = @"E:\RC\Test\a.bin";
+        const string original = @"X:\RC\Test\a.bin";
 
         Check.False(RecycleBinReceipt.IsInsideRecycleBin(null, original), "an unreported result is not a receipt");
         Check.True(
-            RecycleBinReceipt.IsInsideRecycleBin(@"E:\$RECYCLE.BIN\S-1-5-21-1001\$RABCDEF.bin", original),
+            RecycleBinReceipt.IsInsideRecycleBin(@"X:\$RECYCLE.BIN\S-1-5-21-1001\$RABCDEF.bin", original),
             "a Shell-reported path under the volume's \\$RECYCLE.BIN is a receipt");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"E:\RC\Test\a.bin", original),
+            RecycleBinReceipt.IsInsideRecycleBin(@"X:\RC\Test\a.bin", original),
             "the original path itself is not a receipt");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"E:\RC\Test\backup\a.bin", original),
+            RecycleBinReceipt.IsInsideRecycleBin(@"X:\RC\Test\backup\a.bin", original),
             "a delete outside the Recycle Bin is not a receipt");
         Check.False(
             RecycleBinReceipt.IsInsideRecycleBin(@"D:\$RECYCLE.BIN\S-1-5-21-1001\$RABCDEF.bin", original),

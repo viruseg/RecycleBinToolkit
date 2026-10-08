@@ -12,7 +12,7 @@ internal static partial class RecycleBinVolume
     /// <summary>
     /// Number of items currently tracked in the Recycle Bin of the given volume.
     /// </summary>
-    /// <param name="rootPath">Volume root, for example <c>"E:\\"</c>. A missing trailing separator is added.</param>
+    /// <param name="rootPath">Volume root, for example <c>"X:\\"</c>. A missing trailing separator is added.</param>
     /// <returns>The item count, or <c>-1</c> when the Shell query failed.</returns>
     public static long QueryItemCount(string rootPath) =>
         TryQuery(rootPath, out var items, out _, out _) ? items : -1;
@@ -20,7 +20,7 @@ internal static partial class RecycleBinVolume
     /// <summary>
     /// Total size in bytes of the Recycle Bin contents of the given volume.
     /// </summary>
-    /// <param name="rootPath">Volume root, for example <c>"E:\\"</c>. A missing trailing separator is added.</param>
+    /// <param name="rootPath">Volume root, for example <c>"X:\\"</c>. A missing trailing separator is added.</param>
     /// <returns>The size in bytes, or <c>-1</c> when the Shell query failed.</returns>
     public static long QuerySize(string rootPath) =>
         TryQuery(rootPath, out _, out var size, out _) ? size : -1;
@@ -28,7 +28,7 @@ internal static partial class RecycleBinVolume
     /// <summary>
     /// Both quantities from one query, with the failure code kept for a readable assertion.
     /// </summary>
-    /// <param name="rootPath">Volume root, for example <c>"E:\\"</c>. A missing trailing separator is added.</param>
+    /// <param name="rootPath">Volume root, for example <c>"X:\\"</c>. A missing trailing separator is added.</param>
     /// <returns>
     /// The entry count and size in bytes, both <c>-1</c> when the query failed, and the Shell's error
     /// code so a failing assertion can name it.

@@ -435,7 +435,7 @@ internal static class LongPathSuite
             var name = LongPathStager.NewDirectoryName();
             Check.True(names.Add(name), $"generated name '{name}' is unique across {Samples} samples");
             Check.True(name.StartsWith(LongPathStager.NamePrefix, StringComparison.Ordinal), $"'{name}' carries the prefix so a leftover is recognisable");
-            longest = Math.Max(longest, Path.Combine(@"E:\", name).Length);
+            longest = Math.Max(longest, Path.Combine(ScratchWorkspace.VolumeRoot, name).Length);
         }
 
         Check.True(longest <= 60, $"even the longest staging path leaves room under the Shell limit ({longest} chars)");
@@ -530,7 +530,7 @@ internal static class LongPathSuite
         try
         {
             return Directory
-                .GetFileSystemEntries(@"E:\")
+                .GetFileSystemEntries(ScratchWorkspace.VolumeRoot)
                 .Count(path => Path.GetFileName(path).StartsWith(LongPathStager.NamePrefix, StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -560,7 +560,7 @@ internal static class LongPathSuite
                 stream.Write(new byte[payload]);
             }
 
-            var (countBefore, sizeBefore) = RecycleBinProbe.Measure(@"E:\");
+            var (countBefore, sizeBefore) = RecycleBinProbe.Measure(ScratchWorkspace.VolumeRoot);
 
             var options = new RecycleBinOptions
             {
@@ -580,9 +580,9 @@ internal static class LongPathSuite
 
             Check.False(File.Exists(extendedPath), "the file is gone from its original location");
 
-            var sizeDelta = RecycleBinProbe.QuerySize(@"E:\") - sizeBefore;
+            var sizeDelta = RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot) - sizeBefore;
             Check.True(sizeDelta >= payload, $"the bytes really reached the Recycle Bin (grew by {sizeDelta}, expected at least {payload})");
-            Check.True(RecycleBinProbe.QueryItemCount(@"E:\") - countBefore >= 1, "the Recycle Bin gained an item");
+            Check.True(RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - countBefore >= 1, "the Recycle Bin gained an item");
         }
         finally
         {
@@ -770,11 +770,11 @@ internal static class LongPathSuite
                 Check.True(actual.AsSpan().SequenceEqual(expected), "the file reads back with the content that was written");
             }
 
-            var (before, sizeBefore) = RecycleBinProbe.Measure(@"E:\");
+            var (before, sizeBefore) = RecycleBinProbe.Measure(ScratchWorkspace.VolumeRoot);
 
             var result = await FileRecycler.MoveToRecycleBinAsync([extendedPath], cancellationToken: context.CancellationToken);
 
-            var sizeDelta = RecycleBinProbe.QuerySize(@"E:\") - sizeBefore;
+            var sizeDelta = RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot) - sizeBefore;
 
             if (result.Succeeded)
             {
@@ -812,13 +812,13 @@ internal static class LongPathSuite
                 stream.Write(new byte[4096]);
             }
 
-            var sizeBefore = RecycleBinProbe.QuerySize(@"E:\");
+            var sizeBefore = RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot);
             var result = await FileRecycler.MoveToRecycleBinAsync([plainPath], cancellationToken: context.CancellationToken);
 
             if (result.Succeeded)
             {
                 // Only reachable when the volume offers a usable 8.3 alias for this path.
-                Check.True(RecycleBinProbe.QuerySize(@"E:\") - sizeBefore >= 4096, "a reported success means the bytes reached the bin");
+                Check.True(RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot) - sizeBefore >= 4096, "a reported success means the bytes reached the bin");
                 Check.False(File.Exists(extendedPath), "the file is gone from disk");
                 return;
             }
@@ -831,7 +831,7 @@ internal static class LongPathSuite
                 (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
                 $"the failure carries an error code rather than looking like success (got 0x{result.FirstFailure.HResult:X8})");
             Check.True(File.Exists(extendedPath), "the file survives, because it was never handed to the Shell");
-            Check.Equal(0, RecycleBinProbe.QuerySize(@"E:\") - sizeBefore, "nothing reached the bin");
+            Check.Equal(0, RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot) - sizeBefore, "nothing reached the bin");
             Check.Equal(0, result.PermanentlyDeletedPaths.Count, "nothing was deleted permanently without being asked to");
         }
         finally
@@ -927,13 +927,13 @@ internal static class LongPathSuite
             Check.True(plainPath.Length <= MaxPathThreshold, $"the path is under the threshold ({plainPath.Length} chars)");
 
             var options = new RecycleBinOptions { LongPathFailureAction = LongPathFailureAction.DeletePermanently };
-            var before = RecycleBinProbe.QuerySize(@"E:\");
+            var before = RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot);
 
             var result = await FileRecycler.MoveToRecycleBinAsync([plainPath], options, context.CancellationToken);
 
             Check.True(result.Succeeded, "a path under the threshold recycles");
             Check.Equal(0, result.PermanentlyDeletedPaths.Count, "a path under the threshold never takes the permanent route");
-            Check.True(RecycleBinProbe.QuerySize(@"E:\") - before >= 4096, "its bytes reached the Recycle Bin");
+            Check.True(RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot) - before >= 4096, "its bytes reached the Recycle Bin");
             Check.False(File.Exists(plainPath), "the file is gone from disk");
         }
         finally

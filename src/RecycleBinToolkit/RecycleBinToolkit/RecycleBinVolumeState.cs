@@ -133,7 +133,7 @@ internal static class RecycleBinVolumeState
     /// <para>
     /// The reduction drops the extended-length prefix and the trailing separator, but nothing else — a
     /// path that goes <em>past</em> the root has to stay distinguishable from the root. Comparing whole
-    /// roots instead would answer that <c>E:\RC\Test\</c> is the same volume as <c>E:\</c>.
+    /// roots instead would answer that <c>X:\RC\Test\</c> is the same volume as <c>X:\</c>.
     /// </para>
     /// <para>
     /// An empty path is refused before that comparison, because it is the one input with no root to
@@ -229,7 +229,7 @@ internal static class RecycleBinVolumeState
     /// a trailing separator and no extended-length prefix.
     /// </summary>
     /// <remarks>
-    /// <see cref="Path.GetPathRoot(string)"/> answers <c>E:</c> for a bare drive letter, which is a
+    /// <see cref="Path.GetPathRoot(string)"/> answers <c>X:</c> for a bare drive letter, which is a
     /// drive-relative path rather than a root and is rejected by
     /// <c>GetVolumeNameForVolumeMountPoint</c>. Collapsing to a root alone is therefore not enough: the
     /// separator has to be added back.
@@ -243,14 +243,14 @@ internal static class RecycleBinVolumeState
     /// </para>
     /// <para>
     /// The extended-length prefix comes off for the same reason it comes off everywhere else here:
-    /// <see cref="DriveInfo"/> throws on <c>\\?\E:\</c>, so a prefixed root is handed back as a volume
+    /// <see cref="DriveInfo"/> throws on <c>\\?\X:\</c>, so a prefixed root is handed back as a volume
     /// whose type could not be read and is reported Indeterminate rather than as the fact it is.
     /// Reducing every spelling of a root to one form is what makes the answer independent of spelling.
     /// </para>
     /// </remarks>
     /// <param name="volumeRoot">A volume root or any path inside one.</param>
     /// <returns>
-    /// The root with a trailing separator and no prefix — <c>E:\</c>, or <c>\\server\share\</c> for a
+    /// The root with a trailing separator and no prefix — <c>X:\</c>, or <c>\\server\share\</c> for a
     /// share in any of its spellings.
     /// </returns>
     internal static string NormalizeVolumeRoot(string volumeRoot)

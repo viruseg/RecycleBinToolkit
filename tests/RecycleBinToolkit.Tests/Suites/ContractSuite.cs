@@ -126,21 +126,21 @@ internal static class ContractSuite
     /// </remarks>
     private static Task ReceiptMatchesWholeSegmentsOnly(TestContext context)
     {
-        const string original = @"E:\work\report.bin";
-        const string recycled = @"E:\$Recycle.Bin\S-1-5-21-1-2-3-1001\$RABCDEF.bin";
+        const string original = @"X:\work\report.bin";
+        const string recycled = @"X:\$Recycle.Bin\S-1-5-21-1-2-3-1001\$RABCDEF.bin";
 
         Check.True(
             RecycleBinReceipt.IsInsideRecycleBin(recycled, original),
             "the folder itself is recognised wherever it sits in the path");
 
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"E:\Downloads\$RECYCLE.BIN.zip", original),
+            RecycleBinReceipt.IsInsideRecycleBin(@"X:\Downloads\$RECYCLE.BIN.zip", original),
             "a file whose name merely starts with the folder name is not the Recycle Bin");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"E:\$Recycle.Bin.old\file.bin", original),
+            RecycleBinReceipt.IsInsideRecycleBin(@"X:\$Recycle.Bin.old\file.bin", original),
             "a directory whose name merely starts with the folder name is not the Recycle Bin");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"E:\work\$RECYCLE.BIN", original),
+            RecycleBinReceipt.IsInsideRecycleBin(@"X:\work\$RECYCLE.BIN", original),
             "and neither is a file named exactly like the folder, elsewhere on the volume");
 
         return Task.CompletedTask;
@@ -157,8 +157,8 @@ internal static class ContractSuite
     /// </remarks>
     private static Task PathsThatResolveToOneShellItemRecycleOnce(TestContext context)
     {
-        const string plain = @"E:\work\report.bin";
-        const string extended = @"\\?\E:\work\report.bin";
+        const string plain = @"X:\work\report.bin";
+        const string extended = @"\\?\X:\work\report.bin";
 
         Check.Equal(
             1,
@@ -172,7 +172,7 @@ internal static class ContractSuite
 
         Check.Equal(
             2,
-            RecycleOperationRunner.CollapseEquivalentPaths(Targets(plain, @"E:\work\other.bin")).Count,
+            RecycleOperationRunner.CollapseEquivalentPaths(Targets(plain, @"X:\work\other.bin")).Count,
             "two different files are two items");
 
         return Task.CompletedTask;
@@ -195,23 +195,23 @@ internal static class ContractSuite
         const int sharingViolation = unchecked((int)0x80070020);
         const int pathTooLong = unchecked((int)0x800700CE);
 
-        var succeededButRejected = new RecycleFailure(@"E:\a.bin", shellSuccess, 2, RecycleFailureStage.ReceiptVerification);
+        var succeededButRejected = new RecycleFailure(@"X:\a.bin", shellSuccess, 2, RecycleFailureStage.ReceiptVerification);
         Check.Equal(
             (succeededButRejected.HResult & unchecked((int)0x80000000)),
             0,
             "a Shell success code reported as a failure still reads as success, so the stage has to carry the meaning");
 
-        var genuine = new RecycleFailure(@"E:\b.bin", sharingViolation, 3, RecycleFailureStage.Performing);
+        var genuine = new RecycleFailure(@"X:\b.bin", sharingViolation, 3, RecycleFailureStage.Performing);
         Check.True(
             (genuine.HResult & unchecked((int)0x80000000)) != 0,
             "a Shell refusal reads as a failure, which is what the severity bit is for");
 
-        var longPath = new RecycleFailure(@"E:\c.bin", pathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable);
+        var longPath = new RecycleFailure(@"X:\c.bin", pathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable);
         Check.Equal(RecycleFailureStage.LongPathNotRecyclable, longPath.Stage, "the stage survives alongside the code");
         Check.Equal(pathTooLong, longPath.HResult, "the code is carried through unchanged");
         Check.Equal(0, longPath.Attempts, "and so is the attempt count, which is zero for a path never attempted");
 
-        var validation = new RecycleFailure(@"E:\d.bin", 0, 0, RecycleFailureStage.PathValidation);
+        var validation = new RecycleFailure(@"X:\d.bin", 0, 0, RecycleFailureStage.PathValidation);
         Check.Equal(0, validation.HResult, "a validation failure carries no code because the Shell was never reached");
 
         return Task.CompletedTask;
@@ -231,8 +231,8 @@ internal static class ContractSuite
     {
         var items = new[]
         {
-            new RecycleBinItem("a.bin", @"E:\a.bin", @"E:\$Recycle.Bin\S\$RA.bin", 4096, default, false),
-            new RecycleBinItem("b.bin", @"E:\b.bin", @"E:\$Recycle.Bin\S\$RB.bin", 1024, default, false)
+            new RecycleBinItem("a.bin", @"X:\a.bin", @"X:\$Recycle.Bin\S\$RA.bin", 4096, default, false),
+            new RecycleBinItem("b.bin", @"X:\b.bin", @"X:\$Recycle.Bin\S\$RB.bin", 1024, default, false)
         };
 
         var contents = new RecycleBinContents(items, [], TimeSpan.FromMilliseconds(5));
@@ -315,19 +315,19 @@ internal static class ContractSuite
     /// <summary>
     /// A volume root is documented as always carrying a trailing separator, and the Shell and the volume
     /// APIs both require one. The tricky input is a bare drive letter: <c>Path.GetPathRoot</c> answers
-    /// <c>E:</c> for it, which is a drive-relative path rather than a root, and which
+    /// <c>X:</c> for it, which is a drive-relative path rather than a root, and which
     /// <c>GetVolumeNameForVolumeMountPoint</c> rejects.
     /// </summary>
     /// <remarks>
     /// The extended-length root is a root by the same rule and not by luck: <c>Path.GetPathRoot</c> hands
-    /// <c>\\?\E:\</c> back verbatim, so reducing both sides makes them agree, where a prefixed path inside
-    /// the volume answers <c>\\?\E:\</c> for its root and so stays distinguishable from it.
+    /// <c>\\?\X:\</c> back verbatim, so reducing both sides makes them agree, where a prefixed path inside
+    /// the volume answers <c>\\?\X:\</c> for its root and so stays distinguishable from it.
     /// </remarks>
     private static Task VolumeRootIsAlwaysARootWithASeparator(TestContext context)
     {
-        Check.Equal(@"E:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"E:"), "a bare drive letter gains its separator");
-        Check.Equal(@"E:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"E:\"), "a root that already has one is unchanged");
-        Check.Equal(@"E:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"E:\work"), "a path inside a volume collapses to its root");
+        Check.Equal(@"X:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"X:"), "a bare drive letter gains its separator");
+        Check.Equal(@"X:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"X:\"), "a root that already has one is unchanged");
+        Check.Equal(@"X:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"X:\work"), "a path inside a volume collapses to its root");
         Check.Equal(@"e:\", RecycleBinVolumeState.NormalizeVolumeRoot(@"e:"), "a lower-case drive letter keeps its case and gains its separator");
 
         Check.Equal(
@@ -340,14 +340,14 @@ internal static class ContractSuite
             "a path inside a UNC share collapses to the share root");
 
         Check.Equal(
-            @"E:\",
-            RecycleBinVolumeState.NormalizeVolumeRoot(@"\\?\E:\"),
+            @"X:\",
+            RecycleBinVolumeState.NormalizeVolumeRoot(@"\\?\X:\"),
             "an extended-length root loses its prefix and keeps its separator");
         Check.True(
-            RecycleBinVolumeState.IsVolumeRoot(@"\\?\E:\"),
+            RecycleBinVolumeState.IsVolumeRoot(@"\\?\X:\"),
             "and is read as the root of a volume, since the path hands its own spelling back as the root");
         Check.False(
-            RecycleBinVolumeState.IsVolumeRoot(@"\\?\E:\work\report.bin"),
+            RecycleBinVolumeState.IsVolumeRoot(@"\\?\X:\work\report.bin"),
             "while a prefixed path inside one is not, because its root is the shorter string");
 
         return Task.CompletedTask;
@@ -360,10 +360,10 @@ internal static class ContractSuite
     /// </summary>
     private static Task ExtendedPrefixIsOnlyValidWhereItIs(TestContext context)
     {
-        var shortDrive = @"E:\work\report.bin";
+        var shortDrive = @"X:\work\report.bin";
         Check.Equal(shortDrive, LongPathStager.PathForIo(shortDrive), "a path that fits is left exactly as it is");
 
-        var longDrive = @"E:\" + new string('d', 300) + @"\report.bin";
+        var longDrive = @"X:\" + new string('d', 300) + @"\report.bin";
         Check.Equal(@"\\?\" + longDrive, LongPathStager.PathForIo(longDrive), "a long drive path takes the plain prefix");
 
         var longUnc = @"\\server\share" + new string('d', 300) + @"\report.bin";
@@ -401,7 +401,7 @@ internal static class ContractSuite
     /// </remarks>
     private static Task ItemOutcomeNamesTheStageItFailedAt(TestContext context)
     {
-        const string original = @"E:\work\report.bin";
+        const string original = @"X:\work\report.bin";
         const int Success = 0x00270008;
         const int Refused = unchecked((int)0x80070005);
 
@@ -421,7 +421,7 @@ internal static class ContractSuite
 
         Check.Equal(
             null,
-            RecycleOperationRunner.ClassifyOutcome(Success, false, @"E:\$Recycle.Bin\S-1-5\$RA.bin", true, original),
+            RecycleOperationRunner.ClassifyOutcome(Success, false, @"X:\$Recycle.Bin\S-1-5\$RA.bin", true, original),
             "a success, a gone file and a Recycle Bin destination mean recycled");
 
         Check.Equal(
@@ -436,12 +436,12 @@ internal static class ContractSuite
 
         Check.Equal(
             RecycleFailureStage.ReceiptVerification,
-            RecycleOperationRunner.ClassifyOutcome(Success, false, @"E:\Temp\$RA.bin", true, original),
+            RecycleOperationRunner.ClassifyOutcome(Success, false, @"X:\Temp\$RA.bin", true, original),
             "a destination outside the Recycle Bin names ReceiptVerification, not Performing");
 
         Check.Equal(
             null,
-            RecycleOperationRunner.ClassifyOutcome(Success, false, @"E:\Temp\$RA.bin", false, original),
+            RecycleOperationRunner.ClassifyOutcome(Success, false, @"X:\Temp\$RA.bin", false, original),
             "the same destination is accepted when receipt verification is off");
 
         Check.Equal(
@@ -459,15 +459,15 @@ internal static class ContractSuite
     /// </summary>
     private static Task JoiningFailuresKeepsTheRestOfTheOutcome(TestContext context)
     {
-        var validated = new RecycleFailure(@"E:\absent.bin", 0, 0, RecycleFailureStage.PathValidation);
-        var fromShell = new RecycleFailure(@"E:\locked.bin", unchecked((int)0x80070005), 2, RecycleFailureStage.Performing);
+        var validated = new RecycleFailure(@"X:\absent.bin", 0, 0, RecycleFailureStage.PathValidation);
+        var fromShell = new RecycleFailure(@"X:\locked.bin", unchecked((int)0x80070005), 2, RecycleFailureStage.Performing);
 
         var original = RecycleBinResult.Create(
-            recycledPaths: [@"E:\recycled.bin"],
-            permanentlyDeletedPaths: [@"E:\long.bin"],
+            recycledPaths: [@"X:\recycled.bin"],
+            permanentlyDeletedPaths: [@"X:\long.bin"],
             failures: [fromShell],
             elapsed: TimeSpan.FromMilliseconds(40),
-            leftoverStagingDirectories: [@"E:\$RCW-leftover"]);
+            leftoverStagingDirectories: [@"X:\$RCW-leftover"]);
 
         var joined = original.WithFailures([validated, fromShell]);
 
@@ -479,7 +479,7 @@ internal static class ContractSuite
             joined.PermanentlyDeletedPaths.Count,
             "a permanent deletion reported by the operation survives the join");
         Check.Equal(
-            @"E:\$RCW-leftover",
+            @"X:\$RCW-leftover",
             joined.LeftoverStagingDirectory,
             "a staging directory left behind survives the join, which is the only trace the data is there");
         Check.Equal(
@@ -544,7 +544,7 @@ internal static class ContractSuite
     /// </remarks>
     private static Task EveryLeftoverIsNamedNotOnlyTheFirst(TestContext context)
     {
-        var first = @"E:\$RCW-one";
+        var first = @"X:\$RCW-one";
         var second = @"C:\$RCW-two";
 
         var result = RecycleBinResult.Create(
@@ -572,13 +572,13 @@ internal static class ContractSuite
     /// </summary>
     private static Task ReceiptAcceptsAnExtendedLengthOriginal(TestContext context)
     {
-        const string created = @"E:\$Recycle.Bin\S-1-5-21-1-2-3-1001\$RABCDEF.bin";
+        const string created = @"X:\$Recycle.Bin\S-1-5-21-1-2-3-1001\$RABCDEF.bin";
 
         Check.True(
-            RecycleBinReceipt.IsInsideRecycleBin(created, @"E:\work\report.bin"),
+            RecycleBinReceipt.IsInsideRecycleBin(created, @"X:\work\report.bin"),
             "a plain original and a plain Recycle Bin entry agree");
         Check.True(
-            RecycleBinReceipt.IsInsideRecycleBin(created, @"\\?\E:\work\report.bin"),
+            RecycleBinReceipt.IsInsideRecycleBin(created, @"\\?\X:\work\report.bin"),
             "the extended-length form of the same original names the same volume, so it agrees too");
 
         return Task.CompletedTask;
@@ -591,19 +591,19 @@ internal static class ContractSuite
     private static Task ReceiptRejectsWhatItCannotProve(TestContext context)
     {
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(null, @"E:\work\report.bin"),
+            RecycleBinReceipt.IsInsideRecycleBin(null, @"X:\work\report.bin"),
             "no reported location proves nothing");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"", @"E:\work\report.bin"),
+            RecycleBinReceipt.IsInsideRecycleBin(@"", @"X:\work\report.bin"),
             "an empty reported location proves nothing");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"F:\$Recycle.Bin\S-1-5-21\$RX.bin", @"E:\work\report.bin"),
+            RecycleBinReceipt.IsInsideRecycleBin(@"F:\$Recycle.Bin\S-1-5-21\$RX.bin", @"X:\work\report.bin"),
             "an entry on another volume is not this item's Recycle Bin");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"E:\Temp\$RABCDEF.bin", @"E:\work\report.bin"),
+            RecycleBinReceipt.IsInsideRecycleBin(@"X:\Temp\$RABCDEF.bin", @"X:\work\report.bin"),
             "an entry outside the Recycle Bin folder was not recycled");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"E:\$Recycle.Bin\$RABCDEF.bin", @"relative\report.bin"),
+            RecycleBinReceipt.IsInsideRecycleBin(@"X:\$Recycle.Bin\$RABCDEF.bin", @"relative\report.bin"),
             "an original that names no volume cannot be matched");
 
         return Task.CompletedTask;
@@ -692,8 +692,8 @@ internal static class ContractSuite
 
     private static Task ResultFailsWhenAnyFailure(TestContext context)
     {
-        var first = new RecycleFailure(@"E:\locked.bin", unchecked((int)0x80270027), 3, RecycleFailureStage.Performing);
-        var second = new RecycleFailure(@"E:\gone.bin", unchecked((int)0x80070002), 1, RecycleFailureStage.PathValidation);
+        var first = new RecycleFailure(@"X:\locked.bin", unchecked((int)0x80270027), 3, RecycleFailureStage.Performing);
+        var second = new RecycleFailure(@"X:\gone.bin", unchecked((int)0x80070002), 1, RecycleFailureStage.PathValidation);
 
         var result = RecycleBinResult.Create(["a"], [first, second], TimeSpan.Zero);
 
@@ -708,7 +708,7 @@ internal static class ContractSuite
     private static Task ThrowRecycleFailedCarriesHResult(TestContext context)
     {
         const int hresult = unchecked((int)0x80270027);
-        var failure = new RecycleFailure(@"E:\locked.bin", hresult, 3, RecycleFailureStage.Performing);
+        var failure = new RecycleFailure(@"X:\locked.bin", hresult, 3, RecycleFailureStage.Performing);
 
         var thrown = Check.Throws<IOException>(
             () => RecycleBinThrowHelper.ThrowRecycleFailed(failure),
@@ -723,10 +723,10 @@ internal static class ContractSuite
 
     private static Task TargetKeepsInputAndFullPath(TestContext context)
     {
-        var target = new RecycleTarget(@"sub\..\a.bin", @"E:\a.bin", @"E:\a.bin");
+        var target = new RecycleTarget(@"sub\..\a.bin", @"X:\a.bin", @"X:\a.bin");
 
         Check.Equal(@"sub\..\a.bin", target.InputPath, "the caller's path is preserved verbatim for diagnostics");
-        Check.Equal(@"E:\a.bin", target.FullPath, "the normalised path is kept for Shell calls");
+        Check.Equal(@"X:\a.bin", target.FullPath, "the normalised path is kept for Shell calls");
 
         return Task.CompletedTask;
     }
@@ -737,18 +737,18 @@ internal static class ContractSuite
     /// </summary>
     private static Task TargetCarriesBothPathForms(TestContext context)
     {
-        var extended = new RecycleTarget(@"\\?\E:\long.bin", @"\\?\E:\long.bin", @"E:\long.bin");
+        var extended = new RecycleTarget(@"\\?\X:\long.bin", @"\\?\X:\long.bin", @"X:\long.bin");
 
-        Check.Equal(@"\\?\E:\long.bin", extended.FullPath, "the file-API form keeps the extended-length prefix");
-        Check.Equal(@"E:\long.bin", extended.ShellPath, "the Shell form has no prefix");
+        Check.Equal(@"\\?\X:\long.bin", extended.FullPath, "the file-API form keeps the extended-length prefix");
+        Check.Equal(@"X:\long.bin", extended.ShellPath, "the Shell form has no prefix");
 
         return Task.CompletedTask;
     }
 
     private static Task ExtendedPrefixIsStrippedForTheShell(TestContext context)
     {
-        Check.Equal(@"E:\a.bin", RecycleTarget.StripExtendedPrefix(@"\\?\E:\a.bin"), "a drive path loses the prefix");
-        Check.Equal(@"E:\a.bin", RecycleTarget.StripExtendedPrefix(@"E:\a.bin"), "a plain path is returned unchanged");
+        Check.Equal(@"X:\a.bin", RecycleTarget.StripExtendedPrefix(@"\\?\X:\a.bin"), "a drive path loses the prefix");
+        Check.Equal(@"X:\a.bin", RecycleTarget.StripExtendedPrefix(@"X:\a.bin"), "a plain path is returned unchanged");
         Check.Equal(
             @"\\server\share\a.bin",
             RecycleTarget.StripExtendedPrefix(@"\\?\UNC\server\share\a.bin"),

@@ -33,7 +33,7 @@ internal static class SubstitutedVolume
     /// </summary>
     /// <remarks>
     /// Scanning down from <c>Z</c> rather than up from <c>D</c> keeps the mapping out of the way of the
-    /// fixed drives these suites assume: <c>ScratchWorkspace.Root</c> is on <c>E:\</c>, and several cases
+    /// fixed drives these suites assume: <c>ScratchWorkspace.Root</c> is on <c>X:\</c>, and several cases
     /// hard-code it.
     /// </remarks>
     internal static char FirstUnusedDriveLetter()

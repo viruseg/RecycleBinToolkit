@@ -14,7 +14,7 @@ internal static partial class RecycleBinCounter
     /// <summary>
     /// Reads how many entries a volume's Recycle Bin holds and how much space they take.
     /// </summary>
-    /// <param name="volumeRoot">Volume root with a trailing separator, for example <c>"E:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root with a trailing separator, for example <c>"X:\\"</c>.</param>
     /// <param name="items">Entry count, or <c>-1</c> when the Shell query failed.</param>
     /// <param name="bytes">Total size in bytes, or <c>-1</c> when the Shell query failed.</param>
     /// <returns><see langword="true"/> when the query succeeded.</returns>

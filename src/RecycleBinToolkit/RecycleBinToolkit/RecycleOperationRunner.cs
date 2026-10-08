@@ -812,8 +812,8 @@ internal sealed class RecycleOperationRunner
     /// <remarks>
     /// Compared on the Shell path, since that is the form handed to the Shell and the one every spelling
     /// of a path has already been reduced to by <see cref="RecycleTarget"/>. The extended-length prefix
-    /// is stripped during construction for exactly this reason: <c>\\?\E:\a.bin</c> and
-    /// <c>E:\a.bin</c> have to meet here, or the Shell is handed two items for one file.
+    /// is stripped during construction for exactly this reason: <c>\\?\X:\a.bin</c> and
+    /// <c>X:\a.bin</c> have to meet here, or the Shell is handed two items for one file.
     /// </remarks>
     /// <param name="targets">Paths to collapse.</param>
     internal static IReadOnlyList<RecycleTarget> CollapseEquivalentPaths(IReadOnlyList<RecycleTarget> targets)

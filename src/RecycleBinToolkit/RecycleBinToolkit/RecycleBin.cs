@@ -32,7 +32,7 @@ public static class RecycleBin
     /// Reads the contents of the Recycle Bin.
     /// </summary>
     /// <param name="volumeRoot">
-    /// Volume root to keep, such as <c>"E:\\"</c>, or <see langword="null"/> for every volume.
+    /// Volume root to keep, such as <c>"X:\\"</c>, or <see langword="null"/> for every volume.
     /// </param>
     /// <param name="cancellationToken">Cancels the wait.</param>
     /// <returns>The entries that could be read, plus the ones that could not.</returns>
@@ -64,7 +64,7 @@ public static class RecycleBin
     /// Empties the Recycle Bin.
     /// </summary>
     /// <param name="volumeRoot">
-    /// Volume root to empty, such as <c>"E:\\"</c>, or <see langword="null"/> for every volume. A path
+    /// Volume root to empty, such as <c>"X:\\"</c>, or <see langword="null"/> for every volume. A path
     /// inside a volume is not a volume root and is reported in
     /// <see cref="RecycleBinEmptyResult.Failures"/> rather than emptied as that whole volume.
     /// </param>
@@ -102,8 +102,8 @@ public static class RecycleBin
         var stopwatch = Stopwatch.StartNew();
 
         // The Shell is handed the same root the measurements and the report are taken against. Passing
-        // the caller's spelling instead would mean a drive-relative "E:" is measured as "E:\" and emptied
-        // as "E:", which is a different request from the one the result claims to describe.
+        // the caller's spelling instead would mean a drive-relative "X:" is measured as "X:\" and emptied
+        // as "X:", which is a different request from the one the result claims to describe.
         var shellRoot = targets.Count == 1 ? targets[0] : null;
 
         var emptied = await RecycleBinWorker
@@ -116,7 +116,7 @@ public static class RecycleBin
     /// <summary>
     /// Reports whether the Recycle Bin is in use for a volume, and why.
     /// </summary>
-    /// <param name="volumeRoot">Volume root to inspect, such as <c>"E:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root to inspect, such as <c>"X:\\"</c>.</param>
     /// <param name="cancellationToken">Cancels the wait.</param>
     /// <returns>The status of that volume.</returns>
     /// <remarks>
@@ -232,7 +232,7 @@ public static class RecycleBin
     /// act on.
     /// <para>
     /// A path inside a volume is refused rather than resolved to that volume. Emptying is not a read:
-    /// asking about <c>E:\some\folder</c> and clearing every recycled item on <c>E:\</c> is a much larger
+    /// asking about <c>X:\some\folder</c> and clearing every recycled item on <c>X:\</c> is a much larger
     /// action than the one that was asked for, and a caller who mistyped a root deserves to be told the
     /// path was not one rather than to find out from what disappeared. <see cref="GetStatusAsync"/>
     /// answers the same input the same way.

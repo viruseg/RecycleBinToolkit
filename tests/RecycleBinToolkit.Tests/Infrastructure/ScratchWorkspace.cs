@@ -67,7 +67,11 @@ internal sealed class ScratchWorkspace : IDisposable
     /// <summary>
     /// Absolute path of the scratch root, always with a trailing separator.
     /// </summary>
-    public static string Root => Claimed("scratch");
+    /// <remarks>
+    /// A path, not a creator: reading it never brings the directory into existence, because the cases that
+    /// assert the directory is <em>gone</em> read it to find out. Use <see cref="Recreate"/> to create it.
+    /// </remarks>
+    public static string Root => PathUnder("scratch");
 
     /// <summary>
     /// Absolute path of the root for cases that build <em>directories</em> past the Shell's length
@@ -85,7 +89,7 @@ internal sealed class ScratchWorkspace : IDisposable
     /// <see cref="Root"/>, so <see cref="Root"/> remains where those belong.
     /// </para>
     /// </remarks>
-    public static string LongDirectoryRoot => Claimed("long");
+    public static string LongDirectoryRoot => PathUnder("long");
 
     /// <summary>
     /// Claims this run's directory tree under <paramref name="volumeRoot"/>, once per process.
@@ -157,16 +161,16 @@ internal sealed class ScratchWorkspace : IDisposable
     }
 
     /// <summary>
-    /// A named child of this run's directory, created on first use.
+    /// The path of a named child of this run's directory, whether or not it exists.
     /// </summary>
     /// <param name="purpose">What the directory is for, such as <c>scratch</c> or <c>long</c>.</param>
-    /// <returns>The full path of the directory, with a trailing separator.</returns>
-    private static string Claimed(string purpose)
+    /// <returns>The full path, with a trailing separator.</returns>
+    private static string PathUnder(string purpose)
     {
         var runRoot = _runRoot ?? throw new InvalidOperationException(
             $"{nameof(Configure)} has not run, so there is no directory to take '{purpose}' from.");
 
-        return runRoot.Subdirectory(purpose);
+        return Path.Combine(runRoot.FullPath, purpose) + Path.DirectorySeparatorChar;
     }
 
     private bool _disposed;

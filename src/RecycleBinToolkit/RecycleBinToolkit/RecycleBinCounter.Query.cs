@@ -7,7 +7,7 @@ internal static partial class RecycleBinCounter
     /// <summary>
     /// The code the Shell returned for a volume's Recycle Bin query, carried through as it came.
     /// </summary>
-    /// <param name="volumeRoot">Volume root with a trailing separator, for example <c>"E:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root with a trailing separator, for example <c>"X:\\"</c>.</param>
     /// <returns>
     /// The Shell's own code: <c>0</c> when the query succeeded, the failure code when it did not. Not
     /// normalised, so the severity bit still means what the Shell meant by it.

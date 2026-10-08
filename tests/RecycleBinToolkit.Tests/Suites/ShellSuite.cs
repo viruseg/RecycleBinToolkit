@@ -192,10 +192,10 @@ internal static class ShellSuite
     /// </summary>
     private static Task UnreportedItemsAreNotReportedAsSuccess(TestContext context)
     {
-        var sink = new RecycleProgressSink([@"E:\RC\Test\never-reported-a.bin", @"E:\RC\Test\never-reported-b.bin"]);
+        var sink = new RecycleProgressSink([@"X:\RC\Test\never-reported-a.bin", @"X:\RC\Test\never-reported-b.bin"]);
 
         Check.False(
-            sink.TryGetOutcome(@"E:\RC\Test\never-reported-a.bin", out var hresult, out var binPath),
+            sink.TryGetOutcome(@"X:\RC\Test\never-reported-a.bin", out var hresult, out var binPath),
             "an item the Shell never reported on has no outcome");
 
         Check.True(
@@ -204,7 +204,7 @@ internal static class ShellSuite
         Check.True(binPath is null, "a missing outcome carries no Recycle Bin path");
 
         Check.False(
-            sink.TryGetOutcome(@"E:\RC\Test\never-reported-b.bin", out _, out _),
+            sink.TryGetOutcome(@"X:\RC\Test\never-reported-b.bin", out _, out _),
             "every unreported path stays unreported");
 
         return Task.CompletedTask;
@@ -227,9 +227,9 @@ internal static class ShellSuite
 
         var paths = new[]
         {
-            @"E:\RC\Test\ordered-a.bin",
-            @"E:\RC\Test\ordered-b.bin",
-            @"E:\RC\Test\ordered-c.bin"
+            @"X:\RC\Test\ordered-a.bin",
+            @"X:\RC\Test\ordered-b.bin",
+            @"X:\RC\Test\ordered-c.bin"
         };
 
         var sink = new RecycleProgressSink(paths);
@@ -265,7 +265,7 @@ internal static class ShellSuite
         const int Success = 0x00270008;
         const int Failure = unchecked((int)0x80070005);
 
-        var paths = new[] { @"E:\RC\Test\exhausted-a.bin", @"E:\RC\Test\exhausted-b.bin" };
+        var paths = new[] { @"X:\RC\Test\exhausted-a.bin", @"X:\RC\Test\exhausted-b.bin" };
         var sink = new RecycleProgressSink(paths);
 
         sink.PostDeleteItem(0, null!, new HRESULT(Success), null!);
@@ -371,7 +371,7 @@ internal static class ShellSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
         var files = workspace.CreateRandomFiles(5, 4096);
-        var before = RecycleBinProbe.QueryItemCount(@"E:\");
+        var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
 
         using (var context2 = ShellOperationContext.Create())
         {
@@ -399,7 +399,7 @@ internal static class ShellSuite
             }
         }
 
-        var after = RecycleBinProbe.QueryItemCount(@"E:\");
+        var after = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
         Console.WriteLine($"        bin tracked items: {before} -> {after}");
         Check.True(after - before >= files.Count, $"Recycle Bin tracked at least {files.Count} new item(s)");
 

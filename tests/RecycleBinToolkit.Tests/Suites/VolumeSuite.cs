@@ -66,7 +66,7 @@ internal static class VolumeSuite
             stopwatch.ElapsedMilliseconds < CounterBudgetMs,
             $"reading the counter does not enumerate the bin (took {stopwatch.ElapsedMilliseconds} ms, budget {CounterBudgetMs} ms)");
 
-        Console.WriteLine($"        E:\\ tracked items: {items}, {size} byte(s), query {stopwatch.ElapsedMilliseconds} ms");
+        Console.WriteLine($"        {volumeRoot} tracked items: {items}, {size} byte(s), query {stopwatch.ElapsedMilliseconds} ms");
 
         return Task.CompletedTask;
     }
@@ -102,7 +102,7 @@ internal static class VolumeSuite
     private static async Task AVolumeWithoutARecycleBinIsRefused(TestContext context)
     {
         var volume = await RequireAVolumeWithoutARecycleBin(context).ConfigureAwait(false);
-        var workspace = CreateManualDirectory(volume.Root);
+        var (workspace, claim) = CreateManualDirectory(volume.Root);
 
         try
         {
@@ -150,7 +150,7 @@ internal static class VolumeSuite
         }
         finally
         {
-            RemoveManualDirectory(workspace);
+            RemoveManualDirectory(claim);
         }
     }
 
@@ -173,7 +173,7 @@ internal static class VolumeSuite
     private static async Task AVolumeWithoutARecycleBinCanBeDeletedOnRequest(TestContext context)
     {
         var volume = await RequireAVolumeWithoutARecycleBin(context).ConfigureAwait(false);
-        var workspace = CreateManualDirectory(volume.Root);
+        var (workspace, claim) = CreateManualDirectory(volume.Root);
 
         try
         {
@@ -202,7 +202,7 @@ internal static class VolumeSuite
         }
         finally
         {
-            RemoveManualDirectory(workspace);
+            RemoveManualDirectory(claim);
         }
     }
 
@@ -312,8 +312,9 @@ internal static class VolumeSuite
         // Refused before anything is created on it. A command line that cannot carry two leading
         // backslashes delivers \server\share\, which Path.GetPathRoot answers "\" for and which therefore
         // names a path on the current drive rather than a volume -- so the directory a case would make is
-        // on E:\ and not on the share the caller named. That has already cost this repository a
-        // directory, and a refusal naming the cause beats a CheckFailedException about a Recycle Bin.
+        // on the drive the process happens to be on rather than on the share the caller named. That has
+        // already cost this repository a directory, and a refusal naming the cause beats a
+        // CheckFailedException about a Recycle Bin.
         if (!RecycleBinVolumeState.IsVolumeRoot(requested))
         {
             throw new CheckFailedException(
@@ -358,19 +359,18 @@ internal static class VolumeSuite
             "cannot answer, and a pass would claim coverage that was never provided.");
     }
 
-    /// <summary>Prefix of the directory each manual case creates for itself, so a leftover is identifiable.</summary>
-    private const string ManualDirectoryPrefix = "RecycleBinToolkit.Manual";
-
-    private static int _manualSequence;
-
     /// <summary>
-    /// Creates a directory of this case's own on the path the caller named, and returns its full path.
+    /// Creates a directory of this case's own on the path the caller named, and returns its full path
+    /// together with the claim that owns it.
     /// </summary>
     /// <remarks>
-    /// The caller owns the root and may have anything at all in it, so the case adds one directory of its
-    /// own rather than writing beside it. Only that directory is ever removed, and only by full path.
+    /// The caller owns the root and may have anything at all in it, so the case adds a directory of its own
+    /// under a name that did not exist rather than writing beside it. The name is generated and checked,
+    /// because <c>Directory.CreateDirectory</c> reports success for a directory somebody else already had:
+    /// a case that adopted one would write into it and then remove it with a recursive delete. Only the
+    /// claimed path is ever removed, and only by full path.
     /// </remarks>
-    private static string CreateManualDirectory(string root)
+    private static (string Path, ScratchDirectory Claim) CreateManualDirectory(string root)
     {
         // A separator is added rather than one trimmed off. Path.Combine("F:", name) is the drive-relative
         // "F:name", and a directory made under it belongs to whatever current directory the process happens
@@ -381,9 +381,8 @@ internal static class VolumeSuite
             ? root
             : root + Path.DirectorySeparatorChar;
 
-        var path = Path.Combine(
-            parent,
-            $"{ManualDirectoryPrefix}-{Environment.ProcessId}-{Interlocked.Increment(ref _manualSequence)}");
+        var claim = ScratchDirectory.Claim(parent);
+        var path = claim.Subdirectory("manual");
 
         // Asserted rather than assumed, because this is the one place where a drive letter and a root with
         // a separator differ by nothing visible: the directory would be created on the right volume by
@@ -393,13 +392,11 @@ internal static class VolumeSuite
             throw new CheckFailedException($"the workspace path {path} built from root {root} is not a full path");
         }
 
-        Directory.CreateDirectory(path);
-
-        return path;
+        return (path, claim);
     }
 
     /// <summary>
-    /// Removes a directory this case created, reporting a cleanup it could not finish rather than
+    /// Removes the directory this case claimed, reporting a cleanup it could not finish rather than
     /// throwing from the <c>finally</c> that called it.
     /// </summary>
     /// <remarks>
@@ -407,25 +404,20 @@ internal static class VolumeSuite
     /// complaint. Printing keeps the case's result intact while still naming a directory left on the
     /// caller's volume.
     /// <para>
-    /// A path that is not fully qualified is refused rather than resolved, because resolving one is what
-    /// would turn a case's own directory into whatever the current directory says it is.
+    /// The whole claim goes rather than only the <c>manual</c> directory under it: the claim is the
+    /// directory this run created, and leaving it behind in somebody's volume root is what the next run
+    /// would have to work around.
     /// </para>
     /// </remarks>
-    private static void RemoveManualDirectory(string path)
+    private static void RemoveManualDirectory(ScratchDirectory claim)
     {
-        if (!Path.IsPathFullyQualified(path))
-        {
-            Console.WriteLine($"        WARNING: refusing to remove {path}, which is not a full path");
-            return;
-        }
-
         try
         {
-            Directory.Delete(path, recursive: true);
+            claim.Remove();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
         {
-            Console.WriteLine($"        WARNING: left {path} behind -- {ex.Message}");
+            Console.WriteLine($"        WARNING: left {claim.FullPath} behind -- {ex.Message}");
         }
     }
 

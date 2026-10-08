@@ -9,7 +9,7 @@ using RecycleBinToolkit;
 await FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip");
 
 await RecycleBin.GetItemsAsync();
-await RecycleBin.EmptyAsync(@"E:\");
+await RecycleBin.EmptyAsync(@"X:\");
 ```
 
 - **Targets** `net10.0`, Windows only. The library is `AnyCPU`; the test project is `x64`.
@@ -225,7 +225,7 @@ Lists the Recycle Bin.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `volumeRoot` | `string?` | Volume root to keep, such as `"E:\"`, or `null` for every volume. |
+| `volumeRoot` | `string?` | Volume root to keep, such as `"X:\"`, or `null` for every volume. |
 | `cancellationToken` | `CancellationToken` | Cancels the wait. |
 
 **Returns** a `RecycleBinContents`.
@@ -550,7 +550,7 @@ Console.WriteLine($"{contents.Items.Count} item(s), {contents.TotalSize} byte(s)
 ```csharp
 // The Recycle Bin is one Shell folder spanning every mounted volume, so this filters an
 // enumeration that has already happened rather than being a cheaper query.
-var onE = await RecycleBin.GetItemsAsync(@"E:\");
+var onE = await RecycleBin.GetItemsAsync(@"X:\");
 
 foreach (var failure in onE.Failures)
 {
@@ -563,7 +563,7 @@ foreach (var failure in onE.Failures)
 ```csharp
 // Confirmation, progress window and sound are always suppressed: an unattended library must
 // never put a dialog on a caller's desktop.
-var emptied = await RecycleBin.EmptyAsync(@"E:\");
+var emptied = await RecycleBin.EmptyAsync(@"X:\");
 
 // SHEmptyRecycleBin says nothing about how much it removed, so both figures are measured per
 // volume before and after. Neither is ever negative.
@@ -579,7 +579,7 @@ foreach (var failure in emptied.Failures)
 
 ```csharp
 // A volume root, not a directory inside one.
-var status = await RecycleBin.GetStatusAsync(@"E:\");
+var status = await RecycleBin.GetStatusAsync(@"X:\");
 
 if (!status.IsEnabled)
 {
@@ -792,7 +792,7 @@ Stated plainly, because these are properties of Windows rather than choices.
   elevation, and the Shell reports those as zero too, so there is no figure to give. `IsDirectory` is
   the honest signal that a size is not available.
 - **A listing covers every mounted volume, always.** Filtering by volume happens after enumeration
-  because the Recycle Bin is a single aggregate folder. A caller who wants only `E:\` still pays for
+  because the Recycle Bin is a single aggregate folder. A caller who wants only `X:\` still pays for
   the volumes it does not care about, and it cannot see a volume that is not mounted.
 - **`GetStatusAsync` answers configuration and the Shell, but not the future.** Where the registry
   records a volume's own setting, that setting is the whole answer. Only volumes that configuration says
@@ -828,7 +828,7 @@ dotnet run --project tests/RecycleBinToolkit.Tests -- --load
 `--filter` matches any part of a case name, and every case is named `<Suite>.<Case>`. It exits
 non-zero when a case fails.
 
-The suite needs the scratch volume — the one holding `E:\RC\Test` — to be recorded as recycling, which
+The suite needs the scratch volume — the one holding `X:\RC\Test` — to be recorded as recycling, which
 Windows writes under `HKCU\...\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete=0` when "Don't move files to
 the Recycle Bin" is clear for that drive. Almost every case now recycles there, and a volume with no
 such key is answered `Indeterminate` or `NoRecycleBinOnVolume` — both refused by the default
@@ -840,7 +840,7 @@ recycling, per-item failure reporting, selective retry against a self-inflicted 
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies, a
 ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardware only, behind
 `--manual` — volumes with no Recycle Bin. Listing, emptying and status checking are covered by their own
-suites. The default run writes only to `E:\RC\Test` (or the project root) and moves the committed fixture
+suites. The default run writes only to `X:\RC\Test` (or the project root) and moves the committed fixture
 files it uses; `--manual` writes wherever you tell it to.
 
 **The 130 cases divide into three groups, and `--all` runs 123 of them.** Four are load cases that run only
@@ -872,7 +872,7 @@ otherwise empty the Recycle Bin you were using; the run names the root and the r
 **A share has to survive your command line.** `--manual "\\server\share\"` is right in PowerShell and in
 `cmd.exe`, which treat backslashes literally. It is wrong in anything that treats `\\` as an escape —
 bash, or any tool that unescapes the command string before the shell ever sees it — because what arrives
-is `\server\share\`, whose root is the *current drive*; a directory created from it lands on `E:\`. The
+is `\server\share\`, whose root is the *current drive*; a directory created from it lands on `X:\`. The
 runner refuses a root that is not a volume root rather than acting on whatever drive is current, so the
 mistake goes red and costs nothing — but it goes red. Write the share as `//server/share/` there. The
 forward-slash spelling names the same volume, no shell rewrites it, and the runner reads it as the
