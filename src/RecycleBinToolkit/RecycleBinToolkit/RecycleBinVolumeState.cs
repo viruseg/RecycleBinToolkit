@@ -38,10 +38,11 @@ internal static class RecycleBinVolumeState
         var driveType = ReadDriveType(root);
         var disabledByPolicy = RecycleBinRegistry.IsDisabledByPolicy();
 
-        // The per-volume setting lives under the volume's GUID. Without it there is no fact to read, so
-        // an answer that would otherwise be "enabled" stops at what is actually known.
-        var volumeGuid = TryGetVolumeGuid(root);
-        if (volumeGuid is null)
+        // The per-volume setting lives under a subkey named after the volume's GUID. Without that name
+        // there is no fact to read, so an answer that would otherwise be "enabled" stops at what is
+        // actually known.
+        var volumeKeyName = TryGetVolumeGuidKeyName(root);
+        if (volumeKeyName is null)
         {
             var known = RecycleBinVolumePolicy.Classify(volumeExists: true, driveType, disabledByPolicy, nukeOnDelete: false);
 
@@ -51,7 +52,7 @@ internal static class RecycleBinVolumeState
                 known == RecycleBinAvailabilityReason.Enabled ? RecycleBinAvailabilityReason.Indeterminate : known);
         }
 
-        var nukeOnDelete = RecycleBinRegistry.IsNukeOnDelete(volumeGuid);
+        var nukeOnDelete = RecycleBinRegistry.IsNukeOnDelete(volumeKeyName);
 
         return new RecycleBinStatus(root, driveType, RecycleBinVolumePolicy.Classify(true, driveType, disabledByPolicy, nukeOnDelete));
     }
@@ -76,9 +77,17 @@ internal static class RecycleBinVolumeState
     }
 
     /// <summary>
-    /// Reads the volume's GUID path, in the <c>\\?\Volume{…}\</c> form the registry key is named after.
+    /// Reads the name the per-volume Recycle Bin setting is keyed on: the volume's GUID in braces,
+    /// which is what the subkey under the Shell's own per-volume list is called.
     /// </summary>
-    private static string? TryGetVolumeGuid(string root)
+    /// <remarks>
+    /// Not the <c>\\?\Volume{…}\</c> device path the volume API answers with. That path is how Win32
+    /// names the volume; the registry calls the same volume by the bare GUID in braces, and building a
+    /// subkey name out of the device path misses every time — which reports a volume whose recycling is
+    /// switched off as enabled.
+    /// </remarks>
+    /// <returns>The braced GUID, or <see langword="null"/> when it could not be read.</returns>
+    internal static string? TryGetVolumeGuidKeyName(string root)
     {
         var buffer = new char[GuidPathCapacity];
 
@@ -87,18 +96,42 @@ internal static class RecycleBinVolumeState
             return null;
         }
 
-        return new string(buffer).TrimEnd('\\');
+        // The volume API null-terminates its answer and leaves the rest of the buffer alone, so the name
+        // ends at the first terminator rather than at the end of the array. Reading to the end instead
+        // puts fifteen NUL characters into every subkey name built from it.
+        var written = Array.IndexOf(buffer, '\0');
+        if (written < 0)
+        {
+            return null;
+        }
+
+        var path = buffer.AsSpan(0, written);
+        var open = path.IndexOf('{');
+        var close = path.IndexOf('}');
+
+        if (open < 0 || close < open)
+        {
+            return null;
+        }
+
+        return path[open..(close + 1)].ToString();
     }
 
     /// <summary>
     /// The volume a path belongs to, always in the form the Shell and the volume APIs accept: a root with
-    /// a trailing separator.
+    /// a trailing separator and no extended-length prefix.
     /// </summary>
     /// <remarks>
     /// <see cref="Path.GetPathRoot(string)"/> answers <c>E:</c> for a bare drive letter, which is a
     /// drive-relative path rather than a root and is rejected by
     /// <c>GetVolumeNameForVolumeMountPoint</c>. Collapsing to a root alone is therefore not enough: the
     /// separator has to be added back.
+    /// <para>
+    /// The extended-length prefix comes off for the same reason it comes off everywhere else here:
+    /// <see cref="DriveInfo"/> throws on <c>\\?\E:\</c>, so a prefixed root is handed back as a volume
+    /// whose type could not be read and is reported Indeterminate rather than as the fact it is.
+    /// Reducing every spelling of a root to one form is what makes the answer independent of spelling.
+    /// </para>
     /// </remarks>
     /// <param name="volumeRoot">A volume root or any path inside one.</param>
     internal static string NormalizeVolumeRoot(string volumeRoot)
@@ -106,12 +139,14 @@ internal static class RecycleBinVolumeState
         var root = Path.GetPathRoot(volumeRoot);
         if (string.IsNullOrEmpty(root))
         {
-            return AppendSeparator(volumeRoot);
+            return AppendSeparator(RecycleTarget.StripExtendedPrefix(volumeRoot));
         }
 
-        return root.EndsWith(Path.DirectorySeparatorChar) || root.EndsWith(Path.AltDirectorySeparatorChar)
-            ? root
-            : root + Path.DirectorySeparatorChar;
+        var shellForm = RecycleTarget.StripExtendedPrefix(root);
+
+        return shellForm.EndsWith(Path.DirectorySeparatorChar) || shellForm.EndsWith(Path.AltDirectorySeparatorChar)
+            ? shellForm
+            : shellForm + Path.DirectorySeparatorChar;
     }
 
     private static string AppendSeparator(string path) =>

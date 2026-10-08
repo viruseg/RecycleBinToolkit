@@ -127,14 +127,17 @@ internal static partial class RecycleBinRegistry
     /// Whether this volume is set to delete immediately instead of recycling.
     /// </summary>
     /// <remarks>
-    /// The per-volume state is keyed on the volume's GUID path, not on its drive letter, which is why a
-    /// volume mounted at more than one letter shares one setting.
+    /// The per-volume state is keyed on the volume's GUID in braces, not on its drive letter, which is
+    /// why a volume mounted at more than one letter shares one setting. The caller supplies that GUID
+    /// as its own subkey name rather than the volume root, so what gets looked up is exactly the name
+    /// Windows wrote.
     /// </remarks>
-    internal static bool IsNukeOnDelete(string volumeGuidPath)
+    /// <param name="volumeGuidKeyName">The volume's GUID in braces, as its subkey is named.</param>
+    internal static bool IsNukeOnDelete(string volumeGuidKeyName)
     {
-        ArgumentException.ThrowIfNullOrEmpty(volumeGuidPath);
+        ArgumentException.ThrowIfNullOrEmpty(volumeGuidKeyName);
 
-        return IsFlagSet(CurrentUser, $@"{BitBucketSubKey}\Volume\{volumeGuidPath}", "NukeOnDelete");
+        return IsFlagSet(CurrentUser, $@"{BitBucketSubKey}\Volume\{volumeGuidKeyName}", "NukeOnDelete");
     }
 
     /// <summary>

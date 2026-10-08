@@ -1,4 +1,6 @@
 using System.Runtime.Versioning;
+using Microsoft.Win32;
+using RecycleBinToolkit;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 
@@ -19,7 +21,66 @@ internal static class StatusSuite
         new TestCase("StatusSuite." + nameof(StatusSeparatesTheReasonsItCanReport), StatusSeparatesTheReasonsItCanReport),
         new TestCase("StatusSuite." + nameof(StatusNeverReportsEnabledWithoutAFact), StatusNeverReportsEnabledWithoutAFact),
         new TestCase("StatusSuite." + nameof(StatusAgreesWhateverSpellingOfTheRootItIsGiven), StatusAgreesWhateverSpellingOfTheRootItIsGiven),
+        new TestCase("StatusSuite." + nameof(ExtendedLengthSpellingOfTheRootIsTheSameVolume), ExtendedLengthSpellingOfTheRootIsTheSameVolume),
+        new TestCase("StatusSuite." + nameof(TheVolumeKeyIsNamedTheWayWindowsNamesIt), TheVolumeKeyIsNamedTheWayWindowsNamesIt),
     ];
+
+    /// <summary>
+    /// The per-volume setting is read from a subkey under the Recycle Bin's own volume list, so the
+    /// name the library derives has to be one Windows actually wrote. Deriving it as the
+    /// <c>\\?\Volume{…}\</c> device path instead of the bare GUID in braces makes every read miss, and
+    /// a volume whose recycling is switched off is then reported as enabled.
+    /// </summary>
+    /// <remarks>
+    /// The comparison is against the machine's own key list rather than against the library's
+    /// composition of it, so it pins the name Windows uses instead of restating what the code builds.
+    /// </remarks>
+    private static async Task TheVolumeKeyIsNamedTheWayWindowsNamesIt(TestContext context)
+    {
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
+        var keyName = RecycleBinVolumeState.TryGetVolumeGuidKeyName(volumeRoot);
+        Check.NotNull(keyName, $"the volume GUID resolves for '{volumeRoot}'");
+        Check.False(keyName!.Contains('\0'), $"the name carries no embedded terminator (got '{Escape(keyName)}')");
+        Check.Equal('{', keyName[0], "the name is the GUID in braces, which is what the subkey is called");
+        Check.True(keyName.EndsWith('}'), "and it ends with the closing brace");
+
+        using var volumes = Registry.CurrentUser.OpenSubKey(BitBucketVolumeList);
+        Check.NotNull(volumes, "Windows keeps its per-volume Recycle Bin settings under the current user");
+
+        var written = volumes!.GetSubKeyNames();
+        Check.NotEqual(0, written.Length, $"there is at least one volume recorded under {BitBucketVolumeList}");
+
+        Check.True(
+            Array.Exists(written, name => string.Equals(name, keyName, StringComparison.OrdinalIgnoreCase)),
+            $"the key Windows wrote is the one the library reads (derived '{Escape(keyName)}')");
+    }
+
+    /// <summary>
+    /// An extended-length root names the same volume as its plain spelling, so it has to produce the
+    /// same answer. The Shell does not accept the prefixed form and <see cref="DriveInfo"/> refuses it
+    /// outright, so without stripping the answer collapses to Indeterminate for a volume that is
+    /// plainly there.
+    /// </summary>
+    private static async Task ExtendedLengthSpellingOfTheRootIsTheSameVolume(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+        var plain = await RecycleBin.GetStatusAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+        var extended = await RecycleBin.GetStatusAsync(@"\\?\" + volumeRoot, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(plain.VolumeRoot, extended.VolumeRoot, "both spellings name the same volume root");
+        Check.Equal(plain.DriveType, extended.DriveType, "and the same drive type, so the volume is not unreadable");
+        Check.Equal(plain.Reason, extended.Reason, "and the same reason");
+
+        workspace.Dispose();
+    }
+
+    private const string BitBucketVolumeList = @"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume";
+
+    private static string Escape(string value) => value.Replace("\0", "<NUL>");
 
     /// <summary>
     /// A caller holding a volume as <c>E:</c> and a caller holding the same volume as <c>E:\</c> are
