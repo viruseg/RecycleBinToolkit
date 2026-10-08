@@ -54,6 +54,16 @@ public static class FileRecycler
     /// in every one of those cases. <see cref="Exception.HResult"/> carries the Shell's or the file
     /// system's own code, or <c>0</c> where the volume was refused without asking the Shell.
     /// </exception>
+    /// <exception cref="NotSupportedException">
+    /// The path names its volume by GUID, which the Shell will not parse and this library cannot measure.
+    /// Nothing was attempted and the file is where it was left. A path in that form has no other spelling,
+    /// so address the same location by drive letter or mount point instead.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The item was moved aside to reach the Shell and could be neither recycled nor moved back, so it is
+    /// in a staging directory rather than where it was left. Nothing was deleted. Reachable only under
+    /// <see cref="LongPathFailureAction.ShortenPathAndRecycle"/>.
+    /// </exception>
     public static async Task<bool> MoveToRecycleBinAsync(
         string? filePath,
         RecycleBinOptions? options = null,

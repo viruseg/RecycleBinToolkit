@@ -129,10 +129,11 @@ public sealed class RecycleFailure
     /// <see cref="RecycleBinOptions.MaxAttempts"/> at most.
     /// </summary>
     /// <remarks>
-    /// <c>0</c> means the Shell was never asked about this path, which covers more than a failure:
-    /// a path that never validated, one too long to hand over, one whose volume cannot recycle it, and
-    /// one this library removed for good on the caller's instruction — the last three are all settled
-    /// before the rounds begin, so none of them is a round that failed.
+    /// <c>0</c> means the Shell was never asked about this path, which covers every stage that settles
+    /// before the rounds begin: a path that never validated, one too long to hand over, one whose volume
+    /// cannot recycle it, one naming its volume by GUID, and one this library removed for good on the
+    /// caller's instruction. The last four are not failed rounds — nothing was attempted that could have
+    /// succeeded.
     /// </remarks>
     public int Attempts { get; }
 
