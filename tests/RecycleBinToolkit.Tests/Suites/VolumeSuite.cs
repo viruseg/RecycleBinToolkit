@@ -247,10 +247,10 @@ internal static class VolumeSuite
     }
 
     /// <summary>
-    /// A volume the library and the Shell agree cannot recycle: the reason the library reported, the root
-    /// string every operation here is given, and the code the Shell gave for failing to answer about it.
+    /// A volume this group is willing to act on: the root the status reported, the reason it gives that the
+    /// volume cannot recycle, and the code the Shell gave for failing to answer a question about that
+    /// volume's Recycle Bin.
     /// </summary>
-    /// <param name="Requested">The spelling <c>--manual</c> named, kept for messages.</param>
     /// <param name="Root">
     /// The root <see cref="RecycleBin.GetStatusAsync"/> reported, always with its trailing separator. Every
     /// call below is made with this string rather than with the spelling <c>--manual</c> named, so the oracle,
@@ -264,8 +264,8 @@ internal static class VolumeSuite
         int HResult);
 
     /// <summary>
-    /// The root <c>--manual</c> named, checked to be a volume with no Recycle Bin before anything is
-    /// created on it or handed to the Shell.
+    /// The root <c>--manual</c> named, checked against the library's reading of it and against the Shell's
+    /// answer about its Recycle Bin before anything is created there or handed to the Shell.
     /// </summary>
     /// <remarks>
     /// Two answers have to line up before a case in this group does anything, and neither is a formality.
@@ -284,6 +284,7 @@ internal static class VolumeSuite
     /// Bin and of one it cannot be asked about at all — an unreachable share, a denial — and the two are not
     /// separable from here. It is also a near-clone of the library's own probe rather than a second
     /// implementation: a different assembly calling the same API.
+    /// </para>
     /// <para>
     /// The empty is gated on that pairing rather than on the fact, and cannot do better: it hands the Shell a
     /// root to empty without consulting a counter first, so "the Shell did not answer here" is what stands in
