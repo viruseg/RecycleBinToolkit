@@ -177,7 +177,7 @@ under an explicit policy.
 | `ArgumentException` | `filePath` is null, empty or whitespace and `ThrowOnError` is on |
 | `FileNotFoundException` | `filePath` does not exist and `ThrowOnError` is on |
 | `PathTooLongException` | The path cannot be recycled, no short name is available, and `LongPathFailureAction` is `Throw` |
-| `IOException` | The Shell refused the delete and `ThrowOnError` is on. `HResult` carries the Shell error code |
+| `IOException` | The Shell refused the delete, or the volume cannot recycle the path and `NoRecycleBinAction` is `Throw`, and `ThrowOnError` is on. `HResult` carries the Shell error code, or `0` where the volume was refused without the Shell being asked |
 | `OperationCanceledException` | `cancellationToken` was cancelled before the work started |
 
 With `ThrowOnError` off, nothing is thrown: a bad path returns `false`.
@@ -213,7 +213,9 @@ that lists or empties drives must survive one unmounted letter.
 
 `GetItemsAsync` and `EmptyAsync` share the one worker thread with `FileRecycler`, so every COM call
 in the process stays on one apartment and no caller pays for COM initialisation.
-`GetStatusAsync` needs no COM at all and never queues behind them.
+`GetStatusAsync` never queues behind them either and needs no COM at all — what it asks of the Shell is
+`SHQueryRecycleBin`, a Shell32 call rather than a COM object — but it does call into the Shell, for
+every volume whose own per-volume setting the registry has no record of.
 
 ### `GetItemsAsync`
 
@@ -261,9 +263,12 @@ Whether the Recycle Bin is in use for one volume.
 
 **Returns** a `RecycleBinStatus`. **Throws** `ArgumentException` for a null or blank path.
 
-Windows exposes no authoritative query for this. What happens on the next delete is decided by a group
-policy, by a per-volume setting the user owns, and by the kind of volume, so an answer that is only
-"off" throws away the one thing a caller can act on.
+`GetStatusAsync` is the authoritative query on this, and `FileRecycler` asks it before every batch —
+a path whose volume cannot recycle it is refused there rather than handed to the Shell, which is the only
+way to tell a delete that will land in the Recycle Bin from one that will destroy the file and report a
+success. It reports *which* reason applies, because what happens on the next delete is decided by a
+group policy, by a per-volume setting the user owns, and by the kind of volume, so an answer that is
+only "off" throws away the one thing a caller can act on.
 
 ---
 
@@ -344,7 +349,7 @@ One item that was not handled.
 | Member | Type | Description |
 | --- | --- | --- |
 | `Path` | `string` | The path exactly as you supplied it. |
-| `HResult` | `int` | Shell error code, or `0` when the Shell was never reached. |
+| `HResult` | `int` | Shell error code, or `0` when the Shell was never reached — which includes a volume refused from its own configuration rather than from anything the Shell said. |
 | `Attempts` | `int` | Attempts made. `0` means the item never reached the Shell. |
 | `Stage` | `RecycleFailureStage` | Where in the pipeline it failed. |
 
@@ -374,10 +379,12 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `Performing` | The Shell performed the delete and reported a failure for this item. |
 | `ReceiptVerification` | The delete reported success but the result did not reach the Recycle Bin. |
 | `LongPathNotRecyclable` | The path is too long for the Shell. It was never handed over. |
+| `NoRecycleBinOnVolume` | The volume holding the path cannot recycle it and the caller asked for a Recycle Bin, so the path was never handed over and the file is where the caller left it. `Attempts` is `0`, and `HResult` carries the Shell's own code where the Shell named the volume — `0x80070003` on a substituted drive, `0x80004005` on a removable volume with no `$RECYCLE.BIN` — and `0` where the refusal came from configuration alone. |
 | `PermanentDeleteFailed` | The path was too long and removing it outright was asked for, but the file system refused — a handle is held, the attributes are read-only. The file is exactly as the caller left it. |
 | `Enumeration` | The Shell would not describe a Recycle Bin entry, or a volume could not be read. Only reachable while reading or emptying the Recycle Bin. |
 
-`HResult` carries the Shell's own code, or the file system's where the file system refused. Test
+`HResult` carries the Shell's own code, or the file system's where the file system refused, or the
+probe's own where the Shell named the volume before anything was handed to it. Test
 `(HResult & 0x80000000) != 0` to tell a refusal from a Shell success code such as `0x00270008`. That is
 not sufficient on its own: an item can carry a success code and still be a failure, which is what
 `ReceiptVerification` is. A rejected destination is reported with the Shell's success code, so read
@@ -408,6 +415,10 @@ What to do with a path on a volume that cannot recycle it.
 
 The values run from safest to most destructive, and `ThrowOnError` is still the global switch: with it
 off, a refusal arrives in `Failures` instead of an exception.
+
+Each batch is grouped by volume root and every distinct root is inspected once, so a batch of twenty
+thousand files on one volume pays for one check rather than twenty thousand. Nothing is remembered
+between calls: a volume mounted, or a policy applied, after one operation is seen by the next.
 
 ### `RecycleBinItem`
 
@@ -731,7 +742,10 @@ which is also why filtering by volume is a filter and not a cheaper query.
 is the fixed cost of opening the aggregate folder and 0.4–0.6 ms is per entry. The per-entry cost is
 the Shell's: six COM round trips, of which reading the deletion time is only about 15%. The work this
 library adds per entry is one file-system stat. `GetStatusAsync`, which needs no COM, measures 0.06 ms
-a call.
+a call on a volume whose per-volume setting the registry records — it answers from configuration and
+never reaches the Shell. A volume the registry says nothing about falls through to `SHQueryRecycleBin`,
+which walks the bin's metadata and measured about 11 seconds against a bin of 90,000 entries, so the
+0.06 ms figure is the configured-volume cost rather than a floor.
 
 ---
 
@@ -763,10 +777,12 @@ Stated plainly, because these are properties of Windows rather than choices.
 - **A listing covers every mounted volume, always.** Filtering by volume happens after enumeration
   because the Recycle Bin is a single aggregate folder. A caller who wants only `E:\` still pays for
   the volumes it does not care about, and it cannot see a volume that is not mounted.
-- **`GetStatusAsync` reports configuration, not behaviour.** It answers whether the Recycle Bin is
-  configured for a volume, not whether the next delete will land there. A volume mounted after the
-  call, or a policy applied after it, changes the answer without the call having been wrong. It is also
-  not consulted by anything else in this library: `FileRecycler` reports what the Shell actually did.
+- **`GetStatusAsync` answers configuration and the Shell, but not the future.** Where the registry
+  records a volume's own setting, that setting is the whole answer; where it does not, the Shell is asked
+  whether the volume has a Recycle Bin at all. That is what makes it trustworthy enough for
+  `FileRecycler` to refuse a path rather than let the Shell delete it for good. It still does not predict
+  the next delete: a volume mounted after the call, or a policy applied after it, changes the answer
+  without the call having been wrong. Nothing is cached, so each call asks the question again.
 - **A per-volume key that outlives its bin still reads `Enabled`.** Windows records a volume's Recycle
   Bin setting when it configures one, and nothing removes that record when the bin later goes. A key
   left behind on a volume with no `$RECYCLE.BIN` is therefore treated as evidence that the volume
@@ -793,14 +809,14 @@ dotnet run --project tests/RecycleBinToolkit.Tests -- --load
 `--filter` matches any part of a case name, and every case is named `<Suite>.<Case>`. It exits
 non-zero when a case fails.
 
-The suite is a console application with no external packages: 94 cases covering batch and single-path
+The suite is a console application with no external packages: 122 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies,
-and a ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing, emptying and status checking
-are covered by their own suites. It writes only to `E:\RC\Test` (or the project root) and moves the
-committed fixture files it uses.
+volumes with no Recycle Bin, and a ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing,
+emptying and status checking are covered by their own suites. It writes only to `E:\RC\Test` (or the
+project root) and moves the committed fixture files it uses.
 
-**Four of the 94 are load cases and run only on request.** They are the ones that work the disk hard enough
+**Four of the 122 are load cases and run only on request.** They are the ones that work the disk hard enough
 to notice: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
 through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
 nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —

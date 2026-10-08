@@ -21,7 +21,371 @@ internal static class FacadeSuite
         new TestCase("FacadeSuite." + nameof(SingleMissingPathThrowsFileNotFound), SingleMissingPathThrowsFileNotFound),
         new TestCase("FacadeSuite." + nameof(SingleLockedPathThrowsWithShellHResult), SingleLockedPathThrowsWithShellHResult),
         new TestCase("FacadeSuite." + nameof(ExtendedPrefixOnAShortPathStillReportsSuccess), ExtendedPrefixOnAShortPathStillReportsSuccess),
+        new TestCase("FacadeSuite." + nameof(RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff), RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff),
+        new TestCase("FacadeSuite." + nameof(RefusedPathRaisesWhenThrowOnErrorIsOn), RefusedPathRaisesWhenThrowOnErrorIsOn),
+        new TestCase("FacadeSuite." + nameof(SinglePathOverloadReturnsFalseWhenRefused), SinglePathOverloadReturnsFalseWhenRefused),
+        new TestCase("FacadeSuite." + nameof(AMissingPathIsRefusedWithoutAProbe), AMissingPathIsRefusedWithoutAProbe),
+        new TestCase("FacadeSuite." + nameof(NoRecycleBinOptionDecidesWhetherTheShellIsAsked), NoRecycleBinOptionDecidesWhetherTheShellIsAsked),
+        new TestCase("FacadeSuite." + nameof(OneBadVolumeDoesNotSinkTheBatch), OneBadVolumeDoesNotSinkTheBatch),
+        new TestCase("FacadeSuite." + nameof(ARepeatedRefusedPathIsRefusedOnce), ARepeatedRefusedPathIsRefusedOnce),
     ];
+
+    /// <summary>
+    /// A volume with no Recycle Bin must not lose the file while the library reports a successful
+    /// recycle, so the path is refused before the Shell is asked and the failure carries the Shell's own
+    /// error code.
+    /// </summary>
+    /// <remarks>
+    /// The volume is a <c>subst</c> mapping of the scratch root, so this is the whole failure with no
+    /// flash drive and no share: the Shell removes a file handed to it on such a volume for good and
+    /// still reports success. Nothing here is asserted about the Shell's behaviour on the volume — only
+    /// about what this library did with the answer, which is why the file is asserted to be untouched.
+    /// <para>
+    /// <c>HResult</c> is checked for a severity bit rather than against a literal: the code is the
+    /// Shell's, it differs by volume (<c>0x80070003</c> on a substituted drive, <c>0x80004005</c> on the
+    /// removable volume measured in the spec), and what matters here is that a code came through
+    /// unchanged instead of being normalised to zero.
+    /// </para>
+    /// </remarks>
+    private static async Task RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+
+        try
+        {
+            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var file = CreateOnSubstitutedVolume(letter);
+
+            var options = new RecycleBinOptions { ThrowOnError = false };
+
+            var result = await FileRecycler
+                .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            Check.False(result.Succeeded, $"a volume with no Recycle Bin cannot report success (recycled {result.RecycledPaths.Count})");
+            Check.Equal(1, result.Failures.Count, "the refused path is the only failure reported");
+            Check.Equal(RecycleFailureStage.NoRecycleBinOnVolume, result.FirstFailure!.Stage, "the failure names the volume, not the Shell's doing");
+            Check.Equal(file, result.FirstFailure.Path, "the failure names the caller's path");
+            Check.Equal(0, result.FirstFailure.Attempts, "nothing was attempted, because nothing was handed over");
+            Check.NotEqual(0, result.FirstFailure.HResult, "the Shell's own error code came through rather than a zero");
+            Check.True(
+                (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
+                $"the carried code is a refusal (got 0x{result.FirstFailure.HResult:X8})");
+            Check.Equal(0, result.PermanentlyDeletedPaths.Count, "nothing was removed permanently either");
+            Check.Equal(0, result.RecycledPaths.Count, "a refused path is not reported as recycled");
+            Check.True(File.Exists(file), "the file is still on disk, which is the whole point");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The same refusal raises under <see cref="RecycleBinOptions.ThrowOnError"/>, carrying the probe's
+    /// error code, and the file is still there when the exception surfaces.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IOException"/> rather than a new exception type: the single-path overload already
+    /// documents a refusal as an <see cref="IOException"/> whose <see cref="Exception.HResult"/> carries
+    /// the Shell code, and this is one. The file assertion is inside the same call's aftermath, so a
+    /// caller that catches the exception and then looks at the path learns the truth.
+    /// </remarks>
+    private static async Task RefusedPathRaisesWhenThrowOnErrorIsOn(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+
+        try
+        {
+            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var file = CreateOnSubstitutedVolume(letter);
+
+            var thrown = await Check
+                .ThrowsAsync<IOException>(
+                    () => FileRecycler.MoveToRecycleBinAsync(file, cancellationToken: context.CancellationToken),
+                    "a refused volume raises on the single-path overload when ThrowOnError is on")
+                .ConfigureAwait(false);
+
+            Check.NotEqual(0, thrown.HResult, "the exception carries a real error code");
+            Check.True(
+                (thrown.HResult & unchecked((int)0x80000000)) != 0,
+                $"the carried code is a refusal (got 0x{thrown.HResult:X8})");
+            Check.True(File.Exists(file), "the file survived the exception, because the Shell was never asked");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The single-path overload reports <see langword="false"/> for a refused path, which is what a
+    /// caller branching on the return value will act on.
+    /// </summary>
+    /// <remarks>
+    /// A regression here is the quiet kind: returning <see langword="true"/> would tell the caller the
+    /// file is gone when it is on disk, and the caller would not look any further.
+    /// </remarks>
+    private static async Task SinglePathOverloadReturnsFalseWhenRefused(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+
+        try
+        {
+            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var file = CreateOnSubstitutedVolume(letter);
+
+            var options = new RecycleBinOptions { ThrowOnError = false };
+
+            var removed = await FileRecycler.MoveToRecycleBinAsync(file, options, context.CancellationToken).ConfigureAwait(false);
+
+            Check.False(removed, "a refused path reports false rather than throwing");
+            Check.True(File.Exists(file), "and the file is still there, so false is the honest answer");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A path that is not there is refused at <see cref="RecycleFailureStage.PathValidation"/> without a
+    /// probe, because there is no volume question to ask about a file that does not exist.
+    /// </summary>
+    /// <remarks>
+    /// This is the case that keeps the gate cheap: a batch of missing paths pays one filesystem probe
+    /// each and nothing else. It also pins that the refusal is decided on existence rather than on the
+    /// volume, so a missing path on a healthy volume and a missing path on a bin-less one are the same
+    /// failure.
+    /// </remarks>
+    private static async Task AMissingPathIsRefusedWithoutAProbe(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        var missing = Path.Combine(SubstitutedRoot(letter), "definitely-absent.bin");
+
+        try
+        {
+            await SubstitutedVolume
+                .Substitute(letter, ScratchWorkspace.Root, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            var options = new RecycleBinOptions { ThrowOnError = false };
+
+            var result = await FileRecycler
+                .MoveToRecycleBinAsync([missing], options, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            Check.False(result.Succeeded, "a path that is not there cannot succeed");
+            Check.Equal(1, result.Failures.Count, "it is reported once");
+            Check.Equal(
+                RecycleFailureStage.PathValidation,
+                result.FirstFailure!.Stage,
+                "and it fails at validation, not at the volume that holds it");
+            Check.Equal(0, result.FirstFailure.HResult, "no Shell code is involved when the Shell was never asked");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// <see cref="NoRecycleBinAction.AllowIndeterminate"/> is what lets a caller hand the Shell a path on
+    /// a volume whose answer was not <see cref="RecycleBinAvailabilityReason.Enabled"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is the only case here that watches a file leave the disk, and deliberately so: the option
+    /// says the caller accepts being wrong about the bin, so the Shell is asked anyway and reports its
+    /// own success. What the case proves is that the option reaches the pipeline at all — a gate that
+    /// refused regardless of the setting would fail it — and that a passing path is reported as recycled.
+    /// </remarks>
+    private static async Task NoRecycleBinOptionDecidesWhetherTheShellIsAsked(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+
+        try
+        {
+            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var file = CreateOnSubstitutedVolume(letter);
+
+            var options = new RecycleBinOptions
+            {
+                ThrowOnError = false,
+                NoRecycleBinAction = NoRecycleBinAction.AllowIndeterminate,
+            };
+
+            var result = await FileRecycler
+                .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            Check.True(
+                result.Succeeded,
+                $"AllowIndeterminate hands the path over and the Shell reports success (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+            Check.Equal(1, result.RecycledPaths.Count, "the path comes back as recycled, because the Shell said so");
+            Check.Equal(file, result.RecycledPaths[0], "in the spelling the caller supplied");
+            Check.Equal(0, result.Failures.Count, "the volume's answer did not become a failure");
+            Check.False(File.Exists(file), "the Shell removed the file, which is the risk the caller accepted");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// One volume in a batch that cannot recycle is not the whole batch's verdict: the paths on healthy
+    /// volumes are still recycled.
+    /// </summary>
+    /// <remarks>
+    /// The gate groups a batch by volume root, so this is the case that fails if it inspects only the
+    /// first root, and the case that fails if it refuses the batch as a whole. Both are silent failures
+    /// of the other kind — a batch that skips the healthy paths, and a batch that gives up on all of them
+    /// because of one.
+    /// <para>
+    /// The healthy path is on the volume hosting <see cref="ScratchWorkspace.Root"/>, which is the same
+    /// directory the substituted drive points at, so both paths in this batch resolve to the same file
+    /// system and only the spelling of the volume differs. That is what makes it a test of the grouping
+    /// rather than of the storage.
+    /// </para>
+    /// </remarks>
+    private static async Task OneBadVolumeDoesNotSinkTheBatch(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        var healthyFiles = workspace.CreateRandomFiles(1, 4096);
+
+        try
+        {
+            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var refusedFile = CreateOnSubstitutedVolume(letter);
+
+            var options = new RecycleBinOptions { ThrowOnError = false };
+
+            var batch = new List<string?> { refusedFile };
+            batch.AddRange(healthyFiles);
+
+            var result = await FileRecycler
+                .MoveToRecycleBinAsync(batch, options, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            Check.False(result.Succeeded, "the refused path still makes the batch report failure");
+            Check.Equal(1, result.Failures.Count, "exactly one failure, the one from the volume with no bin");
+            Check.Equal(refusedFile, result.FirstFailure!.Path, "and it is the path on that volume");
+            Check.Equal(RecycleFailureStage.NoRecycleBinOnVolume, result.FirstFailure.Stage, "at the volume stage");
+            Check.Equal(1, result.RecycledPaths.Count, "the path on the healthy volume was still recycled");
+            Check.Equal(healthyFiles[0], result.RecycledPaths[0], "and it is the one the caller supplied");
+            Check.False(File.Exists(healthyFiles[0]), "so the healthy file is gone from disk");
+            Check.True(File.Exists(refusedFile), "while the refused one is untouched");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A path listed twice on a volume that cannot recycle is refused once, which is what the same batch
+    /// would have done had it reached the Shell.
+    /// </summary>
+    /// <remarks>
+    /// The gate answers before <see cref="RecycleOperationRunner.CollapseEquivalentPaths"/> gets a chance
+    /// to, so without collapsing here a caller who listed one path twice would read two failures for one
+    /// file — the outcome <c>RunnerSuite.DuplicatePathsAreNotReportedAsFailures</c> pins as wrong for the
+    /// ordinary path. Both spellings stay in the batch on purpose: what is being checked is the gate's
+    /// bookkeeping, not the runner's.
+    /// </remarks>
+    private static async Task ARepeatedRefusedPathIsRefusedOnce(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+
+        try
+        {
+            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var file = CreateOnSubstitutedVolume(letter);
+
+            var options = new RecycleBinOptions { ThrowOnError = false };
+
+            var result = await FileRecycler
+                .MoveToRecycleBinAsync([file, file], options, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            Check.False(result.Succeeded, "the refused path still fails the operation");
+            Check.Equal(1, result.Failures.Count, "one path is refused once, however many times it was listed");
+            Check.Equal(file, result.FirstFailure!.Path, "and the failure names the caller's spelling");
+            Check.Equal(0, result.RecycledPaths.Count, "nothing reached the Shell, so nothing was recycled");
+            Check.True(File.Exists(file), "the file is untouched");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The drive letter <paramref name="letter"/> answers as a volume root, with its trailing separator.
+    /// </summary>
+    private static string SubstitutedRoot(char letter) =>
+        letter + ":" + Path.DirectorySeparatorChar;
+
+    /// <summary>
+    /// Creates one file on the substituted drive named by <paramref name="letter"/> and returns its path
+    /// in that spelling, which is the spelling the caller under test supplies.
+    /// </summary>
+    /// <remarks>
+    /// Depends on the mapping already being in place, so the file is written through the drive letter the
+    /// case then hands to the library. Writing it through <c>E:\</c> instead would put it on the healthy
+    /// volume and test nothing.
+    /// </remarks>
+    private static string CreateOnSubstitutedVolume(char letter)
+    {
+        var root = SubstitutedRoot(letter);
+        Directory.CreateDirectory(root);
+        var file = Path.Combine(root, $"refused-{Environment.ProcessId}.bin");
+
+        File.WriteAllBytes(file, new byte[4096]);
+
+        return file;
+    }
 
     /// <summary>
     /// The extended-length prefix changes which path the file APIs take, not where the file is. A short

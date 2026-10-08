@@ -27,6 +27,23 @@ public enum RecycleFailureStage
     LongPathNotRecyclable,
 
     /// <summary>
+    /// The volume holding the path has no Recycle Bin and the caller asked for one, so the path was
+    /// refused before it was handed over and the file is where the caller left it.
+    /// </summary>
+    /// <remarks>
+    /// This stage exists because the Shell reports success for a delete on such a volume while removing
+    /// the file for good: without the refusal the caller would be told a permanent deletion had been
+    /// recycled. Nothing was attempted, which is what <see cref="RecycleFailure.Attempts"/> reports as
+    /// zero.
+    /// <para>
+    /// The refusal covers every reason the volume cannot recycle, not only the one this stage is named
+    /// after — a policy, a volume set to delete outright and a volume type that never had a bin all
+    /// arrive here too, and they arrive here rather than later because the Shell is never asked.
+    /// </para>
+    /// </remarks>
+    NoRecycleBinOnVolume,
+
+    /// <summary>
     /// The Shell did not describe an entry the Recycle Bin reported. Only reachable while reading
     /// the Recycle Bin rather than writing to it.
     /// </summary>
@@ -198,6 +215,23 @@ public sealed class RecycleBinResult
     /// <param name="failures">The failures the copy should carry, in the order they should be read.</param>
     internal RecycleBinResult WithFailures(IReadOnlyList<RecycleFailure> failures) =>
         new(RecycledPaths, PermanentlyDeletedPaths, failures, Elapsed, LeftoverStagingDirectories);
+
+    /// <summary>
+    /// Returns a copy whose permanently deleted paths are exactly <paramref name="permanentlyDeletedPaths"/>,
+    /// keeping every other part of the outcome as it was.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart of <see cref="WithFailures"/>, for the paths a refusal removed for good rather than
+    /// reporting as failed. The two are merged by the same operation, and rebuilding the outcome through
+    /// a constructor that does not take every part would reset
+    /// <see cref="LeftoverStagingDirectories"/> — the list a caller reads to find data of its own that
+    /// the operation could not put back.
+    /// </remarks>
+    /// <param name="permanentlyDeletedPaths">
+    /// The paths the copy should carry as removed permanently, in the order they should be read.
+    /// </param>
+    internal RecycleBinResult WithPermanentlyDeleted(IReadOnlyList<string> permanentlyDeletedPaths) =>
+        new(RecycledPaths, permanentlyDeletedPaths, Failures, Elapsed, LeftoverStagingDirectories);
 
     /// <summary>
     /// Creates a result with nothing removed permanently.
