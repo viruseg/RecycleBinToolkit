@@ -490,37 +490,47 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        // The staging directory is created on the volume root, not under the scratch root, so nothing else
+        // this run does removes it. Both of these therefore run in the finally: an assertion failing between
+        // them would otherwise leave a directory holding the case's own file in the caller's volume root,
+        // and the next case to count staging directories would fail on a leftover of this one.
+        var stager = new LongPathStager();
+        string[] leftover = [];
+
         try
         {
-            var stager = new LongPathStager();
             var file = workspace.CreateRandomFile(4096);
 
             var staged = stager.TryStageOnce(file);
             Check.NotNull(staged, $"the item was staged ({staged})");
             Check.False(File.Exists(file), "the item left its original location");
 
-            var leftover = stager.Release();
+            leftover = [.. stager.Release()];
 
-            Check.Equal(1, leftover.Count, "a staging directory that still holds the item is reported");
+            Check.Equal(1, leftover.Length, "a staging directory that still holds the item is reported");
             Check.True(Directory.Exists(leftover[0]), "the leftover directory is still there");
             Check.True(File.Exists(staged!), "the item inside it is still there, so nothing was destroyed");
 
             Check.Equal(0, stager.Release().Count, "releasing again reports nothing left, because nothing was tried");
 
-            try
-            {
-                Directory.Delete(leftover[0], recursive: true);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Best effort; the assertion above already proved the content survived.
-            }
-
-            stager.Dispose();
             return Task.CompletedTask;
         }
         finally
         {
+            foreach (var directory in leftover)
+            {
+                try
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Best effort; the assertion above already proved the content survived, so leaving the
+                    // directory is a tidiness problem and not a lost one.
+                }
+            }
+
+            stager.Dispose();
             workspace.Dispose();
         }
     }
