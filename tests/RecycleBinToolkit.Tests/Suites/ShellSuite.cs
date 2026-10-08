@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
@@ -18,7 +19,64 @@ internal static class ShellSuite
         new TestCase("ShellSuite." + nameof(UnidentifiedCallbacksConsumeQueuedPathsInOrder), UnidentifiedCallbacksConsumeQueuedPathsInOrder),
         new TestCase("ShellSuite." + nameof(ReportedPathsAreNotHandedOutAgain), ReportedPathsAreNotHandedOutAgain),
         new TestCase("ShellSuite." + nameof(DisposedContextRefusesFurtherWork), DisposedContextRefusesFurtherWork),
+        new TestCase("ShellSuite." + nameof(EveryShapeOfShellRefusalIsRecognised), EveryShapeOfShellRefusalIsRecognised),
     ];
+
+    /// <summary>
+    /// A Shell refusal reaches managed code as whatever exception the marshaller picks for its HRESULT,
+    /// and it does not always pick the same one. Catching only <see cref="COMException"/> leaves most
+    /// refusals to escape a path documented never to throw, taking a whole batch down over one file.
+    /// </summary>
+    /// <remarks>
+    /// The list is the set measured on this build by handing the operation object calls it refuses. It
+    /// pins the fact that the types vary rather than restating which ones are believed to occur, because
+    /// the belief is what was wrong: <see cref="COMException"/> is the minority here.
+    /// </remarks>
+    private static Task EveryShapeOfShellRefusalIsRecognised(TestContext context)
+    {
+        // Measured: 0x8000FFFF and 0x80004005 give COMException, 0x80070057 ArgumentException,
+        // 0x80070005 UnauthorizedAccessException, 0x8007000E OutOfMemoryException,
+        // 0x80004001 NotImplementedException.
+        foreach (var hr in new[]
+                 {
+                     unchecked((int)0x8000FFFF),
+                     unchecked((int)0x80004005),
+                     unchecked((int)0x80070057),
+                     unchecked((int)0x80070005),
+                     unchecked((int)0x8007000E),
+                     unchecked((int)0x80004001),
+                 })
+        {
+            Exception raised;
+            try
+            {
+                Marshal.ThrowExceptionForHR(hr);
+                throw new CheckFailedException($"0x{hr:X8} raised nothing, so there is no exception type to recognise");
+            }
+            catch (CheckFailedException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                raised = ex;
+            }
+
+            Check.True(
+                ShellOperationContext.IsShellRefusal(raised),
+                $"a Shell refusal reported as {raised.GetType().Name} (0x{hr:X8}) is recognised as one");
+        }
+
+        Check.False(
+            ShellOperationContext.IsShellRefusal(new ObjectDisposedException("context")),
+            "a disposed context is a defect in how it is used, not the Shell declining, and is not recorded as an item failure");
+
+        Check.False(
+            ShellOperationContext.IsShellRefusal(new InvalidOperationException("bug")),
+            "an ordinary logic fault is not mistaken for a Shell refusal");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// Disposing must release the operation object, and a released context must say so rather than

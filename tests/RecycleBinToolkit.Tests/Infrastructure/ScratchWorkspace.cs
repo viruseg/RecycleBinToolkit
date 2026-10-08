@@ -37,6 +37,45 @@ internal sealed class ScratchWorkspace : IDisposable
     public static string Root { get; } =
         Path.Combine(ResolveRepositoryRoot(), "Test") + Path.DirectorySeparatorChar;
 
+    /// <summary>
+    /// Absolute path of the root for cases that build <em>directories</em> past the Shell's length
+    /// limit, always with a trailing separator.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="Root"/> on purpose, and outside the repository for the same reason. A
+    /// long directory has to be built from nested components, because a single one cannot exceed 255
+    /// characters — so it is a whole chain of deep directories rather than one awkward file name. Tools
+    /// that walk the repository stumble over that chain badly enough to hang, which turns a passing test
+    /// into an unusable working copy. Keeping it under the temp directory keeps the repository walkable
+    /// while the case still exercises what it is about.
+    /// <para>
+    /// A long <em>file</em> path does not have this problem: it is one flat component under
+    /// <see cref="Root"/>, so <see cref="Root"/> remains where those belong.
+    /// </para>
+    /// </remarks>
+    public static string LongDirectoryRoot { get; } =
+        Path.Combine(Path.GetTempPath(), "RecycleBinToolkit.Tests") + Path.DirectorySeparatorChar;
+
+    /// <summary>
+    /// Prepares <see cref="LongDirectoryRoot"/> for use, empty, and gives it back.
+    /// </summary>
+    /// <remarks>
+    /// Recreating it is a recursive delete of exactly the tree this suite created under the temp
+    /// directory, which is a known shape. That is the point: it is never a recursive delete under the
+    /// repository, where the same call would have to trust whatever else is sitting there.
+    /// </remarks>
+    public static string RecreateLongDirectoryRoot()
+    {
+        if (Directory.Exists(LongDirectoryRoot))
+        {
+            Directory.Delete(LongDirectoryRoot, recursive: true);
+        }
+
+        Directory.CreateDirectory(LongDirectoryRoot);
+
+        return LongDirectoryRoot;
+    }
+
     private bool _disposed;
 
     /// <summary>

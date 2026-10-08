@@ -476,7 +476,18 @@ internal sealed class RecycleOperationRunner
     {
         try
         {
-            File.Delete(target.FullPath);
+            // Directories need their own call, and asking for the wrong one is not a harmless mistake:
+            // File.Delete on a directory raises UnauthorizedAccessException, which reads as "you do not
+            // have permission" and sends the caller looking for an access problem that has nothing to do
+            // with what actually went wrong.
+            if (Directory.Exists(target.FullPath))
+            {
+                Directory.Delete(target.FullPath, recursive: true);
+            }
+            else
+            {
+                File.Delete(target.FullPath);
+            }
         }
         catch (Exception ex) when (ex is IOException
             or UnauthorizedAccessException
@@ -484,7 +495,7 @@ internal sealed class RecycleOperationRunner
             or ArgumentException
             or SecurityException)
         {
-            // Everything File.Delete raises for one path. Run is documented never to throw for a per-item
+            // Everything the file system raises for one path. Run is documented never to throw for a per-item
             // failure, so an exception type missing from here is a whole batch lost to one file rather than
             // one failure recorded.
             refused = ex.HResult;
@@ -552,7 +563,13 @@ internal sealed class RecycleOperationRunner
         var queueable = scratch.Queueable;
         var queueableCount = 0;
 
-        _context.SetFlags();
+        // Applying the flags is a Shell call like any other and can be refused the same way. Nothing has
+        // been queued yet, so the round simply has nothing to do: every target stays unfinished and comes
+        // back on the next one, which is what the retry loop is for.
+        if (!TrySetFlags(lastHResult, lastStage, targets, buildable, buildableCount))
+        {
+            return new RoundOutcome(succeeded);
+        }
 
         for (var q = 0; q < buildableCount; q++)
         {
@@ -568,9 +585,9 @@ internal sealed class RecycleOperationRunner
             }
         }
 
-        if (queueableCount > 0)
+        if (queueableCount > 0 && !TryPerform(lastHResult, lastStage, targets, queueable, queueableCount))
         {
-            _context.Perform();
+            return new RoundOutcome(succeeded);
         }
 
         for (var q = 0; q < queueableCount; q++)
@@ -642,6 +659,67 @@ internal sealed class RecycleOperationRunner
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Applies the recycle flags, recording the refusal against every item the round had built.
+    /// </summary>
+    /// <returns><see langword="false"/> when the Shell refused and the round has to stop.</returns>
+    private bool TrySetFlags(
+        Dictionary<string, int> lastHResult,
+        Dictionary<string, RecycleFailureStage> lastStage,
+        IReadOnlyList<RecycleTarget> targets,
+        int[] buildable,
+        int buildableCount)
+    {
+        try
+        {
+            _context.SetFlags();
+            return true;
+        }
+        catch (Exception ex) when (ShellOperationContext.IsShellRefusal(ex))
+        {
+            for (var q = 0; q < buildableCount; q++)
+            {
+                RecordVerdict(lastHResult, lastStage, targets[buildable[q]].InputPath, ex.HResult, RecycleFailureStage.Queueing);
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Performs the queued items, recording the refusal and dropping anything still queued.
+    /// </summary>
+    /// <remarks>
+    /// A perform that fails leaves its queue behind on the operation object, and that object is shared by
+    /// every operation in the process. Leaving it would mean the next caller's perform carried out this
+    /// caller's deletes and reported them as its own, so the object is replaced and the items are
+    /// recorded as unfinished — which sends them round again rather than anywhere else.
+    /// </remarks>
+    /// <returns><see langword="false"/> when the Shell refused and the round has to stop.</returns>
+    private bool TryPerform(
+        Dictionary<string, int> lastHResult,
+        Dictionary<string, RecycleFailureStage> lastStage,
+        IReadOnlyList<RecycleTarget> targets,
+        int[] queueable,
+        int queueableCount)
+    {
+        try
+        {
+            _context.Perform();
+            return true;
+        }
+        catch (Exception ex) when (ShellOperationContext.IsShellRefusal(ex))
+        {
+            for (var q = 0; q < queueableCount; q++)
+            {
+                RecordVerdict(lastHResult, lastStage, targets[queueable[q]].InputPath, ex.HResult, RecycleFailureStage.Performing);
+            }
+
+            _context.RecreateOperationObject();
+            return false;
+        }
     }
 
     /// <summary>

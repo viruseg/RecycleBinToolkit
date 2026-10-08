@@ -71,14 +71,7 @@ internal sealed unsafe class ShellOperationContext : IDisposable
                 context._uninitializeRequired = true;
             }
 
-            var hrCreate = PInvoke.CoCreateInstance(ClsidFileOperation, null, CLSCTX.CLSCTX_INPROC_SERVER, out IFileOperation fileOperation);
-            if (hrCreate.Failed)
-            {
-                RecycleBinThrowHelper.ThrowWorkerUnavailable(
-                    new COMException($"Could not create the Shell file operation object (0x{hrCreate.Value:X8}).", hrCreate.Value));
-            }
-
-            context._fileOperation = fileOperation;
+            context.CreateOperationObject();
             return context;
         }
         catch
@@ -86,6 +79,44 @@ internal sealed unsafe class ShellOperationContext : IDisposable
             context.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Creates the Shell operation object and takes ownership of it.
+    /// </summary>
+    private void CreateOperationObject()
+    {
+        var hrCreate = PInvoke.CoCreateInstance(ClsidFileOperation, null, CLSCTX.CLSCTX_INPROC_SERVER, out IFileOperation fileOperation);
+        if (hrCreate.Failed)
+        {
+            RecycleBinThrowHelper.ThrowWorkerUnavailable(
+                new COMException($"Could not create the Shell file operation object (0x{hrCreate.Value:X8}).", hrCreate.Value));
+        }
+
+        _fileOperation = fileOperation;
+    }
+
+    /// <summary>
+    /// Throws away the operation object and builds a fresh one.
+    /// </summary>
+    /// <remarks>
+    /// The object queues what it is given and only clears its queue by performing it. So a perform that
+    /// fails leaves whatever was queued still queued, and because the context is reused for every
+    /// operation in the process, the next caller's <c>PerformOperations</c> would carry out the previous
+    /// caller's deletes and report the results against its own batch. Recreating the object is the only
+    /// way to drop a queue the Shell would not clear.
+    /// <para>
+    /// Only the operation object is replaced. The apartment stays as it is: reinitialising it here would
+    /// unbalance the <c>CoInitializeEx</c> count this context is holding, and the apartment is not what
+    /// went wrong.
+    /// </para>
+    /// </remarks>
+    internal void RecreateOperationObject()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        ReleaseOperationObject();
+        CreateOperationObject();
     }
 
     /// <summary>
@@ -156,7 +187,7 @@ internal sealed unsafe class ShellOperationContext : IDisposable
             hResult = Success;
             return true;
         }
-        catch (COMException ex)
+        catch (Exception ex) when (IsShellRefusal(ex))
         {
             hResult = ex.HResult;
             return false;
@@ -167,10 +198,40 @@ internal sealed unsafe class ShellOperationContext : IDisposable
     /// Runs every queued item.
     /// </summary>
     /// <remarks>
-    /// The generated signature returns <see langword="void"/>: the Shell's overall HRESULT is not
-    /// surfaced to the caller, so per-item outcomes must come from a progress sink.
+    /// The generated signature returns <see langword="void"/>, so the Shell's overall HRESULT is not
+    /// surfaced to the caller and per-item outcomes must come from a progress sink — but a failing
+    /// HRESULT is still raised, as an exception whose type depends on the code.
     /// </remarks>
     internal void Perform() => Operation.PerformOperations();
+
+    /// <summary>
+    /// Whether an exception is the Shell declining a call rather than the code being wrong.
+    /// </summary>
+    /// <remarks>
+    /// The generated interop raises a failing HRESULT through <c>ThrowExceptionForHR</c>, which does not
+    /// always produce a <see cref="COMException"/>. Measured on this build:
+    /// <c>0x8000FFFF</c> and <c>0x80004005</c> give <see cref="COMException"/>, <c>0x80070057</c> gives
+    /// <see cref="ArgumentException"/>, <c>0x80070005</c> gives <see cref="UnauthorizedAccessException"/>,
+    /// <c>0x8007000E</c> gives <see cref="OutOfMemoryException"/> and <c>0x80004001</c> gives
+    /// <see cref="NotImplementedException"/>.
+    /// <para>
+    /// A catch clause naming only <see cref="COMException"/> therefore catches the minority of refusals:
+    /// one that raises <see cref="ArgumentException"/> escapes a method documented never to throw for a
+    /// per-item failure and takes the whole batch with it. Every one of those types carries the Shell's
+    /// own <see cref="Exception.HResult"/>, which is the code a caller is told about, so they all belong
+    /// here rather than being mistaken for a defect in this library.
+    /// </para>
+    /// <para>
+    /// <see cref="ObjectDisposedException"/> is deliberately absent: a context that has been disposed is
+    /// a defect in how it is used, not the Shell declining, and should not be recorded as an item failure.
+    /// </para>
+    /// </remarks>
+    internal static bool IsShellRefusal(Exception exception) => exception is
+        COMException
+        or ArgumentException
+        or UnauthorizedAccessException
+        or OutOfMemoryException
+        or NotImplementedException;
 
     /// <summary>
     /// Releases the operation object and then the thread's COM apartment. Must run on the creating thread.
@@ -196,17 +257,28 @@ internal sealed unsafe class ShellOperationContext : IDisposable
 
         _disposed = true;
 
-        if (_fileOperation is not null)
-        {
-            Marshal.ReleaseComObject(_fileOperation);
-            _fileOperation = null;
-        }
+        ReleaseOperationObject();
 
         if (_uninitializeRequired)
         {
             PInvoke.CoUninitialize();
             _uninitializeRequired = false;
         }
+    }
+
+    /// <summary>
+    /// Releases the operation object without touching the apartment, leaving the context able to build
+    /// another one.
+    /// </summary>
+    private void ReleaseOperationObject()
+    {
+        if (_fileOperation is null)
+        {
+            return;
+        }
+
+        Marshal.ReleaseComObject(_fileOperation);
+        _fileOperation = null;
     }
 
     private static bool TryShortPathFallback(string fullPath, out IShellItem? item)

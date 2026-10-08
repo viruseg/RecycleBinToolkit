@@ -44,7 +44,56 @@ internal static class LongPathSuite
         new TestCase("LongPathSuite." + nameof(AContendedBatchIsNotRetriedOnePathAtATime), AContendedBatchIsNotRetriedOnePathAtATime),
         new TestCase("LongPathSuite." + nameof(StagedItemThatCouldNotBeRecycledIsPutBack), StagedItemThatCouldNotBeRecycledIsPutBack),
         new TestCase("LongPathSuite." + nameof(AnExceptionDuringTheOperationStillPutsStagedItemsBack), AnExceptionDuringTheOperationStillPutsStagedItemsBack),
+        new TestCase("LongPathSuite." + nameof(DeletePermanentlyRemovesALongDirectoryToo), DeletePermanentlyRemovesALongDirectoryToo),
     ];
+
+    /// <summary>
+    /// The direct-removal policy answers the same way for a directory as for a file. Removing a file
+    /// whose path is too long is a plain unlink, and nothing about a directory makes that harder — the
+    /// path length is what brought it here, not what it points at.
+    /// </summary>
+    /// <remarks>
+    /// File.Delete cannot remove a directory at all: it raises UnauthorizedAccessException, which reads
+    /// as "you do not have permission" and sends the caller looking for an access problem that does not
+    /// exist. The batch still has to come back clean, and the directory still has to be gone.
+    /// </remarks>
+    private static Task DeletePermanentlyRemovesALongDirectoryToo(TestContext context)
+    {
+        var root = ScratchWorkspace.RecreateLongDirectoryRoot();
+
+        // Nested rather than one long component: a directory name cannot exceed 255 characters, so a
+        // directory past the Shell's limit is a chain of them.
+        var longPath = root;
+        for (var i = 0; i < 4; i++)
+        {
+            longPath = Path.Combine(longPath, new string('d', 60) + i);
+        }
+
+        longPath = Path.Combine(longPath, new string('d', 60) + "9");
+
+        Check.True(longPath.Length > MaxPathThreshold, $"the directory path is past the Shell limit ({longPath.Length})");
+
+        Directory.CreateDirectory(ExtendedPrefix + longPath);
+        File.WriteAllBytes(Path.Combine(ExtendedPrefix + longPath, "inner.bin"), new byte[4096]);
+
+        var options = new RecycleBinOptions
+        {
+            ThrowOnError = false,
+            LongPathFailureAction = LongPathFailureAction.DeletePermanently
+        };
+
+        var result = FileRecycler.MoveToRecycleBinAsync([longPath], options, context.CancellationToken)
+            .GetAwaiter().GetResult();
+
+        Check.True(
+            result.Succeeded,
+            $"a long directory the Shell cannot recycle is removed outright (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.Equal(1, result.PermanentlyDeletedPaths.Count, "and it is reported as removed");
+        Check.Equal(longPath, result.PermanentlyDeletedPaths[0], "by the path the caller passed");
+        Check.False(Directory.Exists(longPath), "the directory is gone");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// An item moved aside is the caller's data sitting somewhere the caller did not put it, so the

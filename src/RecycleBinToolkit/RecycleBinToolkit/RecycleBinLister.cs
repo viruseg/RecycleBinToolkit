@@ -88,7 +88,22 @@ internal static unsafe class RecycleBinLister
 
         while (true)
         {
-            enumerator.Next(buffer, out var fetched);
+            uint fetched;
+            try
+            {
+                enumerator.Next(buffer, out fetched);
+            }
+            catch (Exception ex) when (ShellOperationContext.IsShellRefusal(ex))
+            {
+                // The enumerator raised rather than reporting through its return, which the generated
+                // signature does not carry. Whatever was read before this point is kept and returned
+                // alongside the failure: a listing that stopped early is better than one that escaped as
+                // an exception, because the caller asked what could be found and an environmental problem
+                // is not a fault of theirs.
+                Record(failures, ex.HResult);
+                return false;
+            }
+
             if (fetched == 0)
             {
                 return true;
@@ -143,13 +158,20 @@ internal static unsafe class RecycleBinLister
                 ReadFileTime(item, RecycleBinPropertyKeys.DateDeleted),
                 isDirectory));
         }
-        catch (COMException ex)
+        catch (Exception ex) when (ShellOperationContext.IsShellRefusal(ex))
         {
             Record(failures, ex.HResult);
         }
         catch (InvalidCastException)
         {
             // An entry that is not IShellItem2 cannot describe itself.
+            Record(failures, ErrorNotSet);
+        }
+        catch (ArgumentException)
+        {
+            // The Shell's names and properties come back through Path and PropertyKey handling that
+            // rejects an empty or malformed answer. One entry shaped that way must not take the listing
+            // with it, so it is recorded as unreadable like any other.
             Record(failures, ErrorNotSet);
         }
     }
