@@ -124,7 +124,16 @@ public sealed class RecycleFailure
     /// </remarks>
     public int HResult { get; }
 
-    /// <summary>How many attempts were made before giving up.</summary>
+    /// <summary>
+    /// Shell rounds this path went through before it was given up on, which is
+    /// <see cref="RecycleBinOptions.MaxAttempts"/> at most.
+    /// </summary>
+    /// <remarks>
+    /// <c>0</c> means the Shell was never asked about this path, which covers more than a failure:
+    /// a path that never validated, one too long to hand over, one whose volume cannot recycle it, and
+    /// one this library removed for good on the caller's instruction — the last three are all settled
+    /// before the rounds begin, so none of them is a round that failed.
+    /// </remarks>
     public int Attempts { get; }
 
     /// <summary>Where in the pipeline the failure occurred.</summary>

@@ -566,7 +566,10 @@ internal static class FacadeSuite
                     RecycleFailureStage.PermanentDeleteFailed,
                     result.FirstFailure.Stage,
                     "at the removal itself, not at the volume that held it");
-                Check.Equal(0, result.FirstFailure.Attempts, "one removal was made and not retried");
+                Check.Equal(
+                    0,
+                    result.FirstFailure.Attempts,
+                    "nothing was recorded as attempted, because the removal is this library's own and does not go through the Shell's rounds");
                 Check.NotEqual(0, result.FirstFailure.HResult, "the file system's own error code came through");
                 Check.True(
                     (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,

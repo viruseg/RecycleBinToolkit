@@ -363,7 +363,7 @@ One item that was not handled.
 | --- | --- | --- |
 | `Path` | `string` | The path exactly as you supplied it. |
 | `HResult` | `int` | Shell error code, or `0` when the Shell was never reached — which includes a volume refused from its own configuration rather than from anything the Shell said. |
-| `Attempts` | `int` | Attempts made. `0` means the item never reached the Shell. |
+| `Attempts` | `int` | Shell rounds the item went through. `0` means it never reached the Shell — refused for its length, refused because its volume cannot recycle it, removed outright by this library, or never a valid path. |
 | `Stage` | `RecycleFailureStage` | Where in the pipeline it failed. |
 
 **Reading `HResult`.** Success and failure are told apart by the severity bit, not by comparing with
