@@ -30,7 +30,64 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ContentsTotalIsDerivedNotDeclared), ContentsTotalIsDerivedNotDeclared),
         new TestCase("ContractSuite." + nameof(FailureHResultIsNotClobberedByTheSeverityBitTest), FailureHResultIsNotClobberedByTheSeverityBitTest),
         new TestCase("ContractSuite." + nameof(PathsThatResolveToOneShellItemRecycleOnce), PathsThatResolveToOneShellItemRecycleOnce),
+        new TestCase("ContractSuite." + nameof(EveryReasonAndActionPairIsPinned), EveryReasonAndActionPairIsPinned),
     ];
+
+    /// <summary>
+    /// The caller's three answers to "this volume cannot recycle" have to be pinned against every reason,
+    /// because the pairs are what decides whether a file survives and there are few enough of them to
+    /// state completely.
+    /// </summary>
+    /// <remarks>
+    /// A new reason added without a row here would be unasserted, so the table is checked against the
+    /// enum as well. The two rows that share a rule — <c>Indeterminate</c> and
+    /// <c>NoRecycleBinOnVolume</c> — are separated deliberately: a failed probe is evidence, not proof,
+    /// and <c>AllowIndeterminate</c> is the caller's way of saying they accept being wrong about it.
+    /// </remarks>
+    private static Task EveryReasonAndActionPairIsPinned(TestContext context)
+    {
+        (RecycleBinAvailabilityReason Reason, bool UnderThrow, bool UnderAllowIndeterminate, bool UnderDeletePermanently)[] table =
+        [
+            (RecycleBinAvailabilityReason.Enabled, false, false, false),
+            (RecycleBinAvailabilityReason.DisabledByPolicy, true, true, false),
+            (RecycleBinAvailabilityReason.DisabledByUserPreference, true, true, false),
+            (RecycleBinAvailabilityReason.UnsupportedVolumeType, true, true, false),
+            (RecycleBinAvailabilityReason.VolumeNotFound, true, true, true),
+            (RecycleBinAvailabilityReason.Indeterminate, true, false, false),
+            (RecycleBinAvailabilityReason.NoRecycleBinOnVolume, true, false, false)
+        ];
+
+        Check.Equal(
+            Enum.GetValues<RecycleBinAvailabilityReason>().Length,
+            table.Length,
+            "every reason has a row, so a new one cannot join the enum unasserted");
+
+        Check.Equal(3, Enum.GetValues<NoRecycleBinAction>().Length, "and every action is one of the three this table names");
+
+        foreach (var (reason, underThrow, underAllowIndeterminate, underDeletePermanently) in table)
+        {
+            Check.Equal(
+                underThrow,
+                RecycleBinVolumePolicy.RefusesRecycle(reason, NoRecycleBinAction.Throw),
+                $"{reason} under Throw");
+
+            Check.Equal(
+                underAllowIndeterminate,
+                RecycleBinVolumePolicy.RefusesRecycle(reason, NoRecycleBinAction.AllowIndeterminate),
+                $"{reason} under AllowIndeterminate");
+
+            Check.Equal(
+                underDeletePermanently,
+                RecycleBinVolumePolicy.RefusesRecycle(reason, NoRecycleBinAction.DeletePermanently),
+                $"{reason} under DeletePermanently");
+        }
+
+        Check.True(
+            RecycleBinVolumePolicy.RefusesRecycle(RecycleBinAvailabilityReason.VolumeNotFound, NoRecycleBinAction.DeletePermanently),
+            "a path that is not on disk is never handed over, so DeletePermanently does not reach it");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// The Recycle Bin folder is a whole path segment, and the cases below are the ones where a substring

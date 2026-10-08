@@ -61,5 +61,40 @@ internal static class RecycleBinVolumePolicy
 
         return RecycleBinAvailabilityReason.Enabled;
     }
+
+    /// <summary>
+    /// Decides whether a reason stops the path from being handed to the Shell at all.
+    /// </summary>
+    /// <param name="reason">The reason <see cref="Classify"/> — or a probe — produced.</param>
+    /// <param name="action">What the caller asked for on a volume that cannot recycle.</param>
+    /// <returns><c>true</c> when the path is refused, with the file left where it is.</returns>
+    /// <remarks>
+    /// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/> sits with
+    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> rather than with the confirmed
+    /// refusals. A failed probe is strong evidence — an empty bin still queries successfully — but it
+    /// cannot exclude lazy bin creation on a machine other than this one, and treating it as final would
+    /// leave such a machine with no way to recycle at all except
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/>, that is, no way except to destroy the file.
+    /// <para>
+    /// <see cref="RecycleBinAvailabilityReason.VolumeNotFound"/> ignores the setting: the path is not on
+    /// disk, so there is nothing to destroy and nothing to hand over. It is rejected as a missing path
+    /// before this decision is ever reached.
+    /// </para>
+    /// </remarks>
+    internal static bool RefusesRecycle(RecycleBinAvailabilityReason reason, NoRecycleBinAction action) =>
+        reason switch
+        {
+            RecycleBinAvailabilityReason.Enabled => false,
+            RecycleBinAvailabilityReason.DisabledByPolicy
+                or RecycleBinAvailabilityReason.DisabledByUserPreference
+                or RecycleBinAvailabilityReason.UnsupportedVolumeType => action != NoRecycleBinAction.DeletePermanently,
+            RecycleBinAvailabilityReason.Indeterminate
+                or RecycleBinAvailabilityReason.NoRecycleBinOnVolume => action == NoRecycleBinAction.Throw,
+            RecycleBinAvailabilityReason.VolumeNotFound => true,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(reason),
+                reason,
+                "An unnamed reason has no decision to make, so a new one has to be given one here.")
+        };
 }
 

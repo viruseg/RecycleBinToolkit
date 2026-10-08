@@ -35,6 +35,16 @@ public enum RecycleBinAvailabilityReason
     VolumeNotFound,
 
     /// <summary>
+    /// The volume exists and its type supports a Recycle Bin, but the Shell reports that it has none.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the machine this library was developed against: <c>SHQueryRecycleBin</c> returned
+    /// <c>0x80004005</c> on a removable volume with no <c>$RECYCLE.BIN</c>, and <c>0x80070003</c> on a
+    /// network share. Both had deleted every file handed to them, permanently, while reporting success.
+    /// </remarks>
+    NoRecycleBinOnVolume,
+
+    /// <summary>
     /// The volume exists but the answer could not be established — its volume GUID, which is what the
     /// per-volume setting is keyed on, could not be read. Deliberately not reported as enabled.
     /// </summary>

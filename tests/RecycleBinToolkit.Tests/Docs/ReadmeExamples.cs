@@ -240,6 +240,22 @@ internal static class ReadmeExamples
         await FileRecycler.MoveToRecycleBinAsync(paths, cancellationToken: cts.Token);
     }
 
+    internal static async Task RefuseABatchOnAVolumeWithoutARecycleBin()
+    {
+        IReadOnlyList<string?> paths = [@"F:\Reports\quarterly.xlsx"];
+        var options = new RecycleBinOptions { ThrowOnError = false };
+
+        // The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the Shell removes the
+        // file for good and still reports success, so the path is refused before it ever reaches the
+        // Shell. With ThrowOnError off the refusal comes back as data instead of an exception.
+        var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
+
+        foreach (var failure in result.Failures)
+        {
+            Console.Error.WriteLine($"{failure.Path} was not recycled: {failure.Stage} 0x{failure.HResult:X8}");
+        }
+    }
+
     // The one documented exception to "README.md is a verbatim copy": this block uses Check.* because
     // the test project has no xunit, while README.md shows Assert.True / Assert.Empty / Assert.All —
     // the spelling a reader would actually write. Everything else here is character for character.

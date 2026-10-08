@@ -276,7 +276,7 @@ worker thread, so a caller never pays for COM initialisation and never blocks in
 
 ### `RecycleBinOptions`
 
-Immutable; set with `with`-style initialisers. Every property has a production default, so
+Immutable; set with object initialisers. Every property has a production default, so
 `RecycleBinOptions.Default` is always a valid argument.
 
 | Property | Type | Default | Description |
@@ -288,6 +288,7 @@ Immutable; set with `with`-style initialisers. Every property has a production d
 | `VerifyRecycleBinReceipt` | `bool` | `true` | Reject a delete whose reported destination is outside `$RECYCLE.BIN`. See [Limitations](#limitations). |
 | `ThrowOnError` | `bool` | `true` | Whether a failure raises instead of being returned. The global switch; it has the final say over `LongPathFailureAction`. |
 | `LongPathFailureAction` | `LongPathFailureAction` | `Throw` | What happens to a file the Shell cannot recycle. |
+| `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. |
 | `MaxShellPathLength` | `int` | `260` | Longest path the Shell can be asked to recycle. Measured: 251 recycles, 261 does not. Clamped to at least 1. |
 
 ```csharp
@@ -395,6 +396,19 @@ What to do with a path past the Shell's limit.
 `ThrowOnError` is the global switch and has the final say. With it off, `LongPathFailureAction.Throw`
 raises nothing and the path arrives in `Failures` instead.
 
+### `NoRecycleBinAction`
+
+What to do with a path on a volume that cannot recycle it.
+
+| Value | Effect |
+| --- | --- |
+| `Throw` | Default. The path is refused, the file stays where it is, and the Shell is never asked. Raises only when `ThrowOnError` is also on. |
+| `AllowIndeterminate` | The path is handed over even though the volume's answer was not `Enabled` — the answer was `Indeterminate` or `NoRecycleBinOnVolume`. The Shell may remove the file for good and still report success. |
+| `DeletePermanently` | The file is removed for good and listed in `PermanentlyDeletedPaths`, never in `RecycledPaths`. |
+
+The values run from safest to most destructive, and `ThrowOnError` is still the global switch: with it
+off, a refusal arrives in `Failures` instead of an exception.
+
 ### `RecycleBinItem`
 
 One entry in the Recycle Bin. Immutable.
@@ -468,11 +482,15 @@ The outcome of a status check. Immutable.
 | `DisabledByUserPreference` | This volume is set to delete immediately instead of recycling. The user can change it. |
 | `UnsupportedVolumeType` | The volume type has no Recycle Bin at all. |
 | `VolumeNotFound` | The volume is not mounted, or the path given is not a volume root. |
+| `NoRecycleBinOnVolume` | The volume exists and its type supports a Recycle Bin, but the Shell reports that it has none. |
 | `Indeterminate` | The volume exists but the answer could not be established. Deliberately not `Enabled`. |
 
 `Enabled` is the only value that asserts a fact, and this library does not assert what it could not
 read. A volume whose GUID — which is what the per-volume setting is keyed on — cannot be resolved is
-reported as `Indeterminate`, never optimistically as enabled.
+reported as `Indeterminate`, never optimistically as enabled. A Shell that names no Recycle Bin at all
+is `NoRecycleBinOnVolume` rather than `Indeterminate`: measured here, `SHQueryRecycleBin` answered
+`0x80004005` on a removable volume with no `$RECYCLE.BIN` and `0x80070003` on a network share, while
+an empty bin queried normally.
 
 ---
 
@@ -625,6 +643,23 @@ using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 // Cancelling stops the wait, not the work: a round already handed to the Shell runs to
 // completion, so a cancelled call may still recycle its files.
 await FileRecycler.MoveToRecycleBinAsync(paths, cancellationToken: cts.Token);
+```
+
+### Refuse a batch on a volume without a Recycle Bin
+
+```csharp
+IReadOnlyList<string?> paths = [@"F:\Reports\quarterly.xlsx"];
+var options = new RecycleBinOptions { ThrowOnError = false };
+
+// The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the Shell removes the
+// file for good and still reports success, so the path is refused before it ever reaches the
+// Shell. With ThrowOnError off the refusal comes back as data instead of an exception.
+var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
+
+foreach (var failure in result.Failures)
+{
+    Console.Error.WriteLine($"{failure.Path} was not recycled: {failure.Stage} 0x{failure.HResult:X8}");
+}
 ```
 
 ### Assert in a test

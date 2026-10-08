@@ -5,7 +5,8 @@ namespace RecycleBinToolkit;
 /// </summary>
 /// <remarks>
 /// Every property has a production-ready default, so <see cref="Default"/> is a valid argument for
-/// every call. Use <c>with</c> initialiser syntax to override a single value.
+/// every call. A single value is overridden with an object initialiser:
+/// <c>new RecycleBinOptions { ThrowOnError = false }</c>.
 /// </remarks>
 public sealed class RecycleBinOptions
 {
@@ -70,6 +71,17 @@ public sealed class RecycleBinOptions
     public LongPathFailureAction LongPathFailureAction { get; init; } = LongPathFailureAction.Throw;
 
     /// <summary>
+    /// What happens to a file whose volume cannot recycle it. The default is
+    /// <see cref="NoRecycleBinAction.Throw"/>, which refuses it and leaves the file in place.
+    /// </summary>
+    /// <remarks>
+    /// This decides whether the path is handed to the Shell at all.
+    /// <see cref="ThrowOnError"/> still decides whether the refusal raises or is returned through
+    /// <see cref="RecycleBinResult.Failures"/>.
+    /// </remarks>
+    public NoRecycleBinAction NoRecycleBinAction { get; init; } = NoRecycleBinAction.Throw;
+
+    /// <summary>
     /// Longest path the Shell can be asked to recycle, in characters. Measured on this machine: a
     /// 251-character path recycles, a 261-character path is removed permanently while the operation
     /// still reports success.
@@ -91,6 +103,7 @@ public sealed class RecycleBinOptions
         VerifyRecycleBinReceipt = VerifyRecycleBinReceipt,
         ThrowOnError = ThrowOnError,
         LongPathFailureAction = LongPathFailureAction,
+        NoRecycleBinAction = NoRecycleBinAction,
         MaxShellPathLength = Math.Max(1, MaxShellPathLength)
     };
 
