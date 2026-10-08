@@ -120,10 +120,15 @@ public static class RecycleBin
     /// <param name="cancellationToken">Cancels the wait.</param>
     /// <returns>The status of that volume.</returns>
     /// <remarks>
-    /// This answers whether the Recycle Bin is configured for the volume, not whether the next delete
-    /// will land there. A volume mounted after this call, or a policy applied after it, changes the
-    /// answer without this call being wrong. It needs no COM, so it does not queue behind the Shell
-    /// worker and never blocks behind an in-flight batch.
+    /// This answers what configuration says about the volume, and — for a volume configuration says
+    /// nothing about — whether the Shell reports a Recycle Bin on it at all. It does not predict the
+    /// next delete: a volume mounted after this call, or a policy applied after it, changes the answer
+    /// without this call being wrong.
+    /// <para>
+    /// It runs on the calling thread rather than on the Shell worker, so it never blocks behind an
+    /// in-flight batch. Asking the Shell is the slow half of the work, and it happens only for a volume
+    /// with no per-volume setting, where the question walks the bin's metadata.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentException"><paramref name="volumeRoot"/> is null, empty or whitespace.</exception>
     public static Task<RecycleBinStatus> GetStatusAsync(

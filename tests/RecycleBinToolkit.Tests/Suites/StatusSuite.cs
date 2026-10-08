@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using Microsoft.Win32;
 using RecycleBinToolkit;
@@ -23,7 +24,121 @@ internal static class StatusSuite
         new TestCase("StatusSuite." + nameof(StatusAgreesWhateverSpellingOfTheRootItIsGiven), StatusAgreesWhateverSpellingOfTheRootItIsGiven),
         new TestCase("StatusSuite." + nameof(ExtendedLengthSpellingOfTheRootIsTheSameVolume), ExtendedLengthSpellingOfTheRootIsTheSameVolume),
         new TestCase("StatusSuite." + nameof(TheVolumeKeyIsNamedTheWayWindowsNamesIt), TheVolumeKeyIsNamedTheWayWindowsNamesIt),
+        new TestCase("StatusSuite." + nameof(NoRecycleBinVolumeIsNamedNotIndeterminate), NoRecycleBinVolumeIsNamedNotIndeterminate),
     ];
+
+    /// <summary>
+    /// A volume the Shell reports no Recycle Bin for is named as such, not left as Indeterminate. The
+    /// two are different problems for the caller, because only one of them says the next delete on that
+    /// volume is a permanent deletion.
+    /// </summary>
+    /// <remarks>
+    /// The volume is a <c>subst</c> mapping of the scratch root, which is the one shape of a bin-less
+    /// volume that can be produced on any machine. A substituted drive is a DOS device over a real
+    /// volume, so it reports a drive type that supports a Recycle Bin, yet it has no GUID for the
+    /// per-volume setting to be keyed on and no bin for the Shell to query — <c>SHQueryRecycleBin</c>
+    /// answers <c>0x80070003</c> for it, as it does for a network share.
+    /// </remarks>
+    private static async Task NoRecycleBinVolumeIsNamedNotIndeterminate(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = FirstUnusedDriveLetter();
+
+        try
+        {
+            Substitute(letter, ScratchWorkspace.Root);
+
+            var volumeRoot = letter + ":" + Path.DirectorySeparatorChar;
+
+            Check.True(
+                RecycleBinVolumeState.TryGetVolumeGuidKeyName(volumeRoot) is null,
+                "a substituted drive is the shape under test: there is no volume GUID for the per-volume setting to be read from");
+
+            var status = await RecycleBin.GetStatusAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+
+            Check.Equal(volumeRoot, status.VolumeRoot, "the answer names the substituted volume");
+            Check.False(status.IsEnabled, $"a volume with no Recycle Bin is not an enabled Recycle Bin (got {status.Reason})");
+            Check.Equal(
+                RecycleBinAvailabilityReason.NoRecycleBinOnVolume,
+                status.Reason,
+                "the Shell that reported no bin is named as the reason, rather than the volume being left undecided");
+        }
+        finally
+        {
+            RemoveSubstitute(letter);
+        }
+    }
+
+    /// <summary>
+    /// The highest drive letter nothing is mounted on, so a mapping cannot collide with a real volume, a
+    /// network drive, or a mapping an earlier case leaked.
+    /// </summary>
+    private static char FirstUnusedDriveLetter()
+    {
+        var mounted = new HashSet<char>(
+            DriveInfo.GetDrives().Select(drive => char.ToUpperInvariant(drive.Name[0])));
+
+        for (var letter = 'Z'; letter >= 'A'; letter--)
+        {
+            if (!mounted.Contains(letter))
+            {
+                return letter;
+            }
+        }
+
+        throw new CheckFailedException("every drive letter from Z down to A is mounted, so there is nowhere left to substitute");
+    }
+
+    /// <summary>
+    /// Maps <paramref name="target"/> onto the bare drive letter <paramref name="letter"/> through
+    /// <c>subst</c>.
+    /// </summary>
+    /// <remarks>
+    /// The exit code is asserted rather than the mapping's presence, because a refused <c>subst</c>
+    /// leaves the letter unmounted — and an unmounted letter is reported as
+    /// <see cref="RecycleBinAvailabilityReason.VolumeNotFound"/>, which is a different case passing for
+    /// the wrong reason.
+    /// </remarks>
+    private static void Substitute(char letter, string target)
+    {
+        var (exitCode, output) = RunSubst(letter, target);
+
+        Check.Equal(0, exitCode, $"subst maps '{target}' onto {letter}: (it said '{output}')");
+    }
+
+    /// <summary>
+    /// Takes the mapping off <paramref name="letter"/> again, without throwing.
+    /// </summary>
+    /// <remarks>
+    /// A failure here is deliberately swallowed: throwing from a <c>finally</c> replaces whatever the
+    /// case was actually reporting with the cleanup's own complaint, and the worst a leaked mapping does
+    /// is occupy a letter that <see cref="FirstUnusedDriveLetter"/> will then skip.
+    /// </remarks>
+    private static void RemoveSubstitute(char letter) => RunSubst(letter, target: null);
+
+    private static (int ExitCode, string Output) RunSubst(char letter, string? target)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "subst",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+
+        startInfo.ArgumentList.Add(letter + ":");
+        startInfo.ArgumentList.Add(target ?? "/d");
+
+        using var process = Process.Start(startInfo);
+        Check.NotNull(process, "subst is on the path and starts");
+
+        var output = process!.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        return (process.ExitCode, output);
+    }
 
     /// <summary>
     /// The per-volume setting is read from a subkey under the Recycle Bin's own volume list, so the
