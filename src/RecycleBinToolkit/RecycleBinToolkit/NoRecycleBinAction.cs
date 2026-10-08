@@ -20,7 +20,7 @@ public enum NoRecycleBinAction
     /// <see cref="RecycleBinOptions.ThrowOnError"/> is also on: with that off the refusal arrives in
     /// <see cref="RecycleBinResult.Failures"/> instead of as an exception.
     /// </remarks>
-    Throw,
+    Throw = 0,
 
     /// <summary>
     /// Hand the path over even though the volume's answer was not
@@ -29,11 +29,13 @@ public enum NoRecycleBinAction
     /// <remarks>
     /// Covers <see cref="RecycleBinAvailabilityReason.Indeterminate"/> and
     /// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/>, and with them the risk the
-    /// caller is accepting: on such a volume the Shell removes the file for good and still reports
-    /// success, so the path comes back in <see cref="RecycleBinResult.RecycledPaths"/> and never in
-    /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
+    /// caller is accepting: on a volume the Shell reports no bin for it removes the file for good and
+    /// still reports success, so the path comes back in <see cref="RecycleBinResult.RecycledPaths"/>
+    /// and never in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>. The two reasons are not the
+    /// same risk — an <see cref="RecycleBinAvailabilityReason.Indeterminate"/> volume is most often one
+    /// whose probe found a bin, which recycles normally.
     /// </remarks>
-    AllowIndeterminate,
+    AllowIndeterminate = 1,
 
     /// <summary>
     /// Remove the path for good, without asking the Shell, and list it in
@@ -51,5 +53,5 @@ public enum NoRecycleBinAction
     /// exactly where the caller left it.
     /// </para>
     /// </remarks>
-    DeletePermanently
+    DeletePermanently = 2
 }

@@ -124,7 +124,7 @@ internal static class RecycleBinVolumeState
     /// Whether the path names a volume root rather than something inside one. A path is told from its
     /// root by what follows it, not by how the root happens to be spelled.
     /// </summary>
-/// <remarks>
+    /// <remarks>
     /// The two sides are compared in a reduced form rather than as the caller typed them, because
     /// <see cref="Path.GetPathRoot(string)"/> does not spell a root the way its caller did:
     /// <c>\\server\share</c> is the root of both <c>\\server\share</c> and <c>\\server\share\</c>, and

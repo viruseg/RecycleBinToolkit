@@ -256,9 +256,10 @@ internal static class ReadmeExamples
         }
     }
 
-    // The one documented exception to "README.md is a verbatim copy": this block uses Check.* because
-    // the test project has no xunit, while README.md shows Assert.True / Assert.Empty / Assert.All —
-    // the spelling a reader would actually write. Everything else here is character for character.
+    // The one documented exception to "README.md is a verbatim copy" is the assertion helper, and it is
+    // spelled the same way in both files: README.md uses Check.* too, not Assert.*. Both files carry the
+    // note that a project with xunit spells the same three lines Assert.True / Assert.Equal /
+    // Assert.False. Everything else here is character for character.
     internal static async Task AssertInATest()
     {
         IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];

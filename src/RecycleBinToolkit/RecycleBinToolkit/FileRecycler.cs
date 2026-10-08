@@ -48,10 +48,11 @@ public static class FileRecycler
     /// </exception>
     /// <exception cref="IOException">
     /// The Shell refused the delete, or the volume holding the path cannot recycle it and
-    /// <see cref="RecycleBinOptions.NoRecycleBinAction"/> is <see cref="NoRecycleBinAction.Throw"/>, and
-    /// <see cref="RecycleBinOptions.ThrowOnError"/> is on. The file is left in place either way.
-    /// <see cref="Exception.HResult"/> carries the Shell error code, or <c>0</c> where the volume was
-    /// refused without asking the Shell.
+    /// <see cref="RecycleBinOptions.NoRecycleBinAction"/> is <see cref="NoRecycleBinAction.Throw"/>, or
+    /// that action is <see cref="NoRecycleBinAction.DeletePermanently"/> and the file system refused
+    /// the removal — and <see cref="RecycleBinOptions.ThrowOnError"/> is on. The file is left in place
+    /// in every one of those cases. <see cref="Exception.HResult"/> carries the Shell's or the file
+    /// system's own code, or <c>0</c> where the volume was refused without asking the Shell.
     /// </exception>
     public static async Task<bool> MoveToRecycleBinAsync(
         string? filePath,

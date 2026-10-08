@@ -36,7 +36,9 @@ internal static class ContractSuite
     /// <summary>
     /// The caller's three answers to "this volume cannot recycle" have to be pinned against every reason,
     /// because the pairs are what decides whether a file survives and there are few enough of them to
-    /// state completely.
+    /// state completely. The numbers behind both enums have to be pinned for the same reason: each
+    /// declares that its ordinals are part of its public contract, so a renumbering is a breaking change
+    /// that every compiler and every test in this file would accept.
     /// </summary>
     /// <remarks>
     /// A new reason added without a row here would be unasserted, so the table is checked against the
@@ -86,8 +88,23 @@ internal static class ContractSuite
             RecycleBinVolumePolicy.RefusesRecycle(RecycleBinAvailabilityReason.VolumeNotFound, NoRecycleBinAction.DeletePermanently),
             "a path that is not on disk is never handed over, so DeletePermanently does not reach it");
 
+        ReasonOrdinalIsPinned(RecycleBinAvailabilityReason.Enabled, 0);
+        ReasonOrdinalIsPinned(RecycleBinAvailabilityReason.DisabledByPolicy, 1);
+        ReasonOrdinalIsPinned(RecycleBinAvailabilityReason.DisabledByUserPreference, 2);
+        ReasonOrdinalIsPinned(RecycleBinAvailabilityReason.UnsupportedVolumeType, 3);
+        ReasonOrdinalIsPinned(RecycleBinAvailabilityReason.VolumeNotFound, 4);
+        ReasonOrdinalIsPinned(RecycleBinAvailabilityReason.NoRecycleBinOnVolume, 5);
+        ReasonOrdinalIsPinned(RecycleBinAvailabilityReason.Indeterminate, 6);
+
+        Check.Equal(0, (int)NoRecycleBinAction.Throw, "Throw keeps number 0");
+        Check.Equal(1, (int)NoRecycleBinAction.AllowIndeterminate, "AllowIndeterminate keeps number 1");
+        Check.Equal(2, (int)NoRecycleBinAction.DeletePermanently, "DeletePermanently keeps number 2");
+
         return Task.CompletedTask;
     }
+
+    private static void ReasonOrdinalIsPinned(RecycleBinAvailabilityReason reason, int expected) =>
+        Check.Equal(expected, (int)reason, $"{reason} keeps number {expected}, which its remarks call part of its contract");
 
     /// <summary>
     /// The Recycle Bin folder is a whole path segment, and the cases below are the ones where a substring
@@ -193,22 +210,6 @@ internal static class ContractSuite
     }
 
     /// <summary>
-    /// <summary>
-    /// A batch is a list of targets, and the list is held for the whole operation, so what a target costs
-    /// is a per-path cost across every path the caller ever passes.
-    /// </summary>
-    /// <remarks>
-    /// As a class, every path costs an object header and three references on top of the slot it occupies
-    /// in the list. A hundred thousand paths is a few megabytes of short-lived garbage for a delete that
-    /// is dominated by Shell latency anyway, which is the wrong place to pay. Measured rather than
-    /// asserted on the declaration, because that is the property that matters and it does not care how
-    /// the type is spelled.
-    /// <para>
-    /// The bound is a few bytes per target against roughly forty for a reference type. It is not tight,
-    /// and does not need to be: anything above zero per path means a target is still escaping.
-    /// </para>
-    /// </remarks>
-    /// <summary>
     /// A constructed listing must already state its own total, and a listing built around items that were
     /// added afterwards must not claim one.
     /// </summary>
@@ -253,6 +254,21 @@ internal static class ContractSuite
         return targets;
     }
 
+    /// <summary>
+    /// A batch is a list of targets, and the list is held for the whole operation, so what a target costs
+    /// is a per-path cost across every path the caller ever passes.
+    /// </summary>
+    /// <remarks>
+    /// As a class, every path costs an object header and three references on top of the slot it occupies
+    /// in the list. A hundred thousand paths is a few megabytes of short-lived garbage for a delete that
+    /// is dominated by Shell latency anyway, which is the wrong place to pay. Measured rather than
+    /// asserted on the declaration, because that is the property that matters and it does not care how
+    /// the type is spelled.
+    /// <para>
+    /// The bound is a few bytes per target against roughly forty for a reference type. It is not tight,
+    /// and does not need to be: anything above zero per path means a target is still escaping.
+    /// </para>
+    /// </remarks>
     private static Task ATargetCostsNoAllocationOfItsOwn(TestContext context)
     {
         const int Count = 200_000;
@@ -365,7 +381,9 @@ internal static class ContractSuite
 
     /// <summary>
     /// Each way one item's Shell result can fall short has to name itself, or a caller reading
-    /// <see cref="RecycleFailure.Stage"/> is told the wrong thing about what went wrong.
+    /// <see cref="RecycleFailure.Stage"/> is told the wrong thing about what went wrong. The numbers
+    /// behind the names are part of that contract too, so a caller who persisted one is broken by a
+    /// renumbering that still compiles.
     /// </summary>
     /// <remarks>
     /// The receipt rejection is the one that cannot be produced against the live Shell on demand, since
@@ -378,6 +396,20 @@ internal static class ContractSuite
         const string original = @"E:\work\report.bin";
         const int Success = 0x00270008;
         const int Refused = unchecked((int)0x80070005);
+
+        Check.Equal(0, (int)RecycleFailureStage.PathValidation, "PathValidation keeps number 0");
+        Check.Equal(1, (int)RecycleFailureStage.ShellItemCreation, "ShellItemCreation keeps number 1");
+        Check.Equal(2, (int)RecycleFailureStage.Queueing, "Queueing keeps number 2");
+        Check.Equal(3, (int)RecycleFailureStage.Performing, "Performing keeps number 3");
+        Check.Equal(4, (int)RecycleFailureStage.ReceiptVerification, "ReceiptVerification keeps number 4");
+        Check.Equal(5, (int)RecycleFailureStage.LongPathNotRecyclable, "LongPathNotRecyclable keeps number 5");
+        Check.Equal(6, (int)RecycleFailureStage.Enumeration, "Enumeration keeps number 6");
+        Check.Equal(7, (int)RecycleFailureStage.PermanentDeleteFailed, "PermanentDeleteFailed keeps number 7");
+        Check.Equal(8, (int)RecycleFailureStage.NoRecycleBinOnVolume, "NoRecycleBinOnVolume keeps number 8, declared above the two that follow it in the source");
+        Check.Equal(
+            9,
+            Enum.GetValues<RecycleFailureStage>().Length,
+            "and the numbers run without a gap, so the next stage is the next number rather than a guess");
 
         Check.Equal(
             null,
@@ -577,6 +609,20 @@ internal static class ContractSuite
         Check.Equal(TimeSpan.FromMilliseconds(50), options.InitialRetryDelay, "InitialRetryDelay default");
         Check.Equal(TimeSpan.FromSeconds(30), options.OverallTimeout, "OverallTimeout default");
         Check.True(options.VerifyRecycleBinReceipt, "VerifyRecycleBinReceipt default is on");
+
+        // The same hazard as NoRecycleBinAction below, one level up: ThrowOnError decides whether a
+        // documented refusal is an exception or data, so a flip would silently take it away from every
+        // caller who never asked about it.
+        Check.True(options.ThrowOnError, "ThrowOnError default is on, so a documented refusal still raises");
+
+        // Flipping this one to DeletePermanently would hand every caller a library that destroys
+        // long-path files without being asked, on the default settings.
+        Check.Equal(
+            LongPathFailureAction.Throw,
+            options.LongPathFailureAction,
+            "LongPathFailureAction defaults to Throw, which leaves a too-long file in place");
+
+        Check.Equal(260, options.MaxShellPathLength, "MaxShellPathLength default is the measured Shell limit");
 
         // Flipping this one default would make every caller destroy files on a volume that cannot
         // recycle them, so it is pinned by name rather than left to the property initialiser.

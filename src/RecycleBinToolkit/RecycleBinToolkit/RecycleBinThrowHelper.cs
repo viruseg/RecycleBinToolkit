@@ -34,7 +34,7 @@ internal static class RecycleBinThrowHelper
             $"'{failure.Path}' is longer than the Shell can recycle, and the volume offers no short name for it. " +
             "The file was left in place. Set LongPathFailureAction to DeletePermanently to remove it instead.");
 
-/// <summary>
+    /// <summary>
     /// Reports that the Recycle Bin worker thread could not be brought up, so no operation can be performed.
     /// </summary>
     /// <remarks>

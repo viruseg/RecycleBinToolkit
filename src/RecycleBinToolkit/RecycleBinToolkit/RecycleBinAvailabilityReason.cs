@@ -4,9 +4,11 @@ namespace RecycleBinToolkit;
 /// Why the Recycle Bin is or is not in use for a volume.
 /// </summary>
 /// <remarks>
-/// Windows exposes no single authoritative query. What happens on the next delete is decided by a
-/// group policy, by a per-volume setting the user owns, and by the kind of volume, so an answer that
-/// is only "off" throws away the one thing the caller needs to do something about it.
+/// <c>SHQueryRecycleBin</c> is the one query that answers whether a volume recycles at all, and this
+/// library asks it. It cannot say which of the reasons below applies, because what happens on the
+/// next delete is decided by a group policy, by a per-volume setting the user owns, and by the kind
+/// of volume: an answer that is only "off" throws away the one thing the caller needs to do something
+/// about it.
 /// <para>
 /// The members are numbered explicitly because this is a public enum and the numbers are part of its
 /// contract: an implicit value renumbers every member declared after an insertion, which compiles
@@ -46,14 +48,25 @@ public enum RecycleBinAvailabilityReason
     /// </summary>
     /// <remarks>
     /// Measured on the machine this library was developed against: <c>SHQueryRecycleBin</c> returned
-    /// <c>0x80004005</c> on a removable volume with no <c>$RECYCLE.BIN</c>, and <c>0x80070003</c> on a
-    /// network share. Both had deleted every file handed to them, permanently, while reporting success.
+    /// <c>0x80004005</c> on a removable volume with no <c>$RECYCLE.BIN</c>, which had deleted every file
+    /// handed to it, permanently, while reporting success.
+    /// <para>
+    /// The same query against a share with no bin answered <c>0x80070003</c>, and that is the evidence
+    /// this probe rests on: a volume with no bin gets a refusal of its own rather than a success, so a
+    /// failed query says something. A share is settled as <see cref="UnsupportedVolumeType"/> from its
+    /// own path before the probe is reached, so that code is never carried by this reason.
+    /// </para>
     /// </remarks>
     NoRecycleBinOnVolume = 5,
 
     /// <summary>
-    /// The volume exists but the answer could not be established — its volume GUID, which is what the
-    /// per-volume setting is keyed on, could not be read. Deliberately not reported as enabled.
+    /// The volume exists, but configuration could not confirm it: either its type could not be read, or
+    /// nothing was recorded for it and the Shell was asked and reported a bin.
     /// </summary>
+    /// <remarks>
+    /// Deliberately not reported as <see cref="Enabled"/>. The second cause is the common one now that
+    /// the Shell is consulted: a volume Windows has never configured has no key of its own, and a probe
+    /// that found a bin says nothing that would tell it apart from a volume that was configured.
+    /// </remarks>
     Indeterminate = 6,
 }

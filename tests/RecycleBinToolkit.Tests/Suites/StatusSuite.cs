@@ -27,7 +27,7 @@ internal static class StatusSuite
         new TestCase("StatusSuite." + nameof(AMissingPerVolumeKeyIsNotAnEnabledVolume), AMissingPerVolumeKeyIsNotAnEnabledVolume),
         new TestCase("StatusSuite." + nameof(OneShareHasOneSpelling), OneShareHasOneSpelling),
         new TestCase("StatusSuite." + nameof(AnUncRootIsRecognised), AnUncRootIsRecognised),
-        ];
+    ];
 
     /// <summary>
     /// Whether a path names a network share, decided from the path itself and not from the machine.

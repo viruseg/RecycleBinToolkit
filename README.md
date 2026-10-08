@@ -177,7 +177,7 @@ under an explicit policy.
 | `ArgumentException` | `filePath` is null, empty or whitespace and `ThrowOnError` is on |
 | `FileNotFoundException` | `filePath` does not exist and `ThrowOnError` is on |
 | `PathTooLongException` | The path cannot be recycled, no short name is available, and `LongPathFailureAction` is `Throw` |
-| `IOException` | The Shell refused the delete, or the volume cannot recycle the path and `NoRecycleBinAction` is `Throw`, and `ThrowOnError` is on. `HResult` carries the Shell error code, or `0` where the volume was refused without the Shell being asked |
+| `IOException` | The Shell refused the delete, or the volume cannot recycle the path and `NoRecycleBinAction` is `Throw`, or that action is `DeletePermanently` and the file system refused the removal — and `ThrowOnError` is on. The file is left in place in every one of those cases. `HResult` carries the Shell's or the file system's own code, or `0` where the volume was refused without the Shell being asked |
 | `OperationCanceledException` | `cancellationToken` was cancelled before the work started |
 
 With `ThrowOnError` off, nothing is thrown: a bad path returns `false`.
@@ -267,11 +267,14 @@ Whether the Recycle Bin is in use for one volume.
 
 `GetStatusAsync` is the authoritative query on this, and `FileRecycler` asks it before every batch —
 once per distinct volume root rather than once per path, so a batch of twenty thousand files on one
-volume pays for one query. A path whose volume cannot recycle it is refused there rather than handed to
-the Shell, which is the only way to tell a delete that will land in the Recycle Bin from one that will
-destroy the file and report a success. It reports *which* reason applies, because what happens on the
-next delete is decided by a group policy, by a per-volume setting the user owns, and by the kind of
-volume, so an answer that is only "off" throws away the one thing a caller can act on.
+volume pays for one query. What it settles has three outcomes, not one: under the default
+`NoRecycleBinAction.Throw` the path is refused there with the file left in place and the Shell never
+asked, under `DeletePermanently` the library removes it for good itself, and under `AllowIndeterminate`
+it is handed to the Shell anyway. Asking is the only way to tell a delete that will land in the
+Recycle Bin from one that will destroy the file and report a success. It reports *which* reason applies,
+because what happens on the next delete is decided by a group policy, by a per-volume setting the user
+owns, and by the kind of volume, so an answer that is only "off" throws away the one thing a caller can
+act on.
 
 ---
 
@@ -406,12 +409,15 @@ What to do with a path past the Shell's limit.
 `ThrowOnError` is the global switch and has the final say. With it off, `LongPathFailureAction.Throw`
 raises nothing and the path arrives in `Failures` instead.
 
-A volume that cannot recycle is settled *before* any of this: a too-long path on such a volume never
-reaches `LongPathFailureAction` at all. Under `NoRecycleBinAction.Throw` it is refused at
-`NoRecycleBinOnVolume` with the file left in place; under `NoRecycleBinAction.DeletePermanently` the
-volume gate removes it outright. Only the `DeletePermanently` route ends in
-`PermanentlyDeletedPaths`; the `Throw` route ends in `Failures`. The volume is the more fundamental
-fact — its answer is reached before the path's length is looked at.
+Under the two `NoRecycleBinAction` values that settle the volume here — `Throw` and
+`DeletePermanently` — a volume that cannot recycle is settled *before* any of this, so a too-long path
+on such a volume never reaches `LongPathFailureAction`: under `Throw` it is refused at
+`NoRecycleBinOnVolume` with the file left in place, and under `DeletePermanently` the volume gate
+removes it outright. Those two routes are the only ones that end in `PermanentlyDeletedPaths` (the
+second) or `Failures` (the first), and neither of them reaches this setting. Under
+`NoRecycleBinAction.AllowIndeterminate` the path is handed over instead, and this action is what then
+decides its fate. The volume is the more fundamental fact — its answer is reached before the path's
+length is looked at.
 
 ### `NoRecycleBinAction`
 
@@ -687,8 +693,9 @@ foreach (var failure in result.Failures)
 
 ### Assert in a test
 
-`Check.*` here is the test project's own assertion helper; in a project with xunit the same three
-lines read `Assert.True`, `Assert.Empty` and `Assert.All`.
+`Check.*` here is the test project's own assertion helper, and it is what the block below reads in
+`ReadmeExamples.cs` too — the two are character for character. In a project with xunit the same three
+lines read `Assert.True`, `Assert.Equal` and `Assert.False`.
 
 ```csharp
 IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
@@ -828,14 +835,14 @@ such key is answered `Indeterminate` or `NoRecycleBinOnVolume` — both refused 
 `NoRecycleBinAction.Throw`. The suite checks this before it deletes anything and names the key rather
 than failing a hundred cases at once.
 
-The suite is a console application with no external packages: 126 cases covering batch and single-path
+The suite is a console application with no external packages: 129 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies,
 volumes with no Recycle Bin, and a ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing,
 emptying and status checking are covered by their own suites. It writes only to `E:\RC\Test` (or the
 project root) and moves the committed fixture files it uses.
 
-**Four of the 126 are load cases and run only on request.** They are the ones that work the disk hard enough
+**Four of the 129 are load cases and run only on request.** They are the ones that work the disk hard enough
 to notice: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
 through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
 nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —

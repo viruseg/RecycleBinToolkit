@@ -68,13 +68,13 @@ public sealed class RecycleBinOptions
     /// Set <see cref="LongPathFailureAction.DeletePermanently"/> to remove it instead, in which case the
     /// path also appears in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
     /// <para>
-    /// None of this applies to a path on a volume that cannot recycle it. That volume is settled before
-    /// the path's length is looked at, so such a path never reaches this action at all: under
-    /// <see cref="NoRecycleBinAction.Throw"/> it is refused at
-    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> with the file left in place, and under
-    /// <see cref="NoRecycleBinAction.DeletePermanently"/> the volume gate removes it outright and it
-    /// arrives in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> from there. See
-    /// <see cref="NoRecycleBinAction"/>.
+    /// None of this applies to a path on a volume that cannot recycle it under the two actions that
+    /// settle the volume first. <see cref="NoRecycleBinAction.Throw"/> refuses such a path at
+    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> with the file left in place, and
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/> has the volume gate remove it outright, so it
+    /// arrives in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> from there rather than from
+    /// here. Under <see cref="NoRecycleBinAction.AllowIndeterminate"/> the path is handed over, and
+    /// this action is what then decides its fate. See <see cref="NoRecycleBinAction"/>.
     /// </para>
     /// </remarks>
     public LongPathFailureAction LongPathFailureAction { get; init; } = LongPathFailureAction.Throw;
