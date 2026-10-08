@@ -1,12 +1,15 @@
 namespace RecycleBinToolkit.Tests.Infrastructure;
 
 /// <summary>
-/// The single scratch directory every test writes into. It lives inside the repository, so no test
-/// ever touches a path outside the project.
+/// The single scratch directory every test writes into.
 /// </summary>
 /// <remarks>
-/// Almost every case now recycles a path on <see cref="Root"/>'s volume, and that only works because the
-/// volume reads as recycling. Windows records that per volume, under
+/// Its location is not decided here: <c>--scratch</c> names the volume, and <see cref="Configure"/> claims a
+/// directory of this run's own inside that volume. Nothing in the source names a path, so the suite cannot be
+/// pointed twice at the same directory and cannot delete a directory it did not create.
+/// <para>
+/// Almost every case recycles a path on <see cref="Root"/>'s volume, and that only works because the volume
+/// reads as recycling. Windows records that per volume, under
 /// <c>BitBucket\Volume\{GUID}\NukeOnDelete=0</c>; a volume with no such key is answered by asking the
 /// Shell instead, and the answer it gives — <see cref="RecycleBinAvailabilityReason.Indeterminate"/> or
 /// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/> — is one the gate refuses.
@@ -15,9 +18,15 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 /// </remarks>
 internal sealed class ScratchWorkspace : IDisposable
 {
-    private const string ExtendedPrefix = @"\\?\";
+    private static ScratchDirectory? _runRoot;
 
     private const int MaxDeleteAttempts = 12;
+
+    /// <summary>
+    /// Extended-length prefix. Without it the standard file APIs fail on a path past MAX_PATH, so the
+    /// scratch root can hold a file whose full path the Shell is being asked to refuse.
+    /// </summary>
+    private const string ExtendedPrefix = @"\\?\";
 
     /// <summary>
     /// Size of the standard fixture set. Large enough that a load case recycles a batch worth measuring,
@@ -41,48 +50,123 @@ internal sealed class ScratchWorkspace : IDisposable
     private static int _sequence;
 
     /// <summary>
+    /// The volume root this run works on, with a trailing separator. Every case that asks a question of the
+    /// Shell asks it about this string rather than about a drive letter written into the source, which is
+    /// what lets the whole suite run on a volume the caller named.
+    /// </summary>
+    public static string VolumeRoot => _runRoot?.Volume ?? throw new InvalidOperationException(
+        $"{nameof(Configure)} has not run, so no volume has been named. Pass --scratch <root> on the command line.");
+
+    /// <summary>
+    /// The directory this run claimed, with a trailing separator. Printed by the runner so a reader can see
+    /// where a run worked, and named in every message about a failed removal.
+    /// </summary>
+    public static string RunRoot => _runRoot?.FullPath ?? throw new InvalidOperationException(
+        $"{nameof(Configure)} has not run, so no scratch directory has been claimed.");
+
+    /// <summary>
     /// Absolute path of the scratch root, always with a trailing separator.
     /// </summary>
-    public static string Root { get; } =
-        Path.Combine(ResolveRepositoryRoot(), "Test") + Path.DirectorySeparatorChar;
+    public static string Root => Claimed("scratch");
 
     /// <summary>
     /// Absolute path of the root for cases that build <em>directories</em> past the Shell's length
     /// limit, always with a trailing separator.
     /// </summary>
     /// <remarks>
-    /// Separate from <see cref="Root"/> on purpose, and outside the repository for the same reason. A
-    /// long directory has to be built from nested components, because a single one cannot exceed 255
-    /// characters — so it is a whole chain of deep directories rather than one awkward file name. Tools
-    /// that walk the repository stumble over that chain badly enough to hang, which turns a passing test
-    /// into an unusable working copy. Keeping it under the temp directory keeps the repository walkable
-    /// while the case still exercises what it is about.
+    /// A separate child of the run's directory rather than a subdirectory of <see cref="Root"/>, because the
+    /// cases that build these clean up after themselves with a recursive delete of everything they made, and
+    /// <see cref="Root"/> holds the files other cases are still working on. A long directory has to be built
+    /// from nested components — one component cannot exceed 255 characters — so it is a chain of deep
+    /// directories rather than one awkward name, which is exactly the shape a recursive delete of a mixed
+    /// tree should not be asked to leave behind.
     /// <para>
     /// A long <em>file</em> path does not have this problem: it is one flat component under
     /// <see cref="Root"/>, so <see cref="Root"/> remains where those belong.
     /// </para>
     /// </remarks>
-    public static string LongDirectoryRoot { get; } =
-        Path.Combine(Path.GetTempPath(), "RecycleBinToolkit.Tests") + Path.DirectorySeparatorChar;
+    public static string LongDirectoryRoot => Claimed("long");
+
+    /// <summary>
+    /// Claims this run's directory tree under <paramref name="volumeRoot"/>, once per process.
+    /// </summary>
+    /// <param name="volumeRoot">The root of a volume the caller named, as <c>--scratch</c> was read.</param>
+    /// <remarks>
+    /// Called by the runner before a single case runs, so every case and every message about a path agrees
+    /// on where the run works. Calling it twice with different roots would be two runs sharing one process,
+    /// and the second would quietly write beside the first's tree.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// A run root has already been claimed, and it is a different volume than the one named now.
+    /// </exception>
+    public static void Configure(string volumeRoot)
+    {
+        if (_runRoot is not null)
+        {
+            if (!string.Equals(_runRoot.Volume, volumeRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"This run already works on {_runRoot.Volume}, and --scratch now names {volumeRoot}. One process is one run on one volume.");
+            }
+
+            return;
+        }
+
+        _runRoot = ScratchDirectory.Claim(volumeRoot);
+    }
+
+    /// <summary>
+    /// Removes the directory this run claimed, along with everything the suite put in it.
+    /// </summary>
+    /// <remarks>
+    /// The whole tree rather than each part of it, so a run that failed half way through leaves nothing in
+    /// the volume root and the next run claims a fresh name rather than inheriting this one's leftovers.
+    /// </remarks>
+    public static void ReleaseRunRoot()
+    {
+        var runRoot = _runRoot;
+
+        _runRoot = null;
+
+        runRoot?.Remove();
+    }
 
     /// <summary>
     /// Prepares <see cref="LongDirectoryRoot"/> for use, empty, and gives it back.
     /// </summary>
     /// <remarks>
-    /// Recreating it is a recursive delete of exactly the tree this suite created under the temp
-    /// directory, which is a known shape. That is the point: it is never a recursive delete under the
-    /// repository, where the same call would have to trust whatever else is sitting there.
+    /// Recreating it is a recursive delete of exactly the tree this run made there, which is a known shape.
+    /// The path is one this run claimed rather than one written into the source, so the delete has nothing to
+    /// trust but itself.
     /// </remarks>
     public static string RecreateLongDirectoryRoot()
     {
-        if (Directory.Exists(LongDirectoryRoot))
+        var path = LongDirectoryRoot;
+
+        if (Directory.Exists(path))
         {
-            Directory.Delete(LongDirectoryRoot, recursive: true);
+            Directory.Delete(path, recursive: true);
         }
 
-        Directory.CreateDirectory(LongDirectoryRoot);
+        if (!Directory.CreateDirectory(path).Exists)
+        {
+            throw new IOException($"Could not create the long-directory root {path}");
+        }
 
-        return LongDirectoryRoot;
+        return path;
+    }
+
+    /// <summary>
+    /// A named child of this run's directory, created on first use.
+    /// </summary>
+    /// <param name="purpose">What the directory is for, such as <c>scratch</c> or <c>long</c>.</param>
+    /// <returns>The full path of the directory, with a trailing separator.</returns>
+    private static string Claimed(string purpose)
+    {
+        var runRoot = _runRoot ?? throw new InvalidOperationException(
+            $"{nameof(Configure)} has not run, so there is no directory to take '{purpose}' from.");
+
+        return runRoot.Subdirectory(purpose);
     }
 
     private bool _disposed;
@@ -311,24 +395,4 @@ internal sealed class ScratchWorkspace : IDisposable
         return buffer;
     }
 
-    /// <summary>
-    /// Walks up from the test binary to the directory holding both <c>src</c> and <c>tests</c>.
-    /// A structural marker rather than a file name: the solution file sits under
-    /// <c>src/RecycleBinToolkit/</c>, so walking up for it would stop one level too low.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">No parent directory holds both source trees.</exception>
-    private static string ResolveRepositoryRoot()
-    {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-        {
-            if (Directory.Exists(Path.Combine(directory.FullName, "src"))
-                && Directory.Exists(Path.Combine(directory.FullName, "tests")))
-            {
-                return directory.FullName;
-            }
-        }
-
-        throw new InvalidOperationException(
-            $"Could not find the repository root — a directory holding both 'src' and 'tests' — in any parent of {AppContext.BaseDirectory}.");
-    }
 }

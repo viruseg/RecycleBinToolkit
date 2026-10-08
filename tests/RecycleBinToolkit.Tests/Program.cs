@@ -8,7 +8,8 @@ if (!OperatingSystem.IsWindows())
 }
 
 return await TestRunner.RunAsync(args,
-    WorkspaceSuite.Cases
+    ScratchSuite.Cases
+        .Concat(WorkspaceSuite.Cases)
         .Concat(VolumeSuite.Cases)
         .Concat(ContractSuite.Cases)
         .Concat(ShellSuite.Cases)

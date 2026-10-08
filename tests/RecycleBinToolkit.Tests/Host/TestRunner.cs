@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using RecycleBinToolkit;
+using RecycleBinToolkit.Tests.Infrastructure;
 
 namespace RecycleBinToolkit.Tests.Host;
 
@@ -20,7 +20,8 @@ internal sealed class TestRunner
     /// Runs the cases selected by the command line.
     /// </summary>
     /// <param name="args">
-    /// <c>--load</c> selects the load group; <c>--manual &lt;root&gt;</c> selects the manual group and may
+    /// <c>--scratch &lt;root&gt;</c> names the volume every case works on and is required. <c>--load</c>
+    /// selects the load group; <c>--manual &lt;root&gt;</c> selects the manual group and may
     /// be repeated, in which case every selected manual case runs once per root, with that root handed to
     /// the case. Without either, the regular group is selected. <c>--all</c> and no arguments select every
     /// regular case, <c>--filter &lt;substring&gt;</c> narrows whichever group was selected to the cases
@@ -30,11 +31,24 @@ internal sealed class TestRunner
     /// <param name="cases">All known cases; grouping and filtering both happen inside the runner.</param>
     /// <returns>
     /// 0 when every selected case passed, 1 when one failed or the selection was empty, 2 when
-    /// <c>--manual</c> was given without a root for it to name.
+    /// <c>--scratch</c> was left out or was given no root, or when <c>--manual</c> was given without a
+    /// root for it to name.
     /// </returns>
     internal static async Task<int> RunAsync(string[] args, IReadOnlyList<TestCase> cases)
     {
-        if (!TryParseManualRoots(args, out var manualRoots))
+        if (!TryParseScratchRoot(args, out var scratchRoot, out var scratchProblem))
+        {
+            Console.Error.WriteLine(
+                "--scratch takes the root of a volume to test on, such as --scratch D:\\ or --scratch \\\\server\\share\\. It is " +
+                "required rather than defaulted, because every case writes files and removes directories: a run that guessed the " +
+                "volume would be a run whose cleanup nobody chose. The suite creates a directory of its own inside the root you " +
+                "name, so the path has to be the volume root and not a directory in it. A command line that cannot carry two " +
+                "leading backslashes may name a share as //server/share/ instead, which is read as the same volume.");
+            Console.Error.WriteLine($"        {scratchProblem}");
+            return 2;
+        }
+
+        if (!TryParseManualRoots(args, out var manualRoots, out var manualProblem))
         {
             Console.Error.WriteLine(
                 "--manual takes a path to test, such as --manual \"F:\\\" or --manual \"\\\\server\\share\\\". The manual " +
@@ -42,11 +56,14 @@ internal sealed class TestRunner
                 "after --manual is read as a missing path rather than as a root. A command line that cannot " +
                 "carry two leading backslashes may name the share as //server/share/ instead, which is read " +
                 "as the same volume.");
+            Console.Error.WriteLine($"        {manualProblem}");
             return 2;
         }
 
         var filter = ParseFilter(args);
         var kind = SelectKind(manualRoots, args);
+
+        ScratchWorkspace.Configure(scratchRoot);
 
         var selected = Select(cases, kind, filter);
 
@@ -58,6 +75,7 @@ internal sealed class TestRunner
 
         var runs = Expand(selected, manualRoots);
 
+        Console.WriteLine($"scratch root {ScratchWorkspace.RunRoot}");
         Console.WriteLine($"running {runs.Count} of {cases.Count} test(s)");
 
         if (kind is TestKind.Manual && args.Contains("--load", StringComparer.Ordinal))
@@ -72,6 +90,26 @@ internal sealed class TestRunner
 
         Console.WriteLine();
 
+        // Everything below writes files and removes directories, so the run's own tree goes with it rather
+        // than being left in the volume root for the next run to trip over. A run that fails still cleans
+        // up: the cases report through `runs`, not through what is left on disk.
+        try
+        {
+            return await ExecuteAsync(runs).ConfigureAwait(false);
+        }
+        finally
+        {
+            ScratchWorkspace.ReleaseRunRoot();
+        }
+    }
+
+    /// <summary>
+    /// Runs the selected cases in order and reports what they did.
+    /// </summary>
+    /// <param name="runs">One entry per case, or per case per named root for the manual group.</param>
+    /// <returns>0 when every case passed, 1 when one failed.</returns>
+    private static async Task<int> ExecuteAsync(List<(TestCase Case, string? Root)> runs)
+    {
         var passed = 0;
         List<string>? failures = null;
 
@@ -248,6 +286,61 @@ internal sealed class TestRunner
     };
 
     /// <summary>
+    /// Reads the <c>--scratch</c> root, the volume every case of this run works on.
+    /// </summary>
+    /// <returns>
+    /// <see langword="false"/> when the flag was left out, given no path, or given a path that is not a
+    /// volume root. Returning that rather than a fallback is the whole point: a default would put the suite's
+    /// writes and its recursive deletes on a volume the caller never chose.
+    /// </returns>
+    private static bool TryParseScratchRoot(string[] args, out string scratchRoot, out string problem)
+    {
+        scratchRoot = string.Empty;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i] is not "--scratch")
+            {
+                continue;
+            }
+
+            var value = i + 1 < args.Length ? args[i + 1] : null;
+
+            // The same rule --manual follows, for the same reason: a flag is not a path, and on an argument
+            // whose value decides where files are written and deleted, taking the next token either way would
+            // read a command line nobody wrote as the one they did.
+            if (string.IsNullOrWhiteSpace(value) || value.StartsWith('-'))
+            {
+                problem = value is null
+                    ? "--scratch is the last thing on the command line, so it has no volume root to work on."
+                    : $"--scratch is followed by \"{value}\", which is a flag rather than a volume root.";
+
+                return false;
+            }
+
+            try
+            {
+                scratchRoot = VolumeRoot.Require(value, "--scratch");
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            {
+                // Reported rather than thrown: a root nobody has is a command line to correct, and a stack
+                // trace from inside the runner says nothing about which argument was wrong.
+                problem = ex.Message;
+                return false;
+            }
+
+            i++;
+            problem = string.Empty;
+
+            return true;
+        }
+
+        problem = "The command line does not name a volume to test on.";
+        return false;
+    }
+
+    /// <summary>
     /// Reads the <c>--manual</c> roots, in the order they were given.
     /// </summary>
     /// <returns>
@@ -255,9 +348,10 @@ internal sealed class TestRunner
     /// than an empty list is what keeps <c>--manual</c> on its own from running the regular group and
     /// reading afterwards as though the manual cases had been asked for.
     /// </returns>
-    private static bool TryParseManualRoots(string[] args, out List<string> roots)
+    private static bool TryParseManualRoots(string[] args, out List<string> roots, out string problem)
     {
         roots = [];
+        problem = string.Empty;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -274,31 +368,28 @@ internal sealed class TestRunner
             // that must not be guessed.
             if (string.IsNullOrWhiteSpace(value) || value.StartsWith('-'))
             {
+                problem = value is null
+                    ? "--manual is the last thing on the command line, so it has no path to test."
+                    : $"--manual is followed by \"{value}\", which is a flag rather than a path to test.";
+
                 return false;
             }
 
-            roots.Add(ManualRootInTheLibrarysSpelling(value));
+            try
+            {
+                roots.Add(VolumeRoot.Normalize(value));
+            }
+            catch (ArgumentException ex)
+            {
+                problem = ex.Message;
+                return false;
+            }
+
             i++;
         }
 
         return true;
     }
-
-    /// <summary>
-    /// The root as the library spells a volume root, which is what the manual cases hand to it.
-    /// </summary>
-    /// <remarks>
-    /// A share is accepted written the way <see cref="Path"/> spells one and as <c>//server\share</c>.
-    /// The second spelling exists because not every command line can carry two leading backslashes: one
-    /// that collapses them delivers <c>\server\share\</c>, which <see cref="Path.GetPathRoot(string)"/> answers
-    /// <c>\"</c> for and which therefore resolves against the current drive rather than naming a volume.
-    /// The library deliberately refuses the forward-slash form — it is not the spelling Windows writes —
-    /// so the conversion belongs here, where the command line is read, and not in the library.
-    /// </remarks>
-    private static string ManualRootInTheLibrarysSpelling(string root) =>
-        root.StartsWith("//", StringComparison.Ordinal)
-            ? RecycleBinVolumeState.NormalizeVolumeRoot(root)
-            : root;
 
     private static string? ParseFilter(string[] args)
     {
