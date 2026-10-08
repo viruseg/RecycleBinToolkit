@@ -28,6 +28,10 @@ internal static class FacadeSuite
         new TestCase("FacadeSuite." + nameof(NoRecycleBinOptionDecidesWhetherTheShellIsAsked), NoRecycleBinOptionDecidesWhetherTheShellIsAsked),
         new TestCase("FacadeSuite." + nameof(OneBadVolumeDoesNotSinkTheBatch), OneBadVolumeDoesNotSinkTheBatch),
         new TestCase("FacadeSuite." + nameof(ARepeatedRefusedPathIsRefusedOnce), ARepeatedRefusedPathIsRefusedOnce),
+        new TestCase("FacadeSuite." + nameof(DeletePermanentlyRemovesTheFileAndNamesIt), DeletePermanentlyRemovesTheFileAndNamesIt),
+        new TestCase("FacadeSuite." + nameof(DeletePermanentlyRemovesADirectory), DeletePermanentlyRemovesADirectory),
+        new TestCase("FacadeSuite." + nameof(DeletePermanentlyReportsAFileSystemRefusal), DeletePermanentlyReportsAFileSystemRefusal),
+        new TestCase("FacadeSuite." + nameof(APathIsNeverBothRecycledAndPermanentlyDeleted), APathIsNeverBothRecycledAndPermanentlyDeleted),
     ];
 
     /// <summary>
@@ -368,6 +372,230 @@ internal static class FacadeSuite
             Check.Equal(file, result.FirstFailure!.Path, "and the failure names the caller's spelling");
             Check.Equal(0, result.RecycledPaths.Count, "nothing reached the Shell, so nothing was recycled");
             Check.True(File.Exists(file), "the file is untouched");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/> is the only answer a caller can give that loses
+    /// the file by choice, so it has to arrive as
+    /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> rather than as a success nobody can explain.
+    /// </summary>
+    /// <remarks>
+    /// The refusal above is what a caller who never asked for this gets on the very same volume. This is
+    /// its opposite: the file goes, and the result says so in the one list that says so.
+    /// <see cref="RecycleBinResult.RecycledPaths"/> is asserted empty rather than merely smaller, because
+    /// that is the claim a caller reads two lists for: a path in both would make the lists contradict each
+    /// other, which is worse than either one being wrong on its own.
+    /// </remarks>
+    private static async Task DeletePermanentlyRemovesTheFileAndNamesIt(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+
+        try
+        {
+            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var file = CreateOnSubstitutedVolume(letter);
+
+            var options = new RecycleBinOptions
+            {
+                ThrowOnError = false,
+                NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+            };
+
+            var result = await FileRecycler
+                .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            Check.True(result.Succeeded, $"the caller asked for the file to go (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+            Check.Equal(1, result.PermanentlyDeletedPaths.Count, "the removed path is named as removed");
+            Check.Equal(file, result.PermanentlyDeletedPaths[0], "in the spelling the caller supplied");
+            Check.Equal(0, result.RecycledPaths.Count, "and it is not also reported as recycled");
+            Check.Equal(0, result.Failures.Count, "removing a file the caller signed away is not a failure");
+            Check.False(File.Exists(file), "the file is gone from disk, which is the whole point of the option");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A directory is removed by the option as readily as a file, and by a call that understands it is one.
+    /// </summary>
+    /// <remarks>
+    /// The failure this guards against is quiet in the code and loud in the field: <c>File.Delete</c> on a
+    /// directory raises <see cref="UnauthorizedAccessException"/>, which reads as a permission problem and
+    /// sends an integrator looking for an access bug that is not there. What is asserted here is the
+    /// outcome — the tree is gone, the directory is named, and nothing escaped as an exception, since
+    /// <c>ThrowOnError</c> is off and a refusal would have been a reported failure rather than a throw.
+    /// </remarks>
+    private static async Task DeletePermanentlyRemovesADirectory(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+
+        try
+        {
+            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var root = SubstitutedRoot(letter);
+            Directory.CreateDirectory(root);
+
+            var directory = Path.Combine(root, $"tree-{Environment.ProcessId}");
+            var inner = Path.Combine(directory, "nested");
+            Directory.CreateDirectory(inner);
+            File.WriteAllText(Path.Combine(inner, "a.txt"), "hello");
+
+            var options = new RecycleBinOptions
+            {
+                ThrowOnError = false,
+                NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+            };
+
+            var result = await FileRecycler
+                .MoveToRecycleBinAsync([directory], options, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            Check.True(
+                result.Succeeded,
+                $"a directory the caller signed away is removed rather than refused (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+            Check.Equal(1, result.PermanentlyDeletedPaths.Count, "the directory is named as removed");
+            Check.Equal(directory, result.PermanentlyDeletedPaths[0], "in the spelling the caller supplied");
+            Check.False(Directory.Exists(directory), "the whole tree is gone from disk, contents included");
+            Check.Equal(0, result.RecycledPaths.Count, "and it was not recycled, on a volume that cannot recycle");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A file system that refuses the removal is reported as such, with the file system's own code, and
+    /// the file stays exactly where the caller left it.
+    /// </summary>
+    /// <remarks>
+    /// The hold is what a directory another process is working in looks like, and it is the only way to make
+    /// the file system say no on demand. The stage is pinned rather than the exception type because the
+    /// contract is the report, not the throw: with <see cref="RecycleBinOptions.ThrowOnError"/> off there is
+    /// none. A stage of <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> here would say the caller had
+    /// not consented — the opposite of what was asked, and the reason the stage is checked rather than left.
+    /// </remarks>
+    private static async Task DeletePermanentlyReportsAFileSystemRefusal(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+
+        try
+        {
+            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var file = CreateOnSubstitutedVolume(letter);
+
+            var options = new RecycleBinOptions
+            {
+                ThrowOnError = false,
+                NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+            };
+
+            using (new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var result = await FileRecycler
+                    .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+                    .ConfigureAwait(false);
+
+                Check.False(result.Succeeded, "a removal the file system refused is a failure");
+                Check.Equal(1, result.Failures.Count, "and it is the only one reported");
+                Check.Equal(file, result.FirstFailure!.Path, "naming the caller's path");
+                Check.Equal(
+                    RecycleFailureStage.PermanentDeleteFailed,
+                    result.FirstFailure.Stage,
+                    "at the removal itself, not at the volume that held it");
+                Check.Equal(0, result.FirstFailure.Attempts, "one removal was made and not retried");
+                Check.NotEqual(0, result.FirstFailure.HResult, "the file system's own error code came through");
+                Check.True(
+                    (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
+                    $"that code is a refusal rather than a success (got 0x{result.FirstFailure.HResult:X8})");
+                Check.Equal(0, result.PermanentlyDeletedPaths.Count, "and nothing was claimed as removed");
+                Check.Equal(0, result.RecycledPaths.Count, "nor as recycled");
+            }
+
+            Check.True(File.Exists(file), "the file is still there, because the refusal was the file system's and not the library's");
+        }
+        finally
+        {
+            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A path is in at most one of the two lists, whatever mix of volumes and outcomes produced the
+    /// result — the property a caller reads both lists for.
+    /// </summary>
+    /// <remarks>
+    /// The invariant rather than either outcome: a path cannot be both, so a caller cannot be told the file
+    /// went to the Recycle Bin and was also destroyed. It holds for every combination rather than for the
+    /// one the option makes interesting, which is why the batch carries a healthy volume next to the
+    /// bin-less one — the case that would catch a gate deleting paths it had no business touching, or a
+    /// permanently deleted path arriving through the runner as an ordinary recycle.
+    /// <para>
+    /// Compared without regard to case, because the two lists are written by different code and a caller
+    /// comparing them should not have to know that.
+    /// </para>
+    /// </remarks>
+    private static async Task APathIsNeverBothRecycledAndPermanentlyDeleted(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        var healthy = workspace.CreateRandomFiles(1, 4096);
+
+        try
+        {
+            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var removed = CreateOnSubstitutedVolume(letter);
+
+            var options = new RecycleBinOptions
+            {
+                ThrowOnError = false,
+                NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+            };
+
+            var result = await FileRecycler
+                .MoveToRecycleBinAsync([removed, healthy[0]], options, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            Check.True(result.Succeeded, $"both paths were handled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+            Check.Equal(1, result.PermanentlyDeletedPaths.Count, "the path on the bin-less volume was removed for good");
+            Check.Equal(1, result.RecycledPaths.Count, "and the one on the healthy volume reached the Recycle Bin");
+
+            var both = result.RecycledPaths
+                .Intersect(result.PermanentlyDeletedPaths, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            Check.Equal(0, both.Length, $"no path is in both lists, because the two cannot both be true of one file (overlap: {string.Join(", ", both)})");
         }
         finally
         {

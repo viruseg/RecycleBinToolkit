@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Security;
 using Windows.Win32.UI.Shell;
 
 namespace RecycleBinToolkit;
@@ -440,7 +439,7 @@ internal sealed class RecycleOperationRunner
         {
             if (options.LongPathFailureAction == LongPathFailureAction.DeletePermanently)
             {
-                if (TryDeletePermanently(target, permanentlyDeleted, out var refused))
+                if (PermanentDeleter.TryDelete(target, permanentlyDeleted, out var refused))
                 {
                     continue;
                 }
@@ -510,57 +509,6 @@ internal sealed class RecycleOperationRunner
         {
             failures.Add(new RecycleFailure(target.InputPath, PathTooLong, 0, RecycleFailureStage.LongPathNotRecyclable));
         }
-    }
-
-    /// <summary>
-    /// Removes a path the Shell could not recycle, reporting it as permanently deleted only once the
-    /// file system confirms it is gone.
-    /// </summary>
-    /// <returns>
-    /// <see langword="true"/> when the path is gone. On <see langword="false"/>,
-    /// <paramref name="refused"/> carries the file system's own error code, or 0 when nothing was raised
-    /// and the path is nonetheless still there, in which case the caller has nothing better to say than
-    /// that the path could not be handled.
-    /// </returns>
-    private static bool TryDeletePermanently(RecycleTarget target, List<string> permanentlyDeleted, out int refused)
-    {
-        try
-        {
-            // Directories need their own call, and asking for the wrong one is not a harmless mistake:
-            // File.Delete on a directory raises UnauthorizedAccessException, which reads as "you do not
-            // have permission" and sends the caller looking for an access problem that has nothing to do
-            // with what actually went wrong.
-            if (Directory.Exists(target.FullPath))
-            {
-                Directory.Delete(target.FullPath, recursive: true);
-            }
-            else
-            {
-                File.Delete(target.FullPath);
-            }
-        }
-        catch (Exception ex) when (ex is IOException
-            or UnauthorizedAccessException
-            or NotSupportedException
-            or ArgumentException
-            or SecurityException)
-        {
-            // Everything the file system raises for one path. Run is documented never to throw for a per-item
-            // failure, so an exception type missing from here is a whole batch lost to one file rather than
-            // one failure recorded.
-            refused = ex.HResult;
-            return false;
-        }
-
-        if (File.Exists(target.FullPath) || Directory.Exists(target.FullPath))
-        {
-            refused = 0;
-            return false;
-        }
-
-        permanentlyDeleted.Add(target.InputPath);
-        refused = 0;
-        return true;
     }
 
     /// <summary>

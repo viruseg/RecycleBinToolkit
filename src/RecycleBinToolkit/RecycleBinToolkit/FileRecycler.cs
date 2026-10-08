@@ -10,9 +10,10 @@ namespace RecycleBinToolkit;
 /// Shell work runs on a dedicated worker thread, so callers never pay for COM initialisation and
 /// never block inside the Shell.
 /// <para>
-/// A path whose volume cannot recycle it is refused before the Shell is asked, so it is never
-/// removed for good while the operation reports success. What happens to it instead is
-/// <see cref="RecycleBinOptions.NoRecycleBinAction"/>.
+/// A path whose volume cannot recycle it is settled before the Shell is asked, so it is never
+/// removed for good while the operation reports it as recycled. What happens to it instead is
+/// <see cref="RecycleBinOptions.NoRecycleBinAction"/>: left where it is, handed over, or removed by
+/// this library and named in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
@@ -203,8 +204,8 @@ public static class FileRecycler
     }
 
     /// <summary>
-    /// Takes every target whose volume cannot recycle it out of the list the Shell will be handed, and
-    /// records one failure per refused path.
+    /// Takes every target whose volume cannot recycle it out of the list the Shell will be handed, then
+    /// either records one failure per refused path or removes the paths the caller asked to have removed.
     /// </summary>
     /// <remarks>
     /// The refusal happens here rather than after the operation because there is nothing left to refuse
@@ -212,6 +213,11 @@ public static class FileRecycler
     /// delete as a success, so a caller told <see cref="RecycleBinResult.Succeeded"/> would be told the
     /// opposite of what happened. Refused paths never reach the worker at all, which is what makes that
     /// structural rather than a check somebody can reorder.
+    /// <para>
+    /// A caller's <see cref="NoRecycleBinAction.DeletePermanently"/> is applied here too, for the same
+    /// reason and by the same route: through the Shell that removal would come back as a recycle of a file
+    /// that no longer exists, so the removal is this library's own and the two lists can be told apart.
+    /// </para>
     /// <para>
     /// Each distinct volume root is inspected once, so a batch of twenty thousand files on one volume
     /// pays for one probe rather than twenty thousand, and nothing is remembered afterwards: a mount or a
@@ -222,14 +228,14 @@ public static class FileRecycler
     /// </remarks>
     /// <param name="targets">Validated targets, reduced to the ones the Shell may be handed.</param>
     /// <param name="failures">
-    /// Collects one failure per refused path, after the validation failures. A path listed twice is
-    /// refused once, as <see cref="RecycleOperationRunner.CollapseEquivalentPaths"/> would have recycled
-    /// it once.
+    /// Collects one failure per refused path and one per path the file system would not remove, after the
+    /// validation failures. A path listed twice is acted on once, as
+    /// <see cref="RecycleOperationRunner.CollapseEquivalentPaths"/> would have recycled it once.
     /// </param>
     /// <param name="permanentlyDeleted">
-    /// Collects the paths removed outright rather than handed over. Nothing reaches it yet:
-    /// <see cref="NoRecycleBinAction.DeletePermanently"/> is not wired to a permanent delete, so a path
-    /// on a volume that cannot recycle is either handed to the Shell or refused, and never removed here.
+    /// Collects the paths removed outright rather than handed over, which is what
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/> asks for on a volume this library will not
+    /// recycle on the caller's behalf. Empty under either other action.
     /// </param>
     /// <param name="options">Carries the caller's choice for a volume that cannot recycle.</param>
     private static void RefuseVolumesThatCannotRecycle(
@@ -258,6 +264,7 @@ public static class FileRecycler
         }
 
         HashSet<string>? refused = null;
+        HashSet<string>? deleted = null;
 
         foreach (var (root, group) in byVolumeRoot)
         {
@@ -273,6 +280,12 @@ public static class FileRecycler
 
             if (!RecycleBinVolumePolicy.RefusesRecycle(status.Reason, options.NoRecycleBinAction))
             {
+                if (DeletesPermanentlyHere(status.Reason, options.NoRecycleBinAction))
+                {
+                    deleted ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    RemoveOutright(group, deleted, permanentlyDeleted, failures);
+                }
+
                 continue;
             }
 
@@ -299,14 +312,74 @@ public static class FileRecycler
             }
         }
 
-        if (refused is null)
-        {
-            return;
-        }
-
         // Removed by location rather than rebuilt, so the surviving targets stay in the order the caller
         // supplied them and the worker sees a batch shaped exactly as it did before the gate.
-        targets.RemoveAll(target => refused.Contains(target.ShellPath));
+        if (refused is not null)
+        {
+            targets.RemoveAll(target => refused.Contains(target.ShellPath));
+        }
+
+        if (deleted is not null)
+        {
+            targets.RemoveAll(target => deleted.Contains(target.ShellPath));
+        }
+    }
+
+    /// <summary>
+    /// Whether the caller's own answer asks for the paths on this volume to be removed here, rather than
+    /// refused or handed over.
+    /// </summary>
+    /// <remarks>
+    /// Both conditions are needed. The caller must have declined the refusal, which rules out
+    /// <see cref="NoRecycleBinAction.AllowIndeterminate"/>: that action asks for the Shell to be asked,
+    /// and the file it loses there is lost on the Shell's report rather than on this library's account.
+    /// <para>
+    /// And the volume must be one this library could not recycle on the caller's behalf. An
+    /// <see cref="RecycleBinAvailabilityReason.Enabled"/> volume refused nothing, so a path on it belongs to
+    /// the Shell whatever the caller said about bins — including when the volume is the one hosting the
+    /// caller's own data.
+    /// </para>
+    /// </remarks>
+    private static bool DeletesPermanentlyHere(RecycleBinAvailabilityReason reason, NoRecycleBinAction action) =>
+        action == NoRecycleBinAction.DeletePermanently && reason != RecycleBinAvailabilityReason.Enabled;
+
+    /// <summary>
+    /// Removes every path in <paramref name="group"/> for good, recording the ones that went and a failure
+    /// for each one the file system would not remove.
+    /// </summary>
+    /// <param name="group">Every target on one volume root, in batch order.</param>
+    /// <param name="removed">
+    /// Collects the shell paths acted on, so the batch can be reduced to what the Shell is left to do.
+    /// The first spelling of a path is the one acted on, so a caller who listed one path twice reads one
+    /// removal and one record — what <see cref="RecycleOperationRunner.CollapseEquivalentPaths"/> would
+    /// have recycled once.
+    /// </param>
+    /// <param name="permanentlyDeleted">Receives the caller's own spelling of each path confirmed gone.</param>
+    /// <param name="failures">Receives one failure per path the file system refused to remove.</param>
+    private static void RemoveOutright(
+        List<RecycleTarget> group,
+        HashSet<string> removed,
+        List<string> permanentlyDeleted,
+        List<RecycleFailure> failures)
+    {
+        foreach (var target in group)
+        {
+            if (!removed.Add(target.ShellPath))
+            {
+                continue;
+            }
+
+            if (PermanentDeleter.TryDelete(target, permanentlyDeleted, out var hResult))
+            {
+                continue;
+            }
+
+            // A refusal carrying no code of its own is still a refusal, and there is nowhere else for the
+            // path to go: on this volume the Shell would destroy it and report a recycle. Saying so is the
+            // whole answer available, and saying it as PermanentDeleteFailed keeps the reason the caller
+            // gave visible rather than blaming the volume they were never asked about.
+            failures.Add(new RecycleFailure(target.InputPath, hResult, attempts: 0, RecycleFailureStage.PermanentDeleteFailed));
+        }
     }
 
     /// <summary>

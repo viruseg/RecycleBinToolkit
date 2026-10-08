@@ -56,10 +56,17 @@ public enum RecycleFailureStage
     Enumeration = 6,
 
     /// <summary>
-    /// The path was too long for the Shell and removing it outright was asked for, but the file system
-    /// refused. Distinct from <see cref="LongPathNotRecyclable"/> because the length was never the
-    /// obstacle here: the file is exactly as the caller left it.
+    /// The caller asked for a path to be removed for good — because it was too long for the Shell and
+    /// <see cref="RecycleBinOptions.LongPathFailureAction"/> was
+    /// <see cref="LongPathFailureAction.DeletePermanently"/>, or because its volume cannot recycle it and
+    /// <see cref="RecycleBinOptions.NoRecycleBinAction"/> was
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/> — but the file system refused.
     /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="LongPathNotRecyclable"/> because neither obstacle was the length: the file
+    /// is exactly as the caller left it, and the caller is the one who asked for the removal to happen at
+    /// all.
+    /// </remarks>
     PermanentDeleteFailed = 7
 }
 
@@ -137,10 +144,13 @@ public sealed class RecycleBinResult
     public IReadOnlyList<string> RecycledPaths { get; }
 
     /// <summary>
-    /// Paths, as supplied by the caller, that were removed permanently instead of being recycled,
+    /// Paths, as supplied by the caller, that were removed permanently instead of being recycled:
     /// because their length put them past the Shell's limit and
     /// <see cref="RecycleBinOptions.LongPathFailureAction"/> was
-    /// <see cref="LongPathFailureAction.DeletePermanently"/>. Empty unless that action was taken.
+    /// <see cref="LongPathFailureAction.DeletePermanently"/>, or because their volume cannot recycle them
+    /// and <see cref="RecycleBinOptions.NoRecycleBinAction"/> was
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/>. Empty unless one of those was taken, and a path
+    /// in here is never also in <see cref="RecycledPaths"/>.
     /// </summary>
     public IReadOnlyList<string> PermanentlyDeletedPaths { get; }
 
@@ -227,17 +237,16 @@ public sealed class RecycleBinResult
     /// keeping every other part of the outcome as it was.
     /// </summary>
     /// <remarks>
-    /// The counterpart of <see cref="WithFailures"/>, for the paths a refusal removed for good rather than
-    /// reporting as failed. The two are merged by the same operation, and rebuilding the outcome through
-    /// a constructor that does not take every part would reset
+    /// The counterpart of <see cref="WithFailures"/>, for the paths removed for good on the way in rather
+    /// than reported as failures. The two are merged by the same operation, and rebuilding the outcome
+    /// through a constructor that does not take every part would reset
     /// <see cref="LeftoverStagingDirectories"/> — the list a caller reads to find data of its own that
     /// the operation could not put back.
     /// </remarks>
     /// <param name="permanentlyDeletedPaths">
-    /// The paths the copy should carry as removed permanently, in the order they should be read. Nothing
-    /// reaches this list yet: <see cref="NoRecycleBinAction.DeletePermanently"/> is not wired to a
-    /// permanent delete, so a path on a volume that cannot recycle is either handed to the Shell or
-    /// refused, and never removed here.
+    /// The paths the copy should carry as removed permanently, in the order they should be read. The gate's
+    /// own removals come before the operation's, because they happened before the batch reached the Shell
+    /// at all.
     /// </param>
     internal RecycleBinResult WithPermanentlyDeleted(IReadOnlyList<string> permanentlyDeletedPaths) =>
         new(RecycledPaths, permanentlyDeletedPaths, Failures, Elapsed, LeftoverStagingDirectories);

@@ -383,7 +383,7 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `ReceiptVerification` | The delete reported success but the result did not reach the Recycle Bin. |
 | `LongPathNotRecyclable` | The path is too long for the Shell. It was never handed over. |
 | `NoRecycleBinOnVolume` | The volume holding the path cannot recycle it and the caller asked for a Recycle Bin, so the path was never handed over and the file is where the caller left it. `Attempts` is `0`, and `HResult` carries the Shell's own code where the Shell named the volume — `0x80070003` on a substituted drive, `0x80004005` on a removable volume with no `$RECYCLE.BIN` — and `0` where no Shell refusal backs the record, whether the refusal was settled from configuration or a bin appeared between the probe and the code's own query. |
-| `PermanentDeleteFailed` | The path was too long and removing it outright was asked for, but the file system refused — a handle is held, the attributes are read-only. The file is exactly as the caller left it. |
+| `PermanentDeleteFailed` | You asked for a path to be removed for good — `LongPathFailureAction.DeletePermanently` for a path too long for the Shell, `NoRecycleBinAction.DeletePermanently` for one whose volume cannot recycle it — and the file system refused: a handle is held, the attributes are read-only. The file is exactly as you left it. |
 | `Enumeration` | The Shell would not describe a Recycle Bin entry, or a volume could not be read. Only reachable while reading or emptying the Recycle Bin. |
 
 `HResult` carries the Shell's own code, or the file system's where the file system refused, or the
@@ -406,10 +406,11 @@ What to do with a path past the Shell's limit.
 `ThrowOnError` is the global switch and has the final say. With it off, `LongPathFailureAction.Throw`
 raises nothing and the path arrives in `Failures` instead.
 
-A volume that cannot recycle is settled *before* any of this: a too-long path on such a volume is
-refused at `NoRecycleBinOnVolume` with the file left in place, whichever value is set here. The volume is
-the more fundamental fact, and its answer is reached before the path's length is looked at — so
-`DeletePermanently` does not run, and the path never reaches `PermanentlyDeletedPaths`.
+A volume that cannot recycle is settled *before* any of this: a too-long path on such a volume never
+reaches `LongPathFailureAction` at all. Under `NoRecycleBinAction.Throw` it is refused at
+`NoRecycleBinOnVolume` with the file left in place; under `NoRecycleBinAction.DeletePermanently` the
+volume gate removes it outright. Both routes end in `PermanentlyDeletedPaths`, and the volume is the
+more fundamental fact — its answer is reached before the path's length is looked at.
 
 ### `NoRecycleBinAction`
 
@@ -419,7 +420,7 @@ What to do with a path on a volume that cannot recycle it.
 | --- | --- |
 | `Throw` | Default. The path is refused, the file stays where it is, and the Shell is never asked. Raises only when `ThrowOnError` is also on. |
 | `AllowIndeterminate` | The path is handed over even though the volume's answer was not `Enabled` — the answer was `Indeterminate` or `NoRecycleBinOnVolume`. The Shell may remove the file for good and still report success. |
-| `DeletePermanently` | The file is removed for good and listed in `PermanentlyDeletedPaths`, never in `RecycledPaths`. |
+| `DeletePermanently` | The file is removed for good by the library itself — the Shell is never asked — and listed in `PermanentlyDeletedPaths`, never in `RecycledPaths`. A file system that refuses reports `PermanentDeleteFailed` and leaves the file in place. |
 
 The values run from safest to most destructive, and `ThrowOnError` is still the global switch: with it
 off, a refusal arrives in `Failures` instead of an exception.
@@ -826,14 +827,14 @@ such key is answered `Indeterminate` or `NoRecycleBinOnVolume` — both refused 
 `NoRecycleBinAction.Throw`. The suite checks this before it deletes anything and names the key rather
 than failing a hundred cases at once.
 
-The suite is a console application with no external packages: 122 cases covering batch and single-path
+The suite is a console application with no external packages: 126 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies,
 volumes with no Recycle Bin, and a ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing,
 emptying and status checking are covered by their own suites. It writes only to `E:\RC\Test` (or the
 project root) and moves the committed fixture files it uses.
 
-**Four of the 122 are load cases and run only on request.** They are the ones that work the disk hard enough
+**Four of the 126 are load cases and run only on request.** They are the ones that work the disk hard enough
 to notice: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
 through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
 nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —

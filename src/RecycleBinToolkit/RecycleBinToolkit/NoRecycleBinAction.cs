@@ -41,15 +41,14 @@ public enum NoRecycleBinAction
     /// </summary>
     /// <remarks>
     /// It is never listed in <see cref="RecycleBinResult.RecycledPaths"/>: calling a permanent deletion
-    /// recycled would tell the caller the opposite of what happened.
+    /// recycled would tell the caller the opposite of what happened. The removal is this library's own
+    /// rather than the Shell's, because on such a volume the Shell's only move is to destroy the file and
+    /// it reports the delete as a success — which is the risk <see cref="AllowIndeterminate"/> accepts and
+    /// this value does not.
     /// <para>
-    /// That contract is not implemented yet. This value declines to refuse, so a path whose volume answers
-    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> or
-    /// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/> is handed to the Shell — which on
-    /// such a volume removes the file for good and reports success. The outcome described above therefore
-    /// arrives in <see cref="RecycleBinResult.RecycledPaths"/>, and
-    /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> stays empty until this value is wired to a
-    /// permanent delete.
+    /// A file system that refuses the removal is reported at
+    /// <see cref="RecycleFailureStage.PermanentDeleteFailed"/> carrying its own code, and the file stays
+    /// exactly where the caller left it.
     /// </para>
     /// </remarks>
     DeletePermanently
