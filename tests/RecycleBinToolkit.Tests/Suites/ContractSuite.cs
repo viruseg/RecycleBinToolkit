@@ -562,6 +562,13 @@ internal static class ContractSuite
         Check.Equal(TimeSpan.FromSeconds(30), options.OverallTimeout, "OverallTimeout default");
         Check.True(options.VerifyRecycleBinReceipt, "VerifyRecycleBinReceipt default is on");
 
+        // Flipping this one default would make every caller destroy files on a volume that cannot
+        // recycle them, so it is pinned by name rather than left to the property initialiser.
+        Check.Equal(
+            NoRecycleBinAction.Throw,
+            options.NoRecycleBinAction,
+            "NoRecycleBinAction defaults to Throw, which refuses instead of destroying");
+
         return Task.CompletedTask;
     }
 
@@ -582,12 +589,20 @@ internal static class ContractSuite
         {
             MaxAttempts = 3,
             InitialRetryDelay = TimeSpan.FromMilliseconds(10),
-            OverallTimeout = TimeSpan.FromSeconds(5)
+            OverallTimeout = TimeSpan.FromSeconds(5),
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
         }.Normalize();
 
         Check.Equal(3, kept.MaxAttempts, "a valid MaxAttempts survives normalisation");
         Check.Equal(TimeSpan.FromMilliseconds(10), kept.InitialRetryDelay, "a valid delay survives normalisation");
         Check.Equal(TimeSpan.FromSeconds(5), kept.OverallTimeout, "a valid timeout survives normalisation");
+
+        // Normalize copies the value, and a copy that quietly dropped it would hand the gate the
+        // property initialiser's default for every caller that asked for anything else.
+        Check.Equal(
+            NoRecycleBinAction.DeletePermanently,
+            kept.NoRecycleBinAction,
+            "the chosen NoRecycleBinAction survives normalisation");
 
         return Task.CompletedTask;
     }

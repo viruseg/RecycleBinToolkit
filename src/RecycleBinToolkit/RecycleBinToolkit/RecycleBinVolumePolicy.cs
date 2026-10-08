@@ -76,9 +76,10 @@ internal static class RecycleBinVolumePolicy
     /// leave such a machine with no way to recycle at all except
     /// <see cref="NoRecycleBinAction.DeletePermanently"/>, that is, no way except to destroy the file.
     /// <para>
-    /// <see cref="RecycleBinAvailabilityReason.VolumeNotFound"/> ignores the setting: the path is not on
-    /// disk, so there is nothing to destroy and nothing to hand over. It is rejected as a missing path
-    /// before this decision is ever reached.
+    /// <see cref="RecycleBinAvailabilityReason.VolumeNotFound"/> ignores the setting: the volume holding
+    /// the path is not mounted, so there is nothing to hand over and nothing to destroy. A path that is
+    /// itself missing is a different case, and it is rejected earlier, at
+    /// <see cref="RecycleFailureStage.PathValidation"/>.
     /// </para>
     /// </remarks>
     internal static bool RefusesRecycle(RecycleBinAvailabilityReason reason, NoRecycleBinAction action) =>
