@@ -17,6 +17,7 @@ internal static class ListerSuite
         new TestCase("ListerSuite." + nameof(ListedItemReportsItsPhysicalPathInsideTheRecycleBin), ListedItemReportsItsPhysicalPathInsideTheRecycleBin),
         new TestCase("ListerSuite." + nameof(ListedDirectoryIsMarkedAsOne), ListedDirectoryIsMarkedAsOne),
         new TestCase("ListerSuite." + nameof(VolumeFilterKeepsOnlyItemsFromThatVolume), VolumeFilterKeepsOnlyItemsFromThatVolume),
+        new TestCase("ListerSuite." + nameof(VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn), VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn),
         new TestCase("ListerSuite." + nameof(MissingVolumeIsReportedNotThrown), MissingVolumeIsReportedNotThrown),
         new TestCase("ListerSuite." + nameof(ListingReportsEveryFileOfABatchRecycledTogether), ListingReportsEveryFileOfABatchRecycledTogether),
     ];
@@ -43,7 +44,7 @@ internal static class ListerSuite
         var deletedAfter = DateTimeOffset.Now.AddMinutes(-1);
         var contents = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
 
-        var item = contents.Items.FirstOrDefault(i => i.OriginalPath == files[0]);
+        var item = contents.Items.FirstOrDefault(i => IsSamePath(i, files[0]));
         Check.NotNull(item, $"the recycled file is listed under the path it was deleted from ({contents.Items.Count} item(s) on the machine)");
         Check.Equal(Path.GetFileName(files[0]), item!.Name, "the name is the file name it had before deletion");
         Check.Equal(fileSize, item.Size, $"the size is the {fileSize} bytes that reached the Recycle Bin");
@@ -71,7 +72,7 @@ internal static class ListerSuite
 
         var contents = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
 
-        var item = contents.Items.FirstOrDefault(i => i.OriginalPath == files[0]);
+        var item = contents.Items.FirstOrDefault(i => IsSamePath(i, files[0]));
         Check.NotNull(item, "the recycled file is listed");
         Check.NotNull(item!.RecycledPath, "the physical Recycle Bin path is reported");
         Check.True(
@@ -103,7 +104,7 @@ internal static class ListerSuite
 
         var contents = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
 
-        var item = contents.Items.FirstOrDefault(i => i.OriginalPath == directory);
+        var item = contents.Items.FirstOrDefault(i => IsSamePath(i, directory));
         Check.NotNull(item, "the recycled directory is listed under its original path");
         Check.True(item!.IsDirectory, "a recycled directory is reported as a directory");
 
@@ -131,14 +132,57 @@ internal static class ListerSuite
         var filtered = await RecycleBin.GetItemsAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(
-            all.Items.Any(i => i.OriginalPath == files[0]),
+            all.Items.Any(i => IsSamePath(i, files[0])),
             "the unfiltered listing spans the machine and holds the item");
         Check.True(
-            filtered.Items.Any(i => i.OriginalPath == files[0]),
+            filtered.Items.Any(i => IsSamePath(i, files[0])),
             $"the filtered listing still holds the item from {volumeRoot}");
         Check.True(
-            filtered.Items.All(i => Path.GetPathRoot(i.OriginalPath) == volumeRoot),
+            filtered.Items.All(i => string.Equals(Path.GetPathRoot(i.OriginalPath), volumeRoot, StringComparison.OrdinalIgnoreCase)),
             $"every filtered item comes from {volumeRoot}");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The root a caller holds and the spelling the Shell recorded are written by different parties, and
+    /// only one of them is the Shell's answer. Windows writes the drive letter in whichever case it likes
+    /// and reads every case, the library passes the recorded path through as recorded, and a caller who
+    /// reached for <c>e:\</c> still has to find <c>E:\…</c>. The filter is the library's side of that: a
+    /// listing filtered by a differently written root that comes back empty is a listing the caller cannot
+    /// tell apart from an empty Recycle Bin.
+    /// </summary>
+    /// <remarks>
+    /// The letter is flipped on the root the item was actually recorded under rather than on the scratch
+    /// root, so the two spellings under comparison cannot come out equal by accident — the case has to
+    /// survive a filter that ignores case, not one that happened to be handed its own root back.
+    /// </remarks>
+    private static async Task VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        var files = workspace.CreateRandomFiles(1, 4096);
+
+        var recycled = await FileRecycler
+            .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "the file was recycled");
+
+        var contents = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
+
+        var recorded = contents.Items.FirstOrDefault(i => IsSamePath(i, files[0]));
+        Check.NotNull(recorded, $"the recycled file is listed whatever the Shell wrote it as ({contents.Items.Count} item(s) on the machine)");
+
+        var asTheShellWroteIt = Path.GetPathRoot(recorded!.OriginalPath)!;
+        var differentlyWritten = WithFirstLetterFlipped(asTheShellWroteIt);
+
+        Check.True(Directory.Exists(differentlyWritten), $"\"{differentlyWritten}\" names the same volume as \"{asTheShellWroteIt}\", so a filter against it is asking about a volume and not about nothing");
+
+        var filtered = await RecycleBin.GetItemsAsync(differentlyWritten, context.CancellationToken).ConfigureAwait(false);
+
+        Check.True(
+            filtered.Items.Any(i => IsSamePath(i, files[0])),
+            $"the listing keeps the item when the root is written \"{differentlyWritten}\" rather than \"{asTheShellWroteIt}\"");
 
         workspace.Dispose();
     }
@@ -181,13 +225,57 @@ internal static class ListerSuite
 
         foreach (var file in files)
         {
-            Check.True(contents.Items.Any(i => i.OriginalPath == file), $"{file} is listed");
+            Check.True(contents.Items.Any(i => IsSamePath(i, file)), $"{file} is listed");
         }
 
-        var listed = contents.Items.Where(i => files.Contains(i.OriginalPath)).ToArray();
+        var listed = contents.Items.Where(i => files.Any(file => IsSamePath(i, file))).ToArray();
         Check.True(listed.Length >= fileCount, $"every path is accounted for, allowing for repeat deletions (got {listed.Length} for {fileCount} path(s))");
         Check.True(contents.TotalSize >= fileCount * (long)fileSize, $"the total size covers the batch ({contents.TotalSize} byte(s))");
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Whether a listed item is the one that was deleted from <paramref name="path"/>.
+    /// </summary>
+    /// <remarks>
+    /// Compared without regard to case, because the two sides are not written by the same party: the path
+    /// is the caller's and the listing carries whatever spelling the Shell recorded, and the Shell writes
+    /// the drive letter its own way however the caller passed it. Compared ordinally, this reports a
+    /// listing that is correct as missing — on any machine where the caller reached for the volume in the
+    /// other case, which is a spelling of the volume Windows accepts without complaint.
+    /// </remarks>
+    private static bool IsSamePath(RecycleBinItem item, string path) =>
+        string.Equals(item.OriginalPath, path, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The same root with its first letter written in the opposite case.
+    /// </summary>
+    /// <remarks>
+    /// The drive letter for <c>D:\</c>, the server name for <c>\\server\share\</c> — whichever letter comes
+    /// first is the one Windows rewrites on its own and never echoes back, so flipping it yields a
+    /// spelling that certainly differs from the one a path on that volume was recorded under.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="root"/> has no letter to flip, so no second spelling of it can be written at all. A
+    /// root like that would make the case compare a spelling with itself and pass whatever the filter did.
+    /// </exception>
+    private static string WithFirstLetterFlipped(string root)
+    {
+        for (var index = 0; index < root.Length; index++)
+        {
+            if (!char.IsLetter(root[index]))
+            {
+                continue;
+            }
+
+            var letter = char.IsUpper(root[index])
+                ? char.ToLowerInvariant(root[index])
+                : char.ToUpperInvariant(root[index]);
+
+            return string.Concat(root.AsSpan(0, index), letter.ToString(), root.AsSpan(index + 1));
+        }
+
+        throw new InvalidOperationException($"\"{root}\" has no letter, so it has no second spelling and nothing could be compared against it.");
     }
 }

@@ -88,7 +88,7 @@ the hardware adds is the only thing allowed to stay behind the flag.
 | `VolumeSuite.AVolumeWithoutARecycleBinCanBeDeletedOnRequest` | `FacadeSuite.DeletePermanentlyRemovesTheFileAndNamesIt` |
 | `VolumeSuite.AStatusAndAnEmptyReadTheSameRootTheSameWay` | `EmptySuite.AForwardSlashSpellingIsTheVolumeToEmpty`, `EmptySuite.AnExtendedLengthRootIsTheVolumeToEmpty` |
 
-The group is three cases. With four load cases that leaves 138 of the 145 registered cases in the default
+The group is three cases. With four load cases that leaves 139 of the 146 registered cases in the default
 run; `--all` prints all three numbers, so a count in a document that disagrees with it is the document
 being wrong.
 

@@ -11,10 +11,16 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 internal static class VolumeRoot
 {
     /// <summary>
-    /// The root as the library spells a volume root, with a trailing separator.
+    /// The root as a volume root is spelled, with a trailing separator.
     /// </summary>
     /// <param name="value">What the caller typed.</param>
-    /// <returns>The same volume, in the spelling the library and the Shell both read.</returns>
+    /// <returns>
+    /// The root with its separators reduced to backslashes and its own spelling otherwise left alone. A
+    /// forward-slash spelling of a share is converted because the command line is the only thing standing
+    /// between the two; the case of a drive letter is not, because the Shell reports the paths it recorded
+    /// in its own case whatever this returned, so rewriting it here would make one side of a comparison
+    /// agree with the other without making either of them right.
+    /// </returns>
     /// <exception cref="ArgumentException">
     /// <paramref name="value"/> does not name a volume root. A path inside a volume, a relative path and a
     /// bare drive letter all land here: each of them resolves against something other than the volume it
@@ -70,7 +76,7 @@ internal static class VolumeRoot
     /// <param name="flag">
     /// The flag the value came from, named in the failure so a reader is told which argument to correct.
     /// </param>
-    /// <returns>The root, in the spelling the library reads.</returns>
+    /// <returns>The root, with the caller's spelling and backslash separators.</returns>
     /// <exception cref="ArgumentException"><paramref name="value"/> does not name a volume root.</exception>
     /// <exception cref="InvalidOperationException">
     /// The machine has no such volume. <c>Normalize</c> cannot tell a mounted root from an unmounted one —

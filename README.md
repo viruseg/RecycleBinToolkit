@@ -463,6 +463,14 @@ current Windows build, which is why this is worth stating:
 Binding an `IPropertyStore` onto a Recycle Bin entry answers `CO_E_NOT_SUPPORTED`, which is why the
 recycle properties are read through `IShellItem2` instead.
 
+**Match this field against your own paths without regard to case.** `OriginalPath` is the path as the
+Shell recorded it, and the Shell writes the drive letter its own way: an entry deleted from a volume the
+caller reached for as `e:\` comes back as `E:\…`. The library does not rewrite it, because a path the Shell
+wrote down is reported as the Shell wrote it. Windows paths are case-insensitive, so a caller comparing
+this field with a path it holds compares it that way — `GetItemsAsync`'s volume filter does, which is what
+makes `--scratch 'e:\'` and `--scratch 'E:\'` behave identically, and an ordinal comparison of the same pair
+reports a correct listing as empty.
+
 > One original path can appear more than once. Deleting the same file twice leaves two entries with two
 > deletion times, and both are listed.
 
@@ -845,7 +853,7 @@ such key is answered `Indeterminate` or `NoRecycleBinOnVolume` — both refused 
 `NoRecycleBinAction.Throw`. The suite checks this before it deletes anything and names the key rather
 than failing a hundred cases at once.
 
-The suite is a console application with no external packages: 138 cases covering batch and single-path
+The suite is a console application with no external packages: 139 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies, a
 ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardware only, behind
@@ -853,7 +861,7 @@ ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardw
 suites. The default run writes only inside the directory it claimed under `--scratch`; `--manual` writes
 wherever you tell it to.
 
-**The 145 cases divide into three groups, and `--all` runs 138 of them.** Four are load cases that run only
+**The 146 cases divide into three groups, and `--all` runs 139 of them.** Four are load cases that run only
 on request: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
 through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
 nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —
