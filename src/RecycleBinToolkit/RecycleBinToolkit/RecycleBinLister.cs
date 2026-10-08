@@ -113,6 +113,13 @@ internal static unsafe class RecycleBinLister
             {
                 TryReadItem(buffer[i], items, failures);
             }
+
+            // The buffer is reused by the next block, so without this it holds the previous block's
+            // Shell objects alive for the whole enumeration — on a Recycle Bin of tens of thousands of
+            // entries, every object ever fetched is still referenced when the listing ends. Emptying the
+            // slots lets each one be collected as soon as it has been read, and lets the next block
+            // overwrite them rather than accumulate behind them.
+            Array.Clear(buffer, 0, (int)fetched);
         }
     }
 
