@@ -41,10 +41,12 @@ internal static class FacadeSuite
     /// still reports success. Nothing here is asserted about the Shell's behaviour on the volume — only
     /// about what this library did with the answer, which is why the file is asserted to be untouched.
     /// <para>
-    /// <c>HResult</c> is checked for a severity bit rather than against a literal: the code is the
-    /// Shell's, it differs by volume (<c>0x80070003</c> on a substituted drive, <c>0x80004005</c> on the
-    /// removable volume measured in the spec), and what matters here is that a code came through
-    /// unchanged instead of being normalised to zero.
+    /// <c>HResult</c> is pinned against an independent read of the same volume rather than against a
+    /// literal. The code is the Shell's and it differs by volume — <c>0x80070003</c> on a substituted
+    /// drive, <c>0x80004005</c> on the removable volume measured in the spec — so what matters is that
+    /// the volume's own code came through unchanged instead of being normalised to zero or standing in
+    /// as a constant. The severity bit is checked as well, because it is the check a caller is told to
+    /// make in the README and it would not notice a substituted constant.
     /// </para>
     /// </remarks>
     private static async Task RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff(TestContext context)
@@ -71,6 +73,10 @@ internal static class FacadeSuite
             Check.Equal(RecycleFailureStage.NoRecycleBinOnVolume, result.FirstFailure!.Stage, "the failure names the volume, not the Shell's doing");
             Check.Equal(file, result.FirstFailure.Path, "the failure names the caller's path");
             Check.Equal(0, result.FirstFailure.Attempts, "nothing was attempted, because nothing was handed over");
+            Check.Equal(
+                RecycleBinVolume.Measure(SubstitutedRoot(letter)).HResult,
+                result.FirstFailure.HResult,
+                "the code is the Shell's own for this volume, not a constant");
             Check.NotEqual(0, result.FirstFailure.HResult, "the Shell's own error code came through rather than a zero");
             Check.True(
                 (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
@@ -96,6 +102,12 @@ internal static class FacadeSuite
     /// documents a refusal as an <see cref="IOException"/> whose <see cref="Exception.HResult"/> carries
     /// the Shell code, and this is one. The file assertion is inside the same call's aftermath, so a
     /// caller that catches the exception and then looks at the path learns the truth.
+    /// <para>
+    /// The code is pinned against an independent read of the same volume for the reason given on
+    /// <see cref="RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff"/>: a constant or a normalised zero would
+    /// satisfy the severity bit alone, and this overload is the one a caller who sets
+    /// <see cref="RecycleBinOptions.ThrowOnError"/> actually reads.
+    /// </para>
     /// </remarks>
     private static async Task RefusedPathRaisesWhenThrowOnErrorIsOn(TestContext context)
     {
@@ -116,6 +128,10 @@ internal static class FacadeSuite
                     "a refused volume raises on the single-path overload when ThrowOnError is on")
                 .ConfigureAwait(false);
 
+            Check.Equal(
+                RecycleBinVolume.Measure(SubstitutedRoot(letter)).HResult,
+                thrown.HResult,
+                "the code is the Shell's own for this volume, not a constant");
             Check.NotEqual(0, thrown.HResult, "the exception carries a real error code");
             Check.True(
                 (thrown.HResult & unchecked((int)0x80000000)) != 0,

@@ -215,7 +215,9 @@ that lists or empties drives must survive one unmounted letter.
 in the process stays on one apartment and no caller pays for COM initialisation.
 `GetStatusAsync` never queues behind them either and needs no COM at all — what it asks of the Shell is
 `SHQueryRecycleBin`, a Shell32 call rather than a COM object — but it does call into the Shell, for
-every volume whose own per-volume setting the registry has no record of.
+volumes the registry says nothing about. That is narrower than "every volume it has no record of": a
+group policy, a volume type that never had a bin, or a per-volume setting that deletes outright is
+settled from configuration and answered without asking.
 
 ### `GetItemsAsync`
 
@@ -264,11 +266,12 @@ Whether the Recycle Bin is in use for one volume.
 **Returns** a `RecycleBinStatus`. **Throws** `ArgumentException` for a null or blank path.
 
 `GetStatusAsync` is the authoritative query on this, and `FileRecycler` asks it before every batch —
-a path whose volume cannot recycle it is refused there rather than handed to the Shell, which is the only
-way to tell a delete that will land in the Recycle Bin from one that will destroy the file and report a
-success. It reports *which* reason applies, because what happens on the next delete is decided by a
-group policy, by a per-volume setting the user owns, and by the kind of volume, so an answer that is
-only "off" throws away the one thing a caller can act on.
+once per distinct volume root rather than once per path, so a batch of twenty thousand files on one
+volume pays for one query. A path whose volume cannot recycle it is refused there rather than handed to
+the Shell, which is the only way to tell a delete that will land in the Recycle Bin from one that will
+destroy the file and report a success. It reports *which* reason applies, because what happens on the
+next delete is decided by a group policy, by a per-volume setting the user owns, and by the kind of
+volume, so an answer that is only "off" throws away the one thing a caller can act on.
 
 ---
 
@@ -379,7 +382,7 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `Performing` | The Shell performed the delete and reported a failure for this item. |
 | `ReceiptVerification` | The delete reported success but the result did not reach the Recycle Bin. |
 | `LongPathNotRecyclable` | The path is too long for the Shell. It was never handed over. |
-| `NoRecycleBinOnVolume` | The volume holding the path cannot recycle it and the caller asked for a Recycle Bin, so the path was never handed over and the file is where the caller left it. `Attempts` is `0`, and `HResult` carries the Shell's own code where the Shell named the volume — `0x80070003` on a substituted drive, `0x80004005` on a removable volume with no `$RECYCLE.BIN` — and `0` where the refusal came from configuration alone. |
+| `NoRecycleBinOnVolume` | The volume holding the path cannot recycle it and the caller asked for a Recycle Bin, so the path was never handed over and the file is where the caller left it. `Attempts` is `0`, and `HResult` carries the Shell's own code where the Shell named the volume — `0x80070003` on a substituted drive, `0x80004005` on a removable volume with no `$RECYCLE.BIN` — and `0` where no Shell refusal backs the record, whether the refusal was settled from configuration or a bin appeared between the probe and the code's own query. |
 | `PermanentDeleteFailed` | The path was too long and removing it outright was asked for, but the file system refused — a handle is held, the attributes are read-only. The file is exactly as the caller left it. |
 | `Enumeration` | The Shell would not describe a Recycle Bin entry, or a volume could not be read. Only reachable while reading or emptying the Recycle Bin. |
 
@@ -397,11 +400,16 @@ What to do with a path past the Shell's limit.
 | Value | Effect |
 | --- | --- |
 | `Throw` | Default. The file is left untouched and reported as `LongPathNotRecyclable`. Raises `PathTooLongException` only when `ThrowOnError` is also on. |
-| `DeletePermanently` | The file is removed for good and listed in `PermanentlyDeletedPaths`. |
+| `DeletePermanently` | The file is removed for good and listed in `PermanentlyDeletedPaths`, on a volume that can recycle. See the precedence below. |
 | `ShortenPathAndRecycle` | The file is renamed to a short path on its own volume and recycled from there. |
 
 `ThrowOnError` is the global switch and has the final say. With it off, `LongPathFailureAction.Throw`
 raises nothing and the path arrives in `Failures` instead.
+
+A volume that cannot recycle is settled *before* any of this: a too-long path on such a volume is
+refused at `NoRecycleBinOnVolume` with the file left in place, whichever value is set here. The volume is
+the more fundamental fact, and its answer is reached before the path's length is looked at — so
+`DeletePermanently` does not run, and the path never reaches `PermanentlyDeletedPaths`.
 
 ### `NoRecycleBinAction`
 
@@ -778,11 +786,13 @@ Stated plainly, because these are properties of Windows rather than choices.
   because the Recycle Bin is a single aggregate folder. A caller who wants only `E:\` still pays for
   the volumes it does not care about, and it cannot see a volume that is not mounted.
 - **`GetStatusAsync` answers configuration and the Shell, but not the future.** Where the registry
-  records a volume's own setting, that setting is the whole answer; where it does not, the Shell is asked
-  whether the volume has a Recycle Bin at all. That is what makes it trustworthy enough for
-  `FileRecycler` to refuse a path rather than let the Shell delete it for good. It still does not predict
-  the next delete: a volume mounted after the call, or a policy applied after it, changes the answer
-  without the call having been wrong. Nothing is cached, so each call asks the question again.
+  records a volume's own setting, that setting is the whole answer. Only volumes that configuration says
+  *nothing* about reach the Shell — no policy forbidding the bin, a type that supports one, and no key
+  of their own — and only those are asked whether they have a Recycle Bin at all. That is what makes it
+  trustworthy enough for `FileRecycler` to refuse a path rather than let the Shell delete it for good. It
+  still does not predict the next delete: a volume mounted after the call, or a policy applied after it,
+  changes the answer without the call having been wrong. Nothing is cached, so each call asks the
+  question again.
 - **A per-volume key that outlives its bin still reads `Enabled`.** Windows records a volume's Recycle
   Bin setting when it configures one, and nothing removes that record when the bin later goes. A key
   left behind on a volume with no `$RECYCLE.BIN` is therefore treated as evidence that the volume
@@ -808,6 +818,13 @@ dotnet run --project tests/RecycleBinToolkit.Tests -- --load
 
 `--filter` matches any part of a case name, and every case is named `<Suite>.<Case>`. It exits
 non-zero when a case fails.
+
+The suite needs the scratch volume — the one holding `E:\RC\Test` — to be recorded as recycling, which
+Windows writes under `HKCU\...\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete=0` when "Don't move files to
+the Recycle Bin" is clear for that drive. Almost every case now recycles there, and a volume with no
+such key is answered `Indeterminate` or `NoRecycleBinOnVolume` — both refused by the default
+`NoRecycleBinAction.Throw`. The suite checks this before it deletes anything and names the key rather
+than failing a hundred cases at once.
 
 The suite is a console application with no external packages: 122 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,

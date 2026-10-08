@@ -67,6 +67,12 @@ public sealed class RecycleBinOptions
     /// <remarks>
     /// Set <see cref="LongPathFailureAction.DeletePermanently"/> to remove it instead, in which case the
     /// path also appears in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
+    /// <para>
+    /// None of this applies to a path on a volume that cannot recycle it. That volume is settled before
+    /// the path's length is looked at, so such a path is refused at
+    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> with the file left in place whichever value
+    /// is set here; see <see cref="NoRecycleBinAction"/>.
+    /// </para>
     /// </remarks>
     public LongPathFailureAction LongPathFailureAction { get; init; } = LongPathFailureAction.Throw;
 

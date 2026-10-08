@@ -27,6 +27,12 @@ public enum LongPathFailureAction
     /// Delete the file permanently. The caller asked for this, and the path is reported in
     /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> so the outcome is never silent.
     /// </summary>
+    /// <remarks>
+    /// Only for a path on a volume that can recycle. The volume is settled first, so a path on a volume
+    /// that cannot is refused at <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> with the file left
+    /// in place whichever value is set here — that is the more fundamental fact, and nothing about the
+    /// path's length is decided before it.
+    /// </remarks>
     DeletePermanently,
 
     /// <summary>

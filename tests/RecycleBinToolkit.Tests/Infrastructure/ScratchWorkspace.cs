@@ -4,6 +4,15 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 /// The single scratch directory every test writes into. It lives inside the repository, so no test
 /// ever touches a path outside the project.
 /// </summary>
+/// <remarks>
+/// Almost every case now recycles a path on <see cref="Root"/>'s volume, and that only works because the
+/// volume reads as recycling. Windows records that per volume, under
+/// <c>BitBucket\Volume\{GUID}\NukeOnDelete=0</c>; a volume with no such key is answered by asking the
+/// Shell instead, and the answer it gives — <see cref="RecycleBinAvailabilityReason.Indeterminate"/> or
+/// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/> — is one the gate refuses.
+/// <see cref="Recreate"/> asserts the requirement rather than leaving the next machine's run to fail a
+/// hundred cases at once.
+/// </remarks>
 internal sealed class ScratchWorkspace : IDisposable
 {
     private const string ExtendedPrefix = @"\\?\";
@@ -81,15 +90,49 @@ internal sealed class ScratchWorkspace : IDisposable
     /// <summary>
     /// Deletes any leftover contents and recreates an empty scratch root.
     /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The scratch root's volume does not read as recycling. Recycling anything there depends on it, so
+    /// every case would fail for one missing registry key.
+    /// </exception>
     public void Recreate()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+
+        RequireRecyclableVolume();
 
         DeleteTree();
 
         if (!Directory.CreateDirectory(Root).Exists)
         {
             throw new IOException($"Could not create scratch root {Root}");
+        }
+    }
+
+    /// <summary>
+    /// Fails unless <see cref="Root"/>'s volume is one the library will hand to the Shell.
+    /// </summary>
+    /// <remarks>
+    /// The gate refuses a path whose volume is not <see cref="RecycleBinAvailabilityReason.Enabled"/>, and
+    /// the default <see cref="NoRecycleBinAction"/> refuses too, so a volume without its per-volume key
+    /// would turn most of the suite red at once with failures that name the Recycle Bin rather than the
+    /// missing key. Read before anything is deleted, so a machine that cannot run the suite loses nothing
+    /// first.
+    /// </remarks>
+    private static void RequireRecyclableVolume()
+    {
+        // Inspect answers about a volume root, and the scratch root is a directory inside one. Handing
+        // it the directory would be answered VolumeNotFound, which says nothing about recycling.
+        var volumeRoot = Path.GetPathRoot(Root)!;
+        var reason = RecycleBinVolumeState.Inspect(volumeRoot).Reason;
+
+        if (reason != RecycleBinAvailabilityReason.Enabled)
+        {
+            throw new InvalidOperationException(
+                $"The scratch volume {volumeRoot} reads as {reason}, so nothing the suite recycles " +
+                "there can be handed to the Shell. This suite needs the volume's Recycle Bin setting recorded " +
+                @"under HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete=0, " +
+                "which the Recycle Bin properties dialog writes when 'Don't move files to the Recycle Bin' is " +
+                "clear for that drive.");
         }
     }
 

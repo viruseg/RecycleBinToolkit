@@ -227,8 +227,9 @@ public static class FileRecycler
     /// it once.
     /// </param>
     /// <param name="permanentlyDeleted">
-    /// Collects the paths removed outright rather than handed over. Empty for every setting that does not
-    /// ask for a path to be deleted rather than recycled.
+    /// Collects the paths removed outright rather than handed over. Nothing reaches it yet:
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/> is not wired to a permanent delete, so a path
+    /// on a volume that cannot recycle is either handed to the Shell or refused, and never removed here.
     /// </param>
     /// <param name="options">Carries the caller's choice for a volume that cannot recycle.</param>
     private static void RefuseVolumesThatCannotRecycle(
@@ -321,10 +322,21 @@ public static class FileRecycler
     /// probe did reach the Shell, because the probe found a bin — a volume the Shell finds a bin on has
     /// no failure code to hand over.
     /// </remarks>
-    private static int RefusalHResult(string volumeRoot, RecycleBinAvailabilityReason reason) =>
-        reason == RecycleBinAvailabilityReason.NoRecycleBinOnVolume
-            ? RecycleBinCounter.QueryHResult(volumeRoot)
-            : 0;
+    private static int RefusalHResult(string volumeRoot, RecycleBinAvailabilityReason reason)
+    {
+        if (reason != RecycleBinAvailabilityReason.NoRecycleBinOnVolume)
+        {
+            return 0;
+        }
+
+        var hResult = RecycleBinCounter.QueryHResult(volumeRoot);
+
+        // A bin that appeared between the probe and this query means the reason the record was made for
+        // no longer holds. Reporting 0 rather than a success code is the honest answer to "what did the
+        // Shell refuse with" — it refused nothing — and 0 is what a caller already reading the severity
+        // bit is told to expect from a refusal the Shell never made.
+        return hResult < 0 ? hResult : 0;
+    }
 
     private static RecycleFailure? TryCreateTarget(string? rawPath, out RecycleTarget? target)
     {

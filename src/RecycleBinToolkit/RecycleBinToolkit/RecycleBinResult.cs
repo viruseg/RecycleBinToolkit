@@ -3,28 +3,34 @@ namespace RecycleBinToolkit;
 /// <summary>
 /// Point in the recycle pipeline at which an item failed.
 /// </summary>
+/// <remarks>
+/// The members are numbered explicitly because this is a public enum and the numbers are part of its
+/// contract: an implicit value renumbers every member declared after an insertion, which compiles
+/// everywhere and silently breaks every caller that persisted one. Appending a stage therefore costs a
+/// number and nothing else.
+/// </remarks>
 public enum RecycleFailureStage
 {
     /// <summary>The path was empty, malformed, or pointed at nothing.</summary>
-    PathValidation,
+    PathValidation = 0,
 
     /// <summary>The Shell refused to produce an item for the path.</summary>
-    ShellItemCreation,
+    ShellItemCreation = 1,
 
     /// <summary>The item could not be added to the pending operation.</summary>
-    Queueing,
+    Queueing = 2,
 
     /// <summary>The Shell performed the delete and reported a failure for this item.</summary>
-    Performing,
+    Performing = 3,
 
     /// <summary>The delete reported success but the result did not reach the Recycle Bin.</summary>
-    ReceiptVerification,
+    ReceiptVerification = 4,
 
     /// <summary>
     /// The path is too long for the Shell to recycle. Such a file would be deleted permanently while
     /// the operation still reported success, so it was never handed to the Shell.
     /// </summary>
-    LongPathNotRecyclable,
+    LongPathNotRecyclable = 5,
 
     /// <summary>
     /// The volume holding the path has no Recycle Bin and the caller asked for one, so the path was
@@ -41,20 +47,20 @@ public enum RecycleFailureStage
     /// arrive here too, and they arrive here rather than later because the Shell is never asked.
     /// </para>
     /// </remarks>
-    NoRecycleBinOnVolume,
+    NoRecycleBinOnVolume = 8,
 
     /// <summary>
     /// The Shell did not describe an entry the Recycle Bin reported. Only reachable while reading
     /// the Recycle Bin rather than writing to it.
     /// </summary>
-    Enumeration,
+    Enumeration = 6,
 
     /// <summary>
     /// The path was too long for the Shell and removing it outright was asked for, but the file system
     /// refused. Distinct from <see cref="LongPathNotRecyclable"/> because the length was never the
     /// obstacle here: the file is exactly as the caller left it.
     /// </summary>
-    PermanentDeleteFailed
+    PermanentDeleteFailed = 7
 }
 
 /// <summary>
@@ -228,7 +234,10 @@ public sealed class RecycleBinResult
     /// the operation could not put back.
     /// </remarks>
     /// <param name="permanentlyDeletedPaths">
-    /// The paths the copy should carry as removed permanently, in the order they should be read.
+    /// The paths the copy should carry as removed permanently, in the order they should be read. Nothing
+    /// reaches this list yet: <see cref="NoRecycleBinAction.DeletePermanently"/> is not wired to a
+    /// permanent delete, so a path on a volume that cannot recycle is either handed to the Shell or
+    /// refused, and never removed here.
     /// </param>
     internal RecycleBinResult WithPermanentlyDeleted(IReadOnlyList<string> permanentlyDeletedPaths) =>
         new(RecycledPaths, permanentlyDeletedPaths, Failures, Elapsed, LeftoverStagingDirectories);
