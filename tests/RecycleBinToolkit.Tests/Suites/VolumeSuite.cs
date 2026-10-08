@@ -233,12 +233,17 @@ internal static class VolumeSuite
         var status = await RecycleBin.GetStatusAsync(volume.Root, context.CancellationToken).ConfigureAwait(false);
         var emptied = await RecycleBin.EmptyAsync(volume.Root, context.CancellationToken).ConfigureAwait(false);
 
-        Check.Equal(
-            volume.Root,
-            status.VolumeRoot,
-            "the status names the root the caller asked about, so there is one string to compare on");
-        Check.False(status.IsEnabled, $"the status says the volume does not recycle (got {status.Reason})");
-        Check.Equal(0, emptied.VolumesEmptied.Count, $"and the empty removes nothing (failures: {Describe(emptied.Failures)})");
+        // The gate that produced volume already asserted its own answer, and re-deriving it here would
+        // compare NormalizeVolumeRoot(x) with NormalizeVolumeRoot(NormalizeVolumeRoot(x)). What is not
+        // settled is that a second reading agrees with the first: the gate's probe and this one are
+        // independent Shell queries, and a policy or a bin appearing between them is exactly the sort of
+        // thing the remainder of this case would then be describing as if it had not changed underneath it.
+        Check.Equal(volume.Root, status.VolumeRoot, "both readings name the same volume root");
+        Check.Equal(volume.Reason, status.Reason, $"and both reach the same reason (got {status.Reason})");
+
+        // What the empty did is the claim: a volume with no bin removes nothing, and it read the root
+        // rather than refusing it as a path inside a volume.
+        Check.Equal(0, emptied.VolumesEmptied.Count, $"the empty removes nothing (failures: {Describe(emptied.Failures)})");
         Check.Equal(0, emptied.ItemsRemoved, "with nothing removed to report");
         Check.True(
             emptied.Failures.All(failure => failure.Stage != RecycleFailureStage.PathValidation),
