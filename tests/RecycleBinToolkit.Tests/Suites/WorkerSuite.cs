@@ -13,7 +13,59 @@ internal static class WorkerSuite
         new TestCase("WorkerSuite." + nameof(ConcurrentSubmitsAllSucceed), ConcurrentSubmitsAllSucceed),
         new TestCase("WorkerSuite." + nameof(CallFromStaCallerDoesNotDeadlock), CallFromStaCallerDoesNotDeadlock),
         new TestCase("WorkerSuite." + nameof(CancellationReachesTheRetryLoop), CancellationReachesTheRetryLoop),
+        new TestCase("WorkerSuite." + nameof(ACancelledWaitStillLetsTheWorkerFinishItsWork), ACancelledWaitStillLetsTheWorkerFinishItsWork),
     ];
+
+    /// <summary>
+    /// A cancelled wait releases the caller and nothing else: the work handed over is performed anyway,
+    /// and the caller never learns its outcome. That is the documented contract — cancelling stops the
+    /// wait, not the work — and it is what makes a fault on that work land somewhere nobody is reading.
+    /// </summary>
+    /// <remarks>
+    /// Two gates, because the order of the two events is the whole point: the caller has to be released
+    /// while the work is still blocked, and the work has to finish afterwards. If a caller that stopped
+    /// waiting were somehow able to swallow the work, the batch would quietly vanish, which is the worse
+    /// of the two failures and the one a reader of the documentation cannot rule out.
+    /// <para>
+    /// What cannot be pinned from here is whether that fault reaches the caller as an unobserved task
+    /// exception: .NET raises it from a finalizer, and forcing one in this process hangs rather than
+    /// reports. The worker reads the exception itself instead, which is what stops it.
+    /// </para>
+    /// </remarks>
+    private static async Task ACancelledWaitStillLetsTheWorkerFinishItsWork(TestContext context)
+    {
+        var release = new ManualResetEventSlim(false);
+        var workFinished = new ManualResetEventSlim(false);
+
+        using var cts = new CancellationTokenSource();
+
+        var abandoned = RecycleBinWorker.RunAsync<int>(
+            () =>
+            {
+                release.Wait(TimeSpan.FromSeconds(30));
+                workFinished.Set();
+                return 42;
+            },
+            cts.Token);
+
+        cts.Cancel();
+
+        await Check
+            .ThrowsAsync<OperationCanceledException>(
+                () => abandoned,
+                "the cancelled caller is released, rather than being made to wait for the work it handed over")
+            .ConfigureAwait(false);
+
+        Check.False(
+            workFinished.Wait(TimeSpan.FromMilliseconds(200)),
+            "and it was released while the work was still blocked, not after it");
+
+        release.Set();
+
+        Check.True(
+            workFinished.Wait(TimeSpan.FromSeconds(30)),
+            "the worker still performs the work a cancelled caller handed over");
+    }
 
     /// <summary>
     /// Cancelling the wait must also reach the retry loop the worker is running. A batch that can never

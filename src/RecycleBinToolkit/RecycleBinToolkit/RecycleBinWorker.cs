@@ -270,17 +270,24 @@ internal static class RecycleBinWorker
             {
                 _signal.Wait();
 
-                while (TryDequeue(out var request))
-                {
-                    try
+while (TryDequeue(out var request))
                     {
-                        request!.Completion.TrySetResult(request.Execute(_runner));
+                        try
+                        {
+                            request!.Completion.TrySetResult(request.Execute(_runner));
+                        }
+                        catch (Exception ex)
+                        {
+                            request!.Completion.TrySetException(ex);
+
+                            // Whether anyone is left reading this task is not knowable from here: a wait that
+                            // was cancelled has already let go of it, and the work is performed either way.
+                            // Reading the exception here marks it observed in both cases -- a submitter still
+                            // waiting reads the very same exception -- and stops a fault on an abandoned
+                            // request from surfacing in the caller's process as an unobserved task exception.
+                            _ = request!.Completion.Task.Exception;
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        request!.Completion.TrySetException(ex);
-                    }
-                }
             }
         }
 
