@@ -12,7 +12,7 @@ dotnet build tests/RecycleBinToolkit.Tests/RecycleBinToolkit.Tests.csproj
 dotnet run --project tests/RecycleBinToolkit.Tests -- --all
 dotnet run --project tests/RecycleBinToolkit.Tests -- --filter LongPathSuite
 dotnet run --project tests/RecycleBinToolkit.Tests -- --load
-dotnet run --project tests/RecycleBinToolkit.Tests -- --manual "F:\" --manual "//server/share"
+dotnet run --project tests/RecycleBinToolkit.Tests -- --manual "F:\" --manual "\\server\share\"
 ```
 
 Build the test project after any change to `tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs` —
@@ -34,12 +34,20 @@ only that directory, by full path. `--all` names the deferred manual cases in it
 `--filter` that names only manual cases tells the reader to pass `--manual`, exactly as it does for load
 cases.
 
+One run selects one group. `--manual <root> --load` selects the manual group and prints that it ignored
+`--load`, because a flag that vanishes quietly is the failure the deferral lines exist to prevent. A
+`--manual` with no path after it, or with a flag after it, is a usage error rather than a root: the
+argument the cases delete against is the one thing that must not be guessed. Write a share in backslashes
+— `--manual "\\server\share\"` — because a forward-slash share is not recognised as a volume root and every
+case would go red on it.
+
 **The manual group needs real hardware, and it destroys files on the path you name.** A removable drive
 with no `$RECYCLE.BIN` and a network share are the two volumes the ordinary run cannot produce, which is
 why these cases exist at all — a `subst` mapping stands in for one on any machine, and a real volume is
 what tells you the Shell's own code on that hardware. A manual case goes **red** when the root turns out
-to be a healthy volume, naming the root and its `Reason`: a caller who passed `E:\` asked a question
-these cases cannot answer, and a silent pass would read afterwards as coverage nobody provided.
+not to be a volume with no Recycle Bin — a healthy one, one whose Shell *does* answer a question about its
+bin, or a letter nothing is mounted on — naming the root and its `Reason`: a caller who passed `E:\` asked
+a question these cases cannot answer, and a silent pass would read afterwards as coverage nobody provided.
 
 **A manual case is never the only coverage of a claim either.** The rule the load group follows applies
 unchanged: an ordinary case must already assert the same thing without the hardware, and the repetition

@@ -101,8 +101,8 @@ internal static class VolumeSuite
     /// </remarks>
     private static async Task AVolumeWithoutARecycleBinIsRefused(TestContext context)
     {
-        var root = await RequireAVolumeWithoutARecycleBin(context).ConfigureAwait(false);
-        var workspace = CreateManualDirectory(root);
+        var volume = await RequireAVolumeWithoutARecycleBin(context).ConfigureAwait(false);
+        var workspace = CreateManualDirectory(volume.Root);
 
         try
         {
@@ -125,10 +125,24 @@ internal static class VolumeSuite
             Check.Equal(RecycleFailureStage.NoRecycleBinOnVolume, failure!.Stage, "naming the volume, not the Shell's doing");
             Check.Equal(file, failure.Path, "naming the caller's path");
             Check.Equal(0, failure.Attempts, "nothing was attempted, because nothing was handed over");
-            Check.NotEqual(0, failure.HResult, $"the Shell's own code for this volume came through (got 0x{failure.HResult:X8})");
-            Check.True(
-                (failure.HResult & unchecked((int)0x80000000)) != 0,
-                $"that code is a refusal rather than a success (got 0x{failure.HResult:X8})");
+
+            // Which code the refusal carries follows from how the reason was settled, and only one of the
+            // two ways leaves the Shell with something to say: a volume whose type rules recycling out was
+            // never asked, so there is no code of its to report.
+            if (volume.Reason is RecycleBinAvailabilityReason.NoRecycleBinOnVolume)
+            {
+                Check.Equal(
+                    volume.HResult,
+                    failure.HResult,
+                    $"a refusal the Shell itself stated carries its own code, and this read it independently (got 0x{failure.HResult:X8})");
+            }
+            else
+            {
+                Check.Equal(
+                    0,
+                    failure.HResult,
+                    $"a refusal settled from configuration carries no code of the Shell's (got 0x{failure.HResult:X8})");
+            }
 
             Check.Equal(0, result.RecycledPaths.Count, "a refused path is not reported as recycled");
             Check.Equal(0, result.PermanentlyDeletedPaths.Count, "nor as removed for good");
@@ -158,8 +172,8 @@ internal static class VolumeSuite
     /// </remarks>
     private static async Task AVolumeWithoutARecycleBinCanBeDeletedOnRequest(TestContext context)
     {
-        var root = await RequireAVolumeWithoutARecycleBin(context).ConfigureAwait(false);
-        var workspace = CreateManualDirectory(root);
+        var volume = await RequireAVolumeWithoutARecycleBin(context).ConfigureAwait(false);
+        var workspace = CreateManualDirectory(volume.Root);
 
         try
         {
@@ -207,69 +221,112 @@ internal static class VolumeSuite
     /// <para>
     /// Manual because the answer cannot be reached without a real share: once the empty accepts a share it
     /// hands it to the Shell and queries that share's bin, which is a question for a name that may turn
-    /// out to be somebody's real share. The claim is that both calls agree the share has no bin and
-    /// nothing is emptied — not that nothing is ever at risk, which is why the case first establishes
-    /// from an independent read of the Shell that there is no bin here to empty.
+    /// out to be somebody's real share. What keeps that safe is the precondition below, which will not run
+    /// this on a volume the Shell does answer for — there the empty would remove the caller's own recycled
+    /// files, and no assertion made afterwards would be worth having run.
     /// </para>
     /// </remarks>
     private static async Task AStatusAndAnEmptyReadTheSameRootTheSameWay(TestContext context)
     {
-        var root = await RequireAVolumeWithoutARecycleBin(context).ConfigureAwait(false);
+        var volume = await RequireAVolumeWithoutARecycleBin(context).ConfigureAwait(false);
 
-        // Asked before the empty rather than after: a volume whose bin does answer would have the caller's
-        // own recycled files removed by it, and no assertion afterwards would be worth having run.
-        var bin = RecycleBinVolume.Measure(root);
-        Check.False(
-            bin.Ok,
-            $"the Shell reports no Recycle Bin on {root}, so there is nothing here for the empty to remove " +
-            $"(it answered with {bin.Items} item(s))");
+        var status = await RecycleBin.GetStatusAsync(volume.Root, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(volume.Root, context.CancellationToken).ConfigureAwait(false);
 
-        var status = await RecycleBin.GetStatusAsync(root, context.CancellationToken).ConfigureAwait(false);
-        var emptied = await RecycleBin.EmptyAsync(root, context.CancellationToken).ConfigureAwait(false);
-
+        Check.Equal(
+            volume.Root,
+            status.VolumeRoot,
+            "the status names the root the caller asked about, so there is one string to compare on");
         Check.False(status.IsEnabled, $"the status says the volume does not recycle (got {status.Reason})");
         Check.Equal(0, emptied.VolumesEmptied.Count, $"and the empty removes nothing (failures: {Describe(emptied.Failures)})");
         Check.Equal(0, emptied.ItemsRemoved, "with nothing removed to report");
         Check.True(
             emptied.Failures.All(failure => failure.Stage != RecycleFailureStage.PathValidation),
-            $"the empty reads {root} as the volume root the status named, rather than refusing it as a path " +
-            $"inside a volume (failures: {Describe(emptied.Failures)})");
+            $"the empty reads {volume.Root} as the volume root the status named, rather than refusing it as a " +
+            $"path inside a volume (failures: {Describe(emptied.Failures)})");
     }
 
     /// <summary>
-    /// The root <c>--manual</c> was given, checked to be a volume that cannot recycle before anything is
-    /// created on it.
+    /// A volume the library and the Shell agree cannot recycle: the reason the library reported, the root
+    /// string every operation here is given, and the code the Shell gave for failing to answer about it.
+    /// </summary>
+    /// <param name="Requested">The spelling <c>--manual</c> named, kept for messages.</param>
+    /// <param name="Root">
+    /// The root <see cref="RecycleBin.GetStatusAsync"/> reported, always with its trailing separator. Every
+    /// call below is made with this string rather than with <paramref name="Requested"/>, so the oracle, the
+    /// empty and the Shell are all asked about one root.
+    /// </param>
+    /// <param name="HResult">The Shell's own code for failing to answer a question about that volume's Recycle Bin.</param>
+    /// <param name="Reason">Why <see cref="RecycleBin.GetStatusAsync"/> says the volume cannot recycle.</param>
+    private sealed record VolumeWithNoRecycleBin(
+        string Requested,
+        string Root,
+        RecycleBinAvailabilityReason Reason,
+        int HResult);
+
+    /// <summary>
+    /// The root <c>--manual</c> named, checked to be a volume with no Recycle Bin before anything is
+    /// created on it or handed to the Shell.
     /// </summary>
     /// <remarks>
-    /// These cases destroy files, and the claims they make are only true where there is no Recycle Bin to
-    /// recycle into. A caller who named a healthy volume asked a question this case cannot answer, and a
-    /// silent pass would read afterwards as coverage nobody provided — so the case goes red and names the
-    /// root and the reason it actually reads as.
+    /// Two answers have to agree before a case in this group does anything, and neither is a formality: the
+    /// library's own reading settles the volume, and the Shell's, asked directly about the same string, is
+    /// what establishes that there is nothing here to recycle into. A volume whose bin answers would make
+    /// the empty in one case destroy the caller's files and would make the other two reason about a volume
+    /// that recycles.
+    /// <para>
+    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> is admitted only when the Shell has no
+    /// answer either. That reason covers two opposite facts — a volume whose type could not be read, and a
+    /// volume the Shell found a bin on — and the direct query is what tells them apart.
+    /// </para>
+    /// <para>
+    /// What the direct query establishes is narrow, and is claimed no wider than that: the Shell did not
+    /// answer a question about this volume at this spelling. That is true both of a volume with no Recycle
+    /// Bin and of one it cannot be asked about at all — an unreachable share, a denial — and the two are not
+    /// separable from here. It is also a near-clone of the library's own probe rather than a second
+    /// implementation: a different assembly calling the same API. It gates a case that would otherwise delete
+    /// files, which is what it is for; the reason itself comes from the library and is reported as such.
+    /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">The runner selected this case without a root.</exception>
-    /// <exception cref="CheckFailedException">The root is not a volume that cannot recycle.</exception>
-    private static async Task<string> RequireAVolumeWithoutARecycleBin(TestContext context)
+    /// <exception cref="CheckFailedException">The root is not a volume with no Recycle Bin.</exception>
+    private static async Task<VolumeWithNoRecycleBin> RequireAVolumeWithoutARecycleBin(TestContext context)
     {
-        var root = context.ManualRoot
+        var requested = context.ManualRoot
             ?? throw new InvalidOperationException(
                 "A manual case is run once per --manual root; this one was given none.");
 
-        var status = await RecycleBin.GetStatusAsync(root, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(requested, context.CancellationToken).ConfigureAwait(false);
 
-        Console.WriteLine($"        {root} reads as {status.Reason}");
+        // Asked about the root the library itself reports, which is the string EmptyAsync hands the Shell,
+        // rather than about the caller's spelling: a gate that probes one string and acts on another is the
+        // failure this suite exists to catch, and it would catch it in its own setup first.
+        var bin = RecycleBinVolume.Measure(status.VolumeRoot);
 
-        if (status.Reason is RecycleBinAvailabilityReason.NoRecycleBinOnVolume
+        Console.WriteLine(
+            $"        {requested} reads as {status.Reason}{(status.VolumeRoot == requested ? "" : $" as {status.VolumeRoot}")}"
+            + (bin.Ok
+                ? $", and the Shell answered for its Recycle Bin with {bin.Items} item(s)"
+                : $", and the Shell did not answer about its Recycle Bin (0x{bin.HResult:X8})"));
+
+        var librarySaysItCannotRecycle = status.Reason is RecycleBinAvailabilityReason.NoRecycleBinOnVolume
             or RecycleBinAvailabilityReason.UnsupportedVolumeType
-            or RecycleBinAvailabilityReason.Indeterminate)
+            or RecycleBinAvailabilityReason.Indeterminate;
+
+        if (librarySaysItCannotRecycle && !bin.Ok)
         {
-            return root;
+            return new VolumeWithNoRecycleBin(requested, status.VolumeRoot, status.Reason, bin.HResult);
         }
 
+        var whatItIs = bin.Ok
+            ? $"the Shell answered for its Recycle Bin with {bin.Items} item(s), so this is a volume that does recycle"
+            : "it is not a volume that cannot recycle";
+
         throw new CheckFailedException(
-            $"{root} reads as {status.Reason}, and a case in this group needs a volume that cannot recycle: a " +
-            @"removable drive with no $RECYCLE.BIN, or a network share. This is red on purpose rather than " +
-            "skipped — a caller who named this path asked a question it cannot answer, and a pass would " +
-            "claim coverage that was never provided.");
+            $"{requested} reads as {status.Reason}, and {whatItIs}. A case in this group needs a volume with no " +
+            @"Recycle Bin: a removable drive with no $RECYCLE.BIN, or a network share written as ""\\server\share\"". " +
+            "This is red on purpose rather than skipped — a caller who named this path asked a question it " +
+            "cannot answer, and a pass would claim coverage that was never provided.");
     }
 
     /// <summary>Prefix of the directory each manual case creates for itself, so a leftover is identifiable.</summary>
@@ -286,10 +343,26 @@ internal static class VolumeSuite
     /// </remarks>
     private static string CreateManualDirectory(string root)
     {
-        var trimmed = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        // A separator is added rather than one trimmed off. Path.Combine("F:", name) is the drive-relative
+        // "F:name", and a directory made under it belongs to whatever current directory the process happens
+        // to have for that drive — so both where the case writes and what its cleanup deletes would be
+        // decided by ambient state rather than by the root the caller named. A bare "F:" is drive-relative
+        // for the same reason, which is why the separator is added rather than required.
+        var parent = root.EndsWith(Path.DirectorySeparatorChar) || root.EndsWith(Path.AltDirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+
         var path = Path.Combine(
-            trimmed,
+            parent,
             $"{ManualDirectoryPrefix}-{Environment.ProcessId}-{Interlocked.Increment(ref _manualSequence)}");
+
+        // Asserted rather than assumed, because this is the one place where a drive letter and a root with
+        // a separator differ by nothing visible: the directory would be created on the right volume by
+        // luck, and only the path this returns says whether it was.
+        if (!Path.IsPathFullyQualified(path))
+        {
+            throw new CheckFailedException($"the workspace path {path} built from root {root} is not a full path");
+        }
 
         Directory.CreateDirectory(path);
 
@@ -304,9 +377,19 @@ internal static class VolumeSuite
     /// Throwing here would replace whatever the case was actually reporting with the cleanup's own
     /// complaint. Printing keeps the case's result intact while still naming a directory left on the
     /// caller's volume.
+    /// <para>
+    /// A path that is not fully qualified is refused rather than resolved, because resolving one is what
+    /// would turn a case's own directory into whatever the current directory says it is.
+    /// </para>
     /// </remarks>
     private static void RemoveManualDirectory(string path)
     {
+        if (!Path.IsPathFullyQualified(path))
+        {
+            Console.WriteLine($"        WARNING: refusing to remove {path}, which is not a full path");
+            return;
+        }
+
         try
         {
             Directory.Delete(path, recursive: true);

@@ -36,8 +36,9 @@ internal sealed class TestRunner
         if (!TryParseManualRoots(args, out var manualRoots))
         {
             Console.Error.WriteLine(
-                "--manual takes a path to test, such as --manual \"F:\\\". The manual cases destroy files on the " +
-                "path you name, so none of them runs until you give one.");
+                "--manual takes a path to test, such as --manual \"F:\\\" or --manual \"\\\\server\\share\\\". The manual " +
+                "cases destroy files on the path you name, so none of them runs until you give one, and a flag " +
+                "after --manual is read as a missing path rather than as a root.");
             return 2;
         }
 
@@ -55,6 +56,14 @@ internal sealed class TestRunner
         var runs = Expand(selected, manualRoots);
 
         Console.WriteLine($"running {runs.Count} of {cases.Count} test(s)");
+
+        if (kind is TestKind.Manual && args.Contains("--load", StringComparer.Ordinal))
+        {
+            // One run selects one group, and a root was named. Saying which flag lost is the whole point:
+            // the deferral lines below are there so a caller always learns what a run left out, and a
+            // dropped --load is exactly the case where nothing else would say so.
+            Console.WriteLine("        --load is ignored: --manual named a path to test, and this run selects the manual group");
+        }
 
         DescribeDeferred(cases, kind, filter);
 
@@ -133,6 +142,11 @@ internal sealed class TestRunner
     /// Which group the command line asks for. A named root outranks <c>--load</c>: the caller named a
     /// path to be tested, and a load group says nothing about which.
     /// </summary>
+    /// <remarks>
+    /// The run says so on stdout rather than refusing the pair. One run selects one group whichever way
+    /// this goes, and telling a caller which group they got keeps a single command working — while
+    /// refusing would leave a command that names a real path silently selecting nothing useful instead.
+    /// </remarks>
     private static TestKind SelectKind(IReadOnlyList<string> manualRoots, string[] args) =>
         manualRoots.Count > 0
             ? TestKind.Manual
@@ -249,12 +263,18 @@ internal sealed class TestRunner
                 continue;
             }
 
-            if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
+            var value = i + 1 < args.Length ? args[i + 1] : null;
+
+            // A flag is not a path. Taking the next token either way turns `--manual --load` into a root
+            // named "--load", and a command line with --manual copied ahead of --load loses the flag after
+            // it without a word — on a flag whose cases delete files, the argument it reads is the one thing
+            // that must not be guessed.
+            if (string.IsNullOrWhiteSpace(value) || value.StartsWith('-'))
             {
                 return false;
             }
 
-            roots.Add(args[i + 1]);
+            roots.Add(value);
             i++;
         }
 

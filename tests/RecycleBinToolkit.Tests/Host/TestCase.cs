@@ -22,7 +22,10 @@ internal enum TestKind
     /// <remarks>
     /// It runs only when <c>--manual &lt;root&gt;</c> is passed, once per root given, and is never
     /// selected by <c>--all</c>, <c>--filter</c> or <c>--load</c>: a default run must not depend on a
-    /// flash drive being plugged in or on somebody's share being reachable.
+    /// flash drive being plugged in or on somebody's share being reachable. A run that names a root and
+    /// passes <c>--load</c> selects this group and says that it ignored the other flag, because one run
+    /// selects one group and a flag that vanishes quietly is the failure the deferral lines exist to
+    /// prevent.
     /// <para>
     /// Nothing hard-codes a root. The caller owns the path, and a case that treats it as a scratch
     /// directory is why this group is behind a flag rather than in the default run.
