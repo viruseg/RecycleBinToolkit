@@ -1,3 +1,5 @@
+using RecycleBinToolkit.Tests.Host;
+
 namespace RecycleBinToolkit.Tests.Infrastructure;
 
 /// <summary>
@@ -59,6 +61,31 @@ internal static class RecycleBinProbe
         RecycleBinCounter.TryQuery(WithSeparator(volumeRoot), out var items, out var bytes)
             ? (items, bytes)
             : (-1, -1);
+
+    /// <summary>
+    /// Both quantities, refusing to answer at all when the volume could not be read.
+    /// </summary>
+    /// <param name="volumeRoot">Volume root, for example <c>"X:\\"</c>.</param>
+    /// <param name="because">What the reading is for, so the failure says which measurement was lost.</param>
+    /// <returns>The entry count and size in bytes.</returns>
+    /// <remarks>
+    /// For the delta assertions, where a baseline is subtracted from a later reading. A failed baseline
+    /// arrives as <c>-1</c> and a later reading as some count, and their difference is one larger than
+    /// anything that happened — so a bound stated as "gained at least N" passes having measured nothing at
+    /// all. The sentinel is right for a query whose result is displayed and wrong for one that is
+    /// subtracted, which is the only thing that distinguishes them.
+    /// </remarks>
+    public static (long Items, long Bytes) MeasureOrFail(string volumeRoot, string because)
+    {
+        var (items, bytes) = Measure(volumeRoot);
+
+        Check.True(
+            items >= 0,
+            $"the volume's Recycle Bin was readable for {because} (got count {items}, size {bytes}); a failed " +
+            "reading arrives as -1, and a delta taken against one is larger than the truth rather than smaller");
+
+        return (items, bytes);
+    }
 
     /// <summary>
     /// The Shell requires a root with its trailing separator, whatever the caller passed.

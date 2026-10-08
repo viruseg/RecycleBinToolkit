@@ -76,10 +76,11 @@ internal static class WorkflowSuite
             Touch(path);
         }
 
-        var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
+        var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
         var result = await FileRecycler.MoveToRecycleBinAsync(paths, cancellationToken: context.CancellationToken);
-        var gained = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - before;
+        var (after, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the count after the workflow");
+        var gained = after - before;
 
         Check.True(result.Succeeded, $"every touched file is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8} {result.FirstFailure?.Path})");
         Check.Equal(paths.Count, result.RecycledPaths.Count, "every touched file is reported as recycled");

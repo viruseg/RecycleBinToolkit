@@ -37,7 +37,7 @@ namespace RecycleBinToolkit.Tests.Suites;
         // already in it: twenty probes meant the run length was set by how full the caller's bin was
         // rather than by anything under test. The guarantee is unchanged, and each cycle still names its
         // own failures, so a shortfall is attributed by the per-cycle result rather than by the delta.
-        var (countBefore, _) = RecycleBinProbe.Measure(ScratchWorkspace.VolumeRoot);
+        var (countBefore, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
         for (var cycle = 0; cycle < Cycles; cycle++)
         {
@@ -69,7 +69,7 @@ namespace RecycleBinToolkit.Tests.Suites;
             totalRecycled += chosen.Length;
         }
 
-        var (countAfter, _) = RecycleBinProbe.Measure(ScratchWorkspace.VolumeRoot);
+        var (countAfter, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the count after the cycles");
         Check.True(
             countAfter - countBefore >= totalRecycled,
             $"every file from every cycle reached the Recycle Bin (bin grew by {countAfter - countBefore}, {totalRecycled} recycled)");
@@ -89,11 +89,11 @@ namespace RecycleBinToolkit.Tests.Suites;
         workspace.Recreate();
 
         var files = workspace.CreateRandomFiles(fileCount, fileSize);
-        var (countBefore, sizeBefore) = RecycleBinProbe.Measure(ScratchWorkspace.VolumeRoot);
+        var (countBefore, sizeBefore) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline bytes");
 
         var result = await FileRecycler.MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken);
 
-        var (countAfter, sizeAfter) = RecycleBinProbe.Measure(ScratchWorkspace.VolumeRoot);
+        var (countAfter, sizeAfter) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the bytes after the batches");
 
         Console.WriteLine($"        bin count {countBefore} -> {countAfter}, size {sizeBefore} -> {sizeAfter}");
 
