@@ -46,7 +46,7 @@ internal static class ScratchSuite
         try
         {
             Check.True(Directory.Exists(claimed.FullPath), $"the claimed directory exists: {claimed.FullPath}");
-            Check.Equal(ParentOf(volumeRoot), ParentOf(claimed.FullPath), "and it is a direct child of the root that was named");
+            Check.Equal(Trimmed(ParentOf(claimed.FullPath)), Trimmed(volumeRoot), "and it is a direct child of the root that was named");
             Check.Equal(volumeRoot, claimed.Volume, "which the claim also remembers as the volume it works on");
         }
         finally
@@ -405,4 +405,12 @@ internal static class ScratchSuite
     /// directory on a share does not.
     /// </summary>
     private static string ParentOf(string path) => Directory.GetParent(Normalize(path))?.FullName ?? Normalize(path);
+
+    /// <summary>
+    /// A path without its trailing separator, so two spellings of one directory compare equal.
+    /// <c>Directory.GetParent</c> is not symmetric about the separator at a volume root: asked for the
+    /// parent of <c>D:\</c> it answers <c>D:</c>, and asked for the parent of a directory on a share it
+    /// answers without one.
+    /// </summary>
+    private static string Trimmed(string path) => Normalize(path);
 }
