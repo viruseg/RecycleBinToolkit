@@ -415,8 +415,20 @@ internal static class EmptySuite
         var files = workspace.CreateRandomFiles(1, fileSize);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        await FileRecycler.MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken).ConfigureAwait(false);
-        await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+        var recycled = await FileRecycler
+            .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        // The premise of the case is a Recycle Bin that was not empty, so the run has to establish one
+        // rather than assume it: without these the case passes on a bin nothing ever reached, and the
+        // "already empty" it is about is one the test made for itself by failing quietly.
+        Check.True(recycled.Succeeded, $"the file reached the bin before the empty (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
+        Check.Equal(files.Count, recycled.RecycledPaths.Count, "so the volume's Recycle Bin was not empty to begin with");
+
+        var first = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(0, first.Failures.Count, $"the first empty reached the volume (failures: {string.Join(", ", first.Failures.Select(f => $"{f.Stage} 0x{f.HResult:X8}"))})");
+        Check.True(first.ItemsRemoved >= files.Count, $"and it removed what was in it (got {first.ItemsRemoved})");
 
         var second = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
 
