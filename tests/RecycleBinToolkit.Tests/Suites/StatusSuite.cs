@@ -256,6 +256,13 @@ internal static class StatusSuite
     /// satisfies an equality check against itself while being useless to
     /// <c>GetVolumeNameForVolumeMountPoint</c>, which needs the trailing separator — so the volume GUID
     /// came back unreadable and the answer degraded to Indeterminate for a volume that is plainly there.
+    /// <para>
+    /// What the two spellings agree on is the whole claim: the bare letter and the root with its separator
+    /// are the same volume and are answered the same way. That both of them answer <c>Enabled</c> is a
+    /// different claim about a different thing — that a volume recycles — and it is made by
+    /// <see cref="StatusAgreesWithAVolumeThatJustAcceptedADelete"/>, which establishes a delete before
+    /// asserting it. Asserting it here as well would have claimed a recycle this case never made.
+    /// </para>
     /// </remarks>
     private static async Task StatusAgreesWhateverSpellingOfTheRootItIsGiven(TestContext context)
     {
@@ -268,10 +275,6 @@ internal static class StatusSuite
         Check.Equal(withSeparator.VolumeRoot, bare.VolumeRoot, "both spellings report the same volume root");
         Check.Equal(withSeparator.DriveType, bare.DriveType, "and the same drive type");
         Check.Equal(withSeparator.Reason, bare.Reason, "and the same reason, so the answer does not depend on the spelling");
-        Check.Equal(
-            RecycleBinAvailabilityReason.Enabled,
-            bare.Reason,
-            $"a volume that has just accepted a delete is not Indeterminate (got {bare.Reason})");
     }
 
     /// <summary>
