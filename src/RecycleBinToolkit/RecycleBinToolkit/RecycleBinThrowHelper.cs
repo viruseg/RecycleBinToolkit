@@ -81,6 +81,32 @@ internal static class RecycleBinThrowHelper
 }
 
 /// <summary>
+/// Raised when an operation failed outright and left the caller's own data in a staging directory it
+/// could not be moved back from.
+/// </summary>
+/// <remarks>
+/// The one place the caller's data can end up somewhere it cannot be told about from a result, because an
+/// operation that threw has no result. The original failure is carried inside rather than discarded, and
+/// <see cref="OperationCanceledException"/> stays reachable through it for a caller that inspects
+/// <see cref="Exception.InnerException"/> — what changed is that the exception which surfaces now names
+/// where the file is.
+/// </remarks>
+internal sealed class RecycleBinItemLeftBehindException : IOException
+{
+    internal RecycleBinItemLeftBehindException(IReadOnlyList<string> leftoverStagingDirectories, Exception inner)
+        : base(
+            $"The operation failed with an item left in a staging directory: {string.Join(" and ", leftoverStagingDirectories.Select(d => $"'{d}'"))}. " +
+            "Nothing was deleted -- the item is there, at a short path rather than where it was left -- and it has to be moved out by hand.",
+            inner)
+    {
+        LeftoverStagingDirectories = leftoverStagingDirectories;
+    }
+
+    /// <summary>The directories still holding an item, in the order they were created.</summary>
+    public IReadOnlyList<string> LeftoverStagingDirectories { get; }
+}
+
+/// <summary>
 /// Raised when an item could not be moved to the Recycle Bin within the configured attempts.
 /// </summary>
 internal sealed class RecycleFailedException : IOException

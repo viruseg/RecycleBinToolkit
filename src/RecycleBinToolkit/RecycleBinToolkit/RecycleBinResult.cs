@@ -168,9 +168,16 @@ public sealed class RecycleBinResult
     /// A path is gone when it is where the caller left it, or nowhere at all. An item that had to be moved
     /// aside to reach the Shell and could be neither recycled nor moved back is neither: it is the
     /// caller's data at a path the caller never chose, so a result carrying one is not a success even
-    /// though nothing was recorded as a failure. The directories holding it are named in
-    /// <see cref="LeftoverStagingDirectories"/>, and a caller that reads this property as the whole answer
-    /// needs to read those too — which is why this one says so rather than answering <see langword="true"/>.
+    /// though nothing was recorded as a failure against any path. The directories holding it are named in
+    /// <see cref="LeftoverStagingDirectories"/>, and a caller who reads this property as the whole answer
+    /// needs to read those too.
+    /// <para>
+    /// The library's own operations do not currently produce that shape — an item left behind is one that
+    /// failed, and is recorded as such — so this clause is a property of the type rather than of a path
+    /// anyone has taken. It is stated because the constructors are public: a result carrying a leftover
+    /// and no failures is constructible, and a property that read <see langword="true"/> for it would be
+    /// wrong about a state the type allows.
+    /// </para>
     /// </remarks>
     public bool Succeeded => Failures.Count == 0 && LeftoverStagingDirectories.Count == 0;
 

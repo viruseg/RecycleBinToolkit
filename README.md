@@ -340,8 +340,10 @@ The outcome of a batch. Immutable.
 >
 > It is also `false` when an item was moved aside to reach the Shell and could be neither recycled nor
 > moved back: your data is in a staging directory, not where you left it, and no path failed, so
-> `Failures` is empty while `LeftoverStagingDirectories` is not. Check that list too, or a batch that
-> spans volumes can leave more than one behind.
+> `Failures` is empty while `LeftoverStagingDirectories` is not. The library's own operations do not
+> produce that shape today — an item left behind is one that failed, and is recorded — but `Create` is
+> public, so a result can be built that way. Check the list regardless: a batch spanning volumes can leave
+> more than one directory behind.
 
 ```csharp
 // Create exists so a test can hold a result without touching the file system. In application

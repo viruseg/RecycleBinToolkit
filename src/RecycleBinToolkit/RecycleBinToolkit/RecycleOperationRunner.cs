@@ -216,11 +216,23 @@ internal sealed class RecycleOperationRunner
 
             return RunRounds(withStaged, staged, options, stager, permanentlyDeleted, recycled, failures, cancellationToken);
         }
-        catch
+        catch (Exception operation)
         {
             RestoreUnrecycledStagedItems(staged, recycled);
-            stager.Release();
-            throw;
+            var leftover = stager.Release();
+
+            if (leftover.Count == 0)
+            {
+                throw;
+            }
+
+            // A staging directory that could not be emptied means the caller's data is in it and there
+            // is no result to name that. Cancellation is the reachable way in here: the rounds are
+            // entered before any of them, so a token cancelled after the items were moved aside throws
+            // with the move back never attempted. Throwing the original would name a cancelled call and
+            // leave the caller with no idea where its file went, which is the one answer available and is
+            // not in the exception it would otherwise see.
+            throw new RecycleBinItemLeftBehindException(leftover, operation);
         }
     }
 
