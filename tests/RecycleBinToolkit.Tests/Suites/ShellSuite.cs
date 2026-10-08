@@ -415,7 +415,7 @@ internal static class ShellSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
         var files = workspace.CreateRandomFiles(5, 4096);
-        var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
+        var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
         OnTheShellThread(() =>
         {
@@ -444,7 +444,7 @@ internal static class ShellSuite
             }
         });
 
-        var after = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
+        var (after, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the count after the batch");
         Console.WriteLine($"        bin tracked items: {before} -> {after}");
         Check.True(after - before >= files.Count, $"Recycle Bin tracked at least {files.Count} new item(s)");
 

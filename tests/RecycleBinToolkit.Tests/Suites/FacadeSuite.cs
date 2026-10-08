@@ -709,7 +709,7 @@ internal static class FacadeSuite
 
         Check.True(plain.Length <= 260, $"the path is short enough to recycle unprefixed ({plain.Length} chars)");
 
-        var sizeBefore = RecycleBinProbe.QuerySize(volumeRoot);
+        var (_, sizeBefore) = RecycleBinProbe.MeasureOrFail(volumeRoot, "the baseline size");
 
         var result = await FileRecycler.MoveToRecycleBinAsync([extended], cancellationToken: context.CancellationToken);
 
@@ -778,7 +778,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
         var files = workspace.CreateRandomFiles(1, 4096);
-        var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
+        var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
         var recycled = await FileRecycler.MoveToRecycleBinAsync(files[0], cancellationToken: context.CancellationToken);
 
@@ -799,7 +799,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
         var files = workspace.CreateFixtureSet();
-        var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
+        var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
         var result = await FileRecycler.MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken);
 
@@ -901,7 +901,7 @@ internal static class FacadeSuite
         File.WriteAllText(Path.Combine(directory, "a.txt"), "hello");
         File.WriteAllText(Path.Combine(ScratchWorkspace.Root, "tree", "b.txt"), "world");
 
-        var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
+        var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
         var result = await FileRecycler.MoveToRecycleBinAsync([directory], cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"a directory is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
@@ -957,7 +957,7 @@ internal static class FacadeSuite
 
         const int size = 10 * 1024 * 1024;
         var files = workspace.CreateRandomFiles(1, size);
-        var before = RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot);
+        var (_, before) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline size");
 
         var result = await FileRecycler.MoveToRecycleBinAsync([files[0]], cancellationToken: context.CancellationToken);
 

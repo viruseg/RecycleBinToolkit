@@ -142,7 +142,6 @@ internal static class WorkerSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var observedThreadIds = new HashSet<int>();
         var recycled = new List<string>();
 
         for (var batch = 0; batch < 3; batch++)
@@ -163,19 +162,13 @@ internal static class WorkerSuite
             }
 
             recycled.AddRange(files);
-            observedThreadIds.Add(RecycleBinWorker.ThreadId);
         }
 
-        Check.Equal(
-            1,
-            observedThreadIds.Distinct().Count(),
-            "the worker names one thread, and it is the same one before and after every batch");
-
-        // A constant agrees with itself. RecycleBinWorker.ThreadId is assigned once when the worker is
-        // built and never changes, so reading it three times proves nothing about where the batches went.
-        // What can be asked instead is the only question that has an answer to be wrong about: the worker
-        // is asked to run something that reports its own thread, and that is compared against the id it
-        // publishes.
+        // RecycleBinWorker.ThreadId is a constant once the worker exists, so reading it three times and
+        // finding one distinct value proves nothing -- the assertion that did so was removed rather than
+        // reworded. What can be asked instead is the only question with an answer to be wrong about: the
+        // worker is asked to run something that reports its own thread, and that is compared against the
+        // id it publishes.
         var named = RecycleBinWorker.ThreadId;
 
         Check.NotEqual(0, named, "the worker exists once something has been submitted to it");
