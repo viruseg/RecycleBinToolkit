@@ -28,10 +28,15 @@ public enum LongPathFailureAction
     /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> so the outcome is never silent.
     /// </summary>
     /// <remarks>
-    /// Only for a path on a volume that can recycle. The volume is settled first, so a path on a volume
-    /// that cannot is refused at <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> with the file left
-    /// in place whichever value is set here — that is the more fundamental fact, and nothing about the
-    /// path's length is decided before it.
+    /// <para>
+    /// None of this applies to a path on a volume that cannot recycle it. That volume is settled before
+    /// the path's length is looked at, so such a path never reaches this action at all: under
+    /// <see cref="NoRecycleBinAction.Throw"/> it is refused at
+    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> with the file left in place, and under
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/> the volume gate removes it outright and it
+    /// arrives in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> from there. See
+    /// <see cref="NoRecycleBinAction"/>.
+    /// </para>
     /// </remarks>
     DeletePermanently,
 

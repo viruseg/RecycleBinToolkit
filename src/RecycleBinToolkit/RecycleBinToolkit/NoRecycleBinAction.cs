@@ -37,7 +37,7 @@ public enum NoRecycleBinAction
 
     /// <summary>
     /// Remove the path for good, without asking the Shell, and list it in
-    /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
+    /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> unless the file system refuses.
     /// </summary>
     /// <remarks>
     /// It is never listed in <see cref="RecycleBinResult.RecycledPaths"/>: calling a permanent deletion

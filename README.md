@@ -409,8 +409,9 @@ raises nothing and the path arrives in `Failures` instead.
 A volume that cannot recycle is settled *before* any of this: a too-long path on such a volume never
 reaches `LongPathFailureAction` at all. Under `NoRecycleBinAction.Throw` it is refused at
 `NoRecycleBinOnVolume` with the file left in place; under `NoRecycleBinAction.DeletePermanently` the
-volume gate removes it outright. Both routes end in `PermanentlyDeletedPaths`, and the volume is the
-more fundamental fact — its answer is reached before the path's length is looked at.
+volume gate removes it outright. Only the `DeletePermanently` route ends in
+`PermanentlyDeletedPaths`; the `Throw` route ends in `Failures`. The volume is the more fundamental
+fact — its answer is reached before the path's length is looked at.
 
 ### `NoRecycleBinAction`
 
