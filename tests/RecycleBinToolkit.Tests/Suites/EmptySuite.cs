@@ -25,7 +25,40 @@ internal static class EmptySuite
         new TestCase("EmptySuite." + nameof(AnExtendedLengthRootIsTheVolumeToEmpty), AnExtendedLengthRootIsTheVolumeToEmpty),
         new TestCase("EmptySuite." + nameof(AnEmptyPathIsNotAVolumeToEmpty), AnEmptyPathIsNotAVolumeToEmpty),
         new TestCase("EmptySuite." + nameof(AForwardSlashSpellingIsTheVolumeToEmpty), AForwardSlashSpellingIsTheVolumeToEmpty),
+        new TestCase("EmptySuite." + nameof(NamingOneVolumeEmptiesThatVolumeAndNoOther), NamingOneVolumeEmptiesThatVolumeAndNoOther),
     ];
+
+    /// <summary>
+    /// <c>SHEmptyRecycleBin</c> reads a null root as every volume on the machine. Naming one volume has to
+    /// reach it as that volume, so a caller who mistyped a root cannot have every Recycle Bin emptied under
+    /// a result that reports one volume.
+    /// </summary>
+    /// <remarks>
+    /// The root handed to the Shell is not the caller's spelling, it is the normalised one the measurement
+    /// and the report are both taken against. Asserting on the exact string the caller wrote would pass
+    /// against the wrong spelling being handed over; asserting on the normalised root catches that too.
+    /// <para>
+    /// What it cannot catch is the machine with no volume to cover, where the set is empty and there is
+    /// nothing to compare against. That shape is pinned as a pure function in
+    /// <see cref="ContractSuite.TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured"/>; what this case adds
+    /// is that the one-volume path still works after the decision moved.
+    /// </para>
+    /// </remarks>
+    private static async Task NamingOneVolumeEmptiesThatVolumeAndNoOther(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        workspace.CreateRandomFiles(2, 4096);
+
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(1, emptied.VolumesEmptied.Count, $"naming one volume covers one volume (got {string.Join(", ", emptied.VolumesEmptied)})");
+        Check.Equal(volumeRoot, emptied.VolumesEmptied[0], "and it is that volume");
+
+        workspace.Dispose();
+    }
 
     /// <summary>
     /// An empty string names no volume, so the empty has to refuse it. Reading it as a root instead is

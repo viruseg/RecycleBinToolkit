@@ -32,7 +32,49 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(FailureHResultIsNotClobberedByTheSeverityBitTest), FailureHResultIsNotClobberedByTheSeverityBitTest),
         new TestCase("ContractSuite." + nameof(PathsThatResolveToOneShellItemRecycleOnce), PathsThatResolveToOneShellItemRecycleOnce),
         new TestCase("ContractSuite." + nameof(EveryReasonAndActionPairIsPinned), EveryReasonAndActionPairIsPinned),
+        new TestCase("ContractSuite." + nameof(TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured), TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured),
     ];
+
+    /// <summary>
+    /// <c>SHEmptyRecycleBin</c> reads a null root as "every volume on the machine", which is a much larger
+    /// action than the one the caller asked for — and a caller who asked for every volume gets it honestly
+    /// only because each of them was measured on both sides of the call.
+    /// <para>
+    /// The dangerous shape is the empty set. Every volume the operation covers came from its own volume
+    /// resolution, which answers the fixed and removable drives that are ready; a machine with none of
+    /// those answers nothing, and "no volumes" then reached the Shell as "all volumes" while the loop
+    /// that measures before and after never ran once. The Recycle Bin of every volume was emptied and the
+    /// result reported zero removed, zero freed and no failures.
+    /// <para>
+    /// There is no way to arrange that machine from a test, which is why the decision is pinned here as a
+    /// pure function instead: the root is either derived from a volume that was measured, or the Shell is
+    /// not asked at all. The count of one is the case a mistyped flag would turn into an empty every —
+    /// <c>X:\work\</c> refused by <see cref="RecycleBinVolumeState.IsVolumeRoot"/> leaves the operation
+    /// covering one volume, and handing the Shell the caller's spelling would empty the whole of it.
+    /// </para>
+    /// </remarks>
+    private static Task TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured(TestContext context)
+    {
+        Check.False(
+            RecycleBin.TryResolveShellRoot([], out var withNothing),
+            "no volume to empty is not a request to empty every volume");
+
+        Check.Equal(null, withNothing, "and the Shell is handed no root at all");
+
+        Check.True(
+            RecycleBin.TryResolveShellRoot([@"X:\"], out var withOne),
+            "one volume is a request about that volume");
+
+        Check.Equal(@"X:\", withOne, "and the Shell is handed exactly the volume that was measured");
+
+        Check.True(
+            RecycleBin.TryResolveShellRoot([@"X:\", @"Y:\"], out var withTwo),
+            "two volumes are a request about both");
+
+        Check.Equal(null, withTwo, "and every volume is the right root for both of them, because both were measured");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// The caller's three answers to "this volume cannot recycle" have to be pinned against every reason,

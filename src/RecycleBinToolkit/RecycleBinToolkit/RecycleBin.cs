@@ -72,6 +72,12 @@ public static class RecycleBin
     /// Cancels the wait. An empty already handed to the Shell always finishes.
     /// </param>
     /// <returns>What was removed, and what could not be reached.</returns>
+    /// <remarks>
+    /// Naming no volume covers every mounted volume that can hold a Recycle Bin. A machine with none of
+    /// those — no fixed or removable drive that is ready — covers nothing, and that is an empty operation
+    /// that reports nothing removed and no failures rather than a request that reaches every volume on the
+    /// machine. The two are told apart before the Shell is asked, not after.
+    /// </remarks>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
     /// </exception>
@@ -101,16 +107,60 @@ public static class RecycleBin
         // understate it by however long the worker was busy with something else.
         var stopwatch = Stopwatch.StartNew();
 
-        // The Shell is handed the same root the measurements and the report are taken against. Passing
-        // the caller's spelling instead would mean a drive-relative "X:" is measured as "X:\" and emptied
-        // as "X:", which is a different request from the one the result claims to describe.
-        var shellRoot = targets.Count == 1 ? targets[0] : null;
-
         var emptied = await RecycleBinWorker
-            .RunAsync(() => Empty(targets, shellRoot), cancellationToken)
+            .RunAsync(() => Empty(targets), cancellationToken)
             .ConfigureAwait(false);
 
         return emptied with { Elapsed = stopwatch.Elapsed };
+    }
+
+    /// <summary>
+    /// Decides the root the Shell is handed, which is the only place that decides it.
+    /// </summary>
+    /// <param name="targets">The volume roots the operation covers, each measured before and after.</param>
+    /// <param name="shellRoot">
+    /// The one volume to ask about, or <see langword="null"/> to ask about every volume the operation
+    /// covers. Set only when <paramref name="targets"/> is non-empty.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> when there is something to empty. <see langword="false"/> when there is
+    /// nothing — the Shell is not to be asked at all.
+    /// </returns>
+    /// <remarks>
+    /// <c>SHEmptyRecycleBin</c> reads a null root as every volume on the machine, so the two cases mean
+    /// very different things and only one of them is ever safe to pass:
+    /// <list type="bullet">
+    /// <item>Nothing to empty. A machine whose fixed and removable drives are all gone — or one that
+    /// never had any — covers no volume, and asking about "all" of them there empties every Recycle Bin
+    /// on it while the loop measuring before and after never runs once. The result would report nothing
+    /// removed and no failures, which is the whole class of outcome this library exists to refuse.</item>
+    /// <item>One volume. The root handed over is that volume, which is what makes the counts in the
+    /// result describe the empty that actually happened.</item>
+    /// <item>Several volumes. Every one of them was measured, so "all" means exactly the set the
+    /// operation covers and nothing beyond it.</item>
+    /// </list>
+    /// <para>
+    /// Deriving the root here rather than in the caller is what makes the empty set unreachable by
+    /// accident: the value that asks about every volume exists only where the set of measured volumes
+    /// is in hand.
+    /// </para>
+    /// </remarks>
+    internal static bool TryResolveShellRoot(IReadOnlyList<string> targets, out string? shellRoot)
+    {
+        switch (targets.Count)
+        {
+            case 0:
+                shellRoot = null;
+                return false;
+
+            case 1:
+                shellRoot = targets[0];
+                return true;
+
+            default:
+                shellRoot = null;
+                return true;
+        }
     }
 
     /// <summary>
@@ -164,10 +214,17 @@ public static class RecycleBin
     /// experiences. <see cref="EmptyAsync"/> measures around the wait instead, the same way
     /// <see cref="GetItemsAsync"/> does, so both results mean the same thing.
     /// </remarks>
-    private static RecycleBinEmptyResult Empty(List<string> targets, string? volumeRoot)
+    private static RecycleBinEmptyResult Empty(List<string> targets)
     {
         var failures = new List<RecycleFailure>();
         var emptied = new List<string>(targets.Count);
+
+        // Nothing is measured and nothing is asked. A machine covering no volume has no Recycle Bin of its
+        // own to empty, and handing the Shell a null root would empty every volume's regardless.
+        if (!TryResolveShellRoot(targets, out var shellRoot))
+        {
+            return new RecycleBinEmptyResult(emptied, 0, 0, failures, TimeSpan.Zero);
+        }
 
         // Measured on both sides of the call, per volume, because the Shell reports success whether it
         // removed ten entries or none and says nothing about either count.
@@ -183,7 +240,7 @@ public static class RecycleBin
             }
         }
 
-        var hrEmpty = PInvoke.SHEmptyRecycleBin(default, volumeRoot, EmptyFlags);
+        var hrEmpty = PInvoke.SHEmptyRecycleBin(default, shellRoot, EmptyFlags);
 
         long itemsRemoved = 0;
         long bytesFreed = 0;

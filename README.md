@@ -861,7 +861,7 @@ ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardw
 suites. The default run writes only inside the directory it claimed under `--scratch`; `--manual` writes
 wherever you tell it to.
 
-**The 146 cases divide into three groups, and `--all` runs 139 of them.** Four are load cases that run only
+**The 148 cases divide into three groups, and `--all` runs 141 of them.** Four are load cases that run only
 on request: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
 through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
 nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —
