@@ -9,6 +9,12 @@ namespace RecycleBinToolkit.Tests.Suites;
 
 internal static class ShellSuite
 {
+    /// <summary>
+    /// How long a body on the Shell's own thread may take. Matches the runner's per-case budget, so
+    /// moving a case onto the STA thread does not also shorten it.
+    /// </summary>
+    private static readonly TimeSpan CaseBudget = TimeSpan.FromMinutes(10);
+
     internal static IReadOnlyList<TestCase> Cases =>
     [
         new TestCase("ShellSuite." + nameof(ShellRecyclesBatchAndReportsHResults), ShellRecyclesBatchAndReportsHResults),
@@ -35,18 +41,25 @@ internal static class ShellSuite
     /// So a case that forgot this would run and pass in an apartment the library itself never uses, and
     /// nothing about its result would say so. The assertion inside is what keeps the wrapping honest
     /// rather than decorative.
+    /// <para>
+    /// The runner's own budget is named rather than left to the default. <see cref="StaThread"/>'s is two
+    /// minutes, which is shorter than the runner's and would silently shorten every case moved onto this
+    /// path by two thirds.
+    /// </para>
     /// </remarks>
     private static void OnTheShellThread(Action body) =>
-        StaThread.Run(() =>
-        {
-            Check.Equal(
-                ApartmentState.STA,
-                Thread.CurrentThread.GetApartmentState(),
-                "the body runs on a single-threaded apartment, which is what the Shell requires of every COM object it makes");
+        StaThread.Run(
+            () =>
+            {
+                Check.Equal(
+                    ApartmentState.STA,
+                    Thread.CurrentThread.GetApartmentState(),
+                    "the body runs on a single-threaded apartment, which is what the Shell requires of every COM object it makes");
 
-            body();
-            return 0;
-        });
+                body();
+                return 0;
+            },
+            CaseBudget);
 
     /// <summary>
     /// Replacing the operation object drops the old one first, so a replacement that cannot be made
