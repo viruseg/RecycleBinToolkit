@@ -48,6 +48,17 @@ internal sealed class RecycleOperationRunner
     private readonly Stopwatch _stopwatch = new();
 
     /// <summary>
+    /// Buffers reused between operations, not merely between the rounds of one.
+    /// </summary>
+    /// <remarks>
+    /// A runner belongs to the single Shell worker thread and serves one request at a time, so nothing
+    /// held here is reachable from anywhere else and no synchronisation is needed. Allocating five arrays
+    /// and a verdict table per operation is what a caller deleting files in a loop pays on every pass,
+    /// and the reason the buffers exist at all is that these allocations showed up in that profile.
+    /// </remarks>
+    private readonly RoundScratch _scratch = new();
+
+    /// <summary>
     /// Scratch space for one round's Shell-item indices and queued paths.
     /// </summary>
     /// <remarks>
@@ -246,7 +257,7 @@ internal sealed class RecycleOperationRunner
         // apart meant hashing the same string three times where one lookup would do, and carrying three
         // tables sized for the batch when one holds the same information.
         var verdicts = new Dictionary<string, Verdict>(pending.Count, PathComparer);
-        var scratch = new RoundScratch();
+        var scratch = _scratch;
         var deadline = _stopwatch.Elapsed + options.OverallTimeout;
 
         for (var round = 1; round <= options.MaxAttempts && pending.Count > 0; round++)
@@ -255,6 +266,10 @@ internal sealed class RecycleOperationRunner
 
             var outcome = RunRound(pending, options, verdicts, scratch);
 
+            // One pass, not two. Recording the attempt, noting the recycle and collecting what is left
+            // all read the same verdict for the same item, and a second pass over a 100,000-path batch is
+            // another 100,000 reads of an array that has not moved.
+            var stillPending = new List<RecycleTarget>(pending.Count);
             for (var i = 0; i < pending.Count; i++)
             {
                 var path = pending[i].InputPath;
@@ -264,12 +279,7 @@ internal sealed class RecycleOperationRunner
                 {
                     recycled.Add(path);
                 }
-            }
-
-            var stillPending = new List<RecycleTarget>(pending.Count);
-            for (var i = 0; i < pending.Count; i++)
-            {
-                if (!outcome.Succeeded[i])
+                else
                 {
                     stillPending.Add(pending[i]);
                 }
