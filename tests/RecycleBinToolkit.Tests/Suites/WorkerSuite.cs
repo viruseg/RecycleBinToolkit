@@ -96,8 +96,6 @@ internal static class WorkerSuite
             OverallTimeout = TimeSpan.FromSeconds(30)
         };
 
-        var stopwatch = Stopwatch.StartNew();
-
         using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
         using (var cts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken))
         {
@@ -108,6 +106,14 @@ internal static class WorkerSuite
             await Check.ThrowsAsync<OperationCanceledException>(
                 () => cancelled,
                 "the cancelled caller is told so rather than waiting out the retry budget");
+
+            // Brought up before the clock starts, so the second caller queues behind a batch that is
+            // already running rather than behind the worker's own construction. The first submit is what
+            // starts the worker: its thread startup and CoCreateInstance are part of that wait and have
+            // nothing to do with the cancelled batch, so timing from above would charge them to it.
+            RecycleBinWorker.RunAsync(() => 0, context.CancellationToken).GetAwaiter().GetResult();
+
+            var stopwatch = Stopwatch.StartNew();
 
             var after = await RecycleBinWorker
                 .SubmitAsync(Targets([second]), RecycleBinOptions.Default, context.CancellationToken)
