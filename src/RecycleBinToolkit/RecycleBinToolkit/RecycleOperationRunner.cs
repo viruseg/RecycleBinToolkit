@@ -235,14 +235,17 @@ internal sealed class RecycleOperationRunner
         List<RecycleFailure> failures,
         CancellationToken cancellationToken)
     {
-        // Verdicts are held in dictionaries keyed by the caller's own path rather than by position in the
+        // Verdicts are held in a dictionary keyed by the caller's own path rather than by position in the
         // pending list. A round that succeeds for some items shortens that list, so an array would slide
         // every remaining verdict up a slot and a later round would read one item's code back against
         // another item — reporting a failure that names one file and gives it another's error code and
         // stage. Keys are unique because the batch is collapsed before this point.
-        var attempts = new Dictionary<string, int>(pending.Count, PathComparer);
-        var lastHResult = new Dictionary<string, int>(pending.Count, PathComparer);
-        var lastStage = new Dictionary<string, RecycleFailureStage>(pending.Count, PathComparer);
+        //
+        // One table, not three. Attempts, the Shell code and the stage are all read and written together
+        // for the same path, and the key is a long path compared case-insensitively — so holding them
+        // apart meant hashing the same string three times where one lookup would do, and carrying three
+        // tables sized for the batch when one holds the same information.
+        var verdicts = new Dictionary<string, Verdict>(pending.Count, PathComparer);
         var scratch = new RoundScratch();
         var deadline = _stopwatch.Elapsed + options.OverallTimeout;
 
@@ -250,15 +253,16 @@ internal sealed class RecycleOperationRunner
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var outcome = RunRound(pending, options, lastHResult, lastStage, scratch);
+            var outcome = RunRound(pending, options, verdicts, scratch);
 
             for (var i = 0; i < pending.Count; i++)
             {
-                attempts[pending[i].InputPath] = round;
+                var path = pending[i].InputPath;
+                verdicts[path] = verdicts.GetValueOrDefault(path) with { Attempts = round };
 
                 if (outcome.Succeeded[i])
                 {
-                    recycled.Add(pending[i].InputPath);
+                    recycled.Add(path);
                 }
             }
 
@@ -286,11 +290,13 @@ internal sealed class RecycleOperationRunner
 
         foreach (var target in pending)
         {
+            var verdict = verdicts.GetValueOrDefault(target.InputPath);
+
             failures.Add(new RecycleFailure(
                 target.InputPath,
-                lastHResult.GetValueOrDefault(target.InputPath),
-                attempts.GetValueOrDefault(target.InputPath),
-                lastStage.GetValueOrDefault(target.InputPath, RecycleFailureStage.Performing)));
+                verdict.HResult,
+                verdict.Attempts,
+                verdict.Stage == default ? RecycleFailureStage.Performing : verdict.Stage));
         }
 
         RestoreUnrecycledStagedItems(staged, recycled);
@@ -298,6 +304,20 @@ internal sealed class RecycleOperationRunner
 
         return RecycleBinResult.Create(recycled, permanentlyDeleted, failures, _stopwatch.Elapsed, leftover);
     }
+
+    /// <summary>
+    /// What is known about one path so far: how many rounds it has been through, and the verdict the
+    /// first real refusal produced.
+    /// </summary>
+    /// <remarks>
+    /// A record struct rather than three parallel tables, so a path is hashed once instead of three
+    /// times and the three facts cannot drift apart the way three dictionaries can. The Shell's own code
+    /// rides in the same value for the same reason.
+    /// </remarks>
+    private readonly record struct Verdict(
+        int Attempts,
+        int HResult,
+        RecycleFailureStage Stage);
 
     /// <summary>
     /// Puts back anything that was moved aside and then failed to recycle, so a failed operation
@@ -531,8 +551,7 @@ internal sealed class RecycleOperationRunner
     private RoundOutcome RunRound(
         List<RecycleTarget> targets,
         RecycleBinOptions options,
-        Dictionary<string, int> lastHResult,
-        Dictionary<string, RecycleFailureStage> lastStage,
+        Dictionary<string, Verdict> verdicts,
         RoundScratch scratch)
     {
         scratch.BeginRound(targets.Count);
@@ -551,7 +570,7 @@ internal sealed class RecycleOperationRunner
             }
             else
             {
-                RecordVerdict(lastHResult, lastStage, targets[i].InputPath, itemHResult, RecycleFailureStage.ShellItemCreation);
+                RecordVerdict(verdicts, targets[i].InputPath, itemHResult, RecycleFailureStage.ShellItemCreation);
             }
         }
 
@@ -570,7 +589,7 @@ internal sealed class RecycleOperationRunner
         // Applying the flags is a Shell call like any other and can be refused the same way. Nothing has
         // been queued yet, so the round simply has nothing to do: every target stays unfinished and comes
         // back on the next one, which is what the retry loop is for.
-        if (!TrySetFlags(lastHResult, lastStage, targets, buildable, buildableCount))
+        if (!TrySetFlags(verdicts, targets, buildable, buildableCount))
         {
             return new RoundOutcome(succeeded);
         }
@@ -585,11 +604,11 @@ internal sealed class RecycleOperationRunner
             }
             else
             {
-                RecordVerdict(lastHResult, lastStage, targets[i].InputPath, queueHResult, RecycleFailureStage.Queueing);
+                RecordVerdict(verdicts, targets[i].InputPath, queueHResult, RecycleFailureStage.Queueing);
             }
         }
 
-        if (queueableCount > 0 && !TryPerform(lastHResult, lastStage, targets, queueable, queueableCount))
+        if (queueableCount > 0 && !TryPerform(verdicts, targets, queueable, queueableCount))
         {
             return new RoundOutcome(succeeded);
         }
@@ -602,7 +621,7 @@ internal sealed class RecycleOperationRunner
             if (!sink.TryGetOutcome(target.ShellPath, out var hResult, out var newItemPath))
             {
                 // Queued but the Shell never reported on it: unfinished, not a success.
-                RecordVerdict(lastHResult, lastStage, targets[i].InputPath, hResult, RecycleFailureStage.Performing);
+                RecordVerdict(verdicts, targets[i].InputPath, hResult, RecycleFailureStage.Performing);
                 continue;
             }
 
@@ -615,7 +634,7 @@ internal sealed class RecycleOperationRunner
 
             if (stage is not null)
             {
-                RecordVerdict(lastHResult, lastStage, targets[i].InputPath, hResult, stage.Value);
+                RecordVerdict(verdicts, targets[i].InputPath, hResult, stage.Value);
                 continue;
             }
 
@@ -670,8 +689,7 @@ internal sealed class RecycleOperationRunner
     /// </summary>
     /// <returns><see langword="false"/> when the Shell refused and the round has to stop.</returns>
     private bool TrySetFlags(
-        Dictionary<string, int> lastHResult,
-        Dictionary<string, RecycleFailureStage> lastStage,
+        Dictionary<string, Verdict> verdicts,
         List<RecycleTarget> targets,
         int[] buildable,
         int buildableCount)
@@ -685,7 +703,7 @@ internal sealed class RecycleOperationRunner
         {
             for (var q = 0; q < buildableCount; q++)
             {
-                RecordVerdict(lastHResult, lastStage, targets[buildable[q]].InputPath, ex.HResult, RecycleFailureStage.Queueing);
+                RecordVerdict(verdicts, targets[buildable[q]].InputPath, ex.HResult, RecycleFailureStage.Queueing);
             }
 
             return false;
@@ -703,8 +721,7 @@ internal sealed class RecycleOperationRunner
     /// </remarks>
     /// <returns><see langword="false"/> when the Shell refused and the round has to stop.</returns>
     private bool TryPerform(
-        Dictionary<string, int> lastHResult,
-        Dictionary<string, RecycleFailureStage> lastStage,
+        Dictionary<string, Verdict> verdicts,
         List<RecycleTarget> targets,
         int[] queueable,
         int queueableCount)
@@ -718,7 +735,7 @@ internal sealed class RecycleOperationRunner
         {
             for (var q = 0; q < queueableCount; q++)
             {
-                RecordVerdict(lastHResult, lastStage, targets[queueable[q]].InputPath, ex.HResult, RecycleFailureStage.Performing);
+                RecordVerdict(verdicts, targets[queueable[q]].InputPath, ex.HResult, RecycleFailureStage.Performing);
             }
 
             _context.RecreateOperationObject();
@@ -733,19 +750,19 @@ internal sealed class RecycleOperationRunner
     /// cause, so reporting it would send an integrator looking for the wrong problem.
     /// </summary>
     private static void RecordVerdict(
-        Dictionary<string, int> lastHResult,
-        Dictionary<string, RecycleFailureStage> lastStage,
+        Dictionary<string, Verdict> verdicts,
         string path,
         int hResult,
         RecycleFailureStage stage)
     {
-        if (lastHResult.TryGetValue(path, out var existing) && existing != NoVerdict && existing != RecycleProgressSink.Unreported)
+        if (verdicts.TryGetValue(path, out var existing)
+            && existing.HResult != NoVerdict
+            && existing.HResult != RecycleProgressSink.Unreported)
         {
             return;
         }
 
-        lastHResult[path] = hResult;
-        lastStage[path] = stage;
+        verdicts[path] = new Verdict(verdicts.GetValueOrDefault(path).Attempts, hResult, stage);
     }
 
     /// <summary>
