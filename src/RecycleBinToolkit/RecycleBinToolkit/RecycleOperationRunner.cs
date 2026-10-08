@@ -189,16 +189,48 @@ internal sealed class RecycleOperationRunner
         var failures = new List<RecycleFailure>();
 
         // Split off the paths the Shell must never see. Handing it a path past its limit makes it
-        // remove the file permanently while reporting success, so the decision has to happen before
-        // the first round rather than after the damage.
+        // remove the file permanently while reporting success, so the decision has to happen before the
+        // first round rather than after the damage.
         var (recyclable, unrecyclable) = PartitionByRecyclability(pending, options);
         var staged = new List<StagedTarget>();
         HandleUnrecyclable(unrecyclable, options, permanentlyDeleted, staged, stager, failures);
 
-        pending = staged.Count == 0
-            ? recyclable
-            : [.. recyclable, .. staged.Select(entry => entry.Target)];
+        // An item moved aside is the caller's data sitting where the caller did not put it, and the move
+        // back must not depend on the rest of the operation going well. Cancellation, a Shell refusal or
+        // a fault part-way through all leave the item somewhere the caller did not choose, so it goes
+        // back before the failure travels any further. The outcome of the operation is not in question
+        // here — there is no result to return when the operation threw.
+        try
+        {
+            var withStaged = staged.Count == 0
+                ? recyclable
+                : [.. recyclable, .. staged.Select(entry => entry.Target)];
 
+            return RunRounds(withStaged, staged, options, cancellationToken, stager, permanentlyDeleted, recycled, failures);
+        }
+        catch
+        {
+            RestoreUnrecycledStagedItems(staged, recycled);
+            stager.Release();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Runs the rounds for one operation and reports what came of it. Everything that can fail on a
+    /// single item lives here; staging and the move back that has to happen either way live in the
+    /// caller, around it.
+    /// </summary>
+    private RecycleBinResult RunRounds(
+        List<RecycleTarget> pending,
+        List<StagedTarget> staged,
+        RecycleBinOptions options,
+        CancellationToken cancellationToken,
+        LongPathStager stager,
+        List<string> permanentlyDeleted,
+        List<string> recycled,
+        List<RecycleFailure> failures)
+    {
         // Verdicts are held in dictionaries keyed by the caller's own path rather than by position in the
         // pending list. A round that succeeds for some items shortens that list, so an array would slide
         // every remaining verdict up a slot and a later round would read one item's code back against
@@ -216,15 +248,15 @@ internal sealed class RecycleOperationRunner
 
             var outcome = RunRound(pending, options, lastHResult, lastStage, scratch);
 
-for (var i = 0; i < pending.Count; i++)
-        {
-            attempts[pending[i].InputPath] = round;
-
-            if (outcome.Succeeded[i])
+            for (var i = 0; i < pending.Count; i++)
             {
-                recycled.Add(pending[i].InputPath);
+                attempts[pending[i].InputPath] = round;
+
+                if (outcome.Succeeded[i])
+                {
+                    recycled.Add(pending[i].InputPath);
+                }
             }
-        }
 
             var stillPending = new List<RecycleTarget>(pending.Count);
             for (var i = 0; i < pending.Count; i++)
@@ -257,7 +289,7 @@ for (var i = 0; i < pending.Count; i++)
                 lastStage.GetValueOrDefault(target.InputPath, RecycleFailureStage.Performing)));
         }
 
-        RestoreUnrecycledStagedItems(staged, recyclable);
+        RestoreUnrecycledStagedItems(staged, recycled);
         var leftover = stager.Release();
 
         return RecycleBinResult.Create(recycled, permanentlyDeleted, failures, _stopwatch.Elapsed, leftover);
@@ -267,18 +299,28 @@ for (var i = 0; i < pending.Count; i++)
     /// Puts back anything that was moved aside and then failed to recycle, so a failed operation
     /// leaves the caller's files where it found them.
     /// </summary>
-    private static void RestoreUnrecycledStagedItems(List<StagedTarget> staged, List<RecycleTarget> recyclable)
+    /// <remarks>
+    /// The test is the paths that came back recycled, not the paths that were handed to the Shell. A
+    /// staged item is never among the latter — it was moved aside precisely because the Shell could not
+    /// be given its real path — so membership of that list is false for every staged entry and the
+    /// question "did this one get recycled?" could never be answered from it. Matching against what the
+    /// Shell actually took is also what keeps a successful item from being moved back: an item that is
+    /// already in the Recycle Bin has nothing left at its staging path to move.
+    /// </remarks>
+    /// <param name="staged">Items moved aside, each carrying where it came from.</param>
+    /// <param name="recycledPaths">The caller's own paths that were confirmed recycled.</param>
+    private static void RestoreUnrecycledStagedItems(List<StagedTarget> staged, List<string> recycledPaths)
     {
         if (staged.Count == 0)
         {
             return;
         }
 
-        var recycledPaths = new HashSet<string>(recyclable.Select(target => target.InputPath), StringComparer.OrdinalIgnoreCase);
+        var recycled = new HashSet<string>(recycledPaths, StringComparer.OrdinalIgnoreCase);
 
         foreach (var entry in staged)
         {
-            if (!recycledPaths.Contains(entry.Target.InputPath))
+            if (!recycled.Contains(entry.Target.InputPath))
             {
                 LongPathStager.TryRestore(entry.Target.FullPath, entry.OriginalFullPath);
             }
@@ -403,7 +445,7 @@ for (var i = 0; i < pending.Count; i++)
                 var stagedPath = stager.TryStageOnce(target.FullPath);
                 if (stagedPath is not null)
                 {
-                    staged.Add(new StagedTarget(target.WithShellPath(stagedPath), target.FullPath));
+                    staged.Add(new StagedTarget(target.WithMovedTo(stagedPath), target.FullPath));
                 }
                 else
                 {

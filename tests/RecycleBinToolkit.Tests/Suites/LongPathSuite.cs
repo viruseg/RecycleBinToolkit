@@ -1,4 +1,6 @@
+using System.Collections;
 using System.Diagnostics;
+using System.Reflection;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
@@ -40,7 +42,142 @@ internal static class LongPathSuite
         new TestCase("LongPathSuite." + nameof(PermanentDeleteIsStillReportedAlongsideAValidationFailure), PermanentDeleteIsStillReportedAlongsideAValidationFailure),
         new TestCase("LongPathSuite." + nameof(LockedLongPathFailsTheBatchInsteadOfThrowing), LockedLongPathFailsTheBatchInsteadOfThrowing),
         new TestCase("LongPathSuite." + nameof(AContendedBatchIsNotRetriedOnePathAtATime), AContendedBatchIsNotRetriedOnePathAtATime),
+        new TestCase("LongPathSuite." + nameof(StagedItemThatCouldNotBeRecycledIsPutBack), StagedItemThatCouldNotBeRecycledIsPutBack),
+        new TestCase("LongPathSuite." + nameof(AnExceptionDuringTheOperationStillPutsStagedItemsBack), AnExceptionDuringTheOperationStillPutsStagedItemsBack),
     ];
+
+    /// <summary>
+    /// An item moved aside is the caller's data sitting somewhere the caller did not put it, so the
+    /// move back cannot depend on the rest of the operation going well. Cancellation, a Shell refusal
+    /// or a fault part-way through all have to leave the tree as it was found.
+    /// </summary>
+    /// <remarks>
+    /// The runner is driven with an already-cancelled token, which is the cheapest fault that reaches
+    /// past staging: the round loop checks cancellation before its first round, so the item is staged
+    /// and then the operation throws before it could recycle anything.
+    /// </remarks>
+    private static Task AnExceptionDuringTheOperationStillPutsStagedItemsBack(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var (plainPath, extendedPath) = BuildLongPath('b');
+
+        using (var stream = new FileStream(extendedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            stream.Write(new byte[8192]);
+        }
+
+        var options = new RecycleBinOptions
+        {
+            ThrowOnError = false,
+            LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
+        };
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        var stagingBefore = CountStagingDirectories();
+
+        Check.Throws<OperationCanceledException>(
+            () => FileRecycler.MoveToRecycleBinAsync([plainPath], options, cancelled.Token).GetAwaiter().GetResult(),
+            "a cancelled operation reports the cancellation to its caller");
+
+        Check.True(
+            File.Exists(extendedPath),
+            "the item is back where the caller had it, because the operation never got to recycle it");
+
+        Check.Equal(
+            stagingBefore,
+            CountStagingDirectories(),
+            "and nothing of the operation's own is left on the volume");
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// An item moved aside to reach the Shell and then failed to recycle has to go back where the
+    /// caller left it. That is the whole promise of staging a rename: nothing is copied, and a failure
+    /// is supposed to leave the caller's tree as it was found.
+    /// </summary>
+    /// <remarks>
+    /// The restore is reached directly rather than by provoking the Shell into refusing a staged item,
+    /// because almost everything that makes the Shell refuse a delete — an open handle without delete
+    /// sharing, a locked child directory — also blocks the rename that staging is, so the item would
+    /// never reach the staging step the assertion is about. What is asserted here is the observable
+    /// outcome the caller depends on: the bytes are back at the path they were handed.
+    /// <para>
+    /// The runner keeps its per-item bookkeeping private, so the structures are built by reflection and
+    /// the real <c>RestoreUnrecycledStagedItems</c> is invoked rather than a restatement of it. That
+    /// way this test fails if the restore regresses, whatever shape the bookkeeping takes.
+    /// </para>
+    /// </remarks>
+    private static Task StagedItemThatCouldNotBeRecycledIsPutBack(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var original = workspace.CreateRandomFile(4096);
+
+        var stager = new LongPathStager();
+        var staged = stager.TryStageOnce(original);
+
+        try
+        {
+            Check.NotNull(staged, $"the item could be staged ({staged})");
+            Check.False(File.Exists(original), "staging moved the item out of the caller's location");
+            Check.True(File.Exists(staged!), "and the staging copy holds the bytes");
+
+            RestoreStagedItem(staged!, original);
+
+            Check.True(
+                File.Exists(original),
+                "an item that could not be recycled is put back where the caller had it");
+            Check.False(File.Exists(staged!), "and its staging copy is gone, because the move went through");
+        }
+        finally
+        {
+            stager.Dispose();
+            workspace.Dispose();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Invokes the runner's private restore with one staged entry that was not among the recycled
+    /// paths, which is the state a failed recycle leaves behind.
+    /// </summary>
+    private static void RestoreStagedItem(string stagedPath, string originalPath)
+    {
+        var runnerType = typeof(RecycleOperationRunner);
+        var stagedType = runnerType.Assembly.GetType(
+            "RecycleBinToolkit.RecycleOperationRunner+StagedTarget",
+            throwOnError: true)!;
+
+        // The same two steps the runner performs when it stages: the target is told where the item
+        // actually is, and the entry carries where it came from.
+        var target = new RecycleTarget(originalPath, originalPath, originalPath);
+        var moved = typeof(RecycleTarget)
+            .GetMethod("WithMovedTo", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(target, [stagedPath])!;
+
+        var entry = stagedType
+            .GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+            .First(c => c.GetParameters().Length == 2)
+            .Invoke([moved, originalPath]);
+
+        var staged = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(stagedType))!;
+        staged.Add(entry);
+
+        var restore = runnerType.GetMethod(
+            "RestoreUnrecycledStagedItems",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+
+        // Nothing was recycled, so the recycled-paths list is empty: every staged entry is unrestored work.
+        restore.Invoke(null, [staged, new List<string>()]);
+    }
 
     /// <summary>
     /// The wait between staging retries must be paid once for the batch, not once per path.

@@ -51,8 +51,25 @@ internal readonly struct RecycleTarget
     /// <summary>
     /// Returns a copy of this target that hands the Shell a different form of the same location.
     /// </summary>
+    /// <remarks>
+    /// Only the Shell-facing spelling changes. <see cref="FullPath"/> still names the caller's location,
+    /// because nothing moved: this is the same file under a name the Shell can parse.
+    /// </remarks>
     /// <param name="shellPath">Replacement for <see cref="ShellPath"/>.</param>
     internal RecycleTarget WithShellPath(string shellPath) => new(InputPath, FullPath, shellPath);
+
+    /// <summary>
+    /// Returns a copy of this target that names where the item actually is now, after being moved.
+    /// </summary>
+    /// <remarks>
+    /// Both locations change, and that is the difference from <see cref="WithShellPath"/>. A staged item
+    /// is not the caller's file under another name: it has been renamed, so the original location is
+    /// empty. Leaving <see cref="FullPath"/> on the caller's path would make every later question asked of
+    /// it answer about a place the item is no longer at — the disk check would find nothing where the item
+    /// never was, and a move back would be asked to move a path onto itself.
+    /// </remarks>
+    /// <param name="movedFullPath">Where the item now is, in the form the file APIs take.</param>
+    internal RecycleTarget WithMovedTo(string movedFullPath) => new(InputPath, movedFullPath, StripExtendedPrefix(movedFullPath));
 
     /// <summary>
     /// Removes an extended-length prefix so the Shell can parse the path.
