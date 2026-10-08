@@ -31,8 +31,8 @@ internal sealed class TestRunner
     /// <param name="cases">All known cases; grouping and filtering both happen inside the runner.</param>
     /// <returns>
     /// 0 when every selected case passed, 1 when one failed or the selection was empty, 2 when
-    /// <c>--scratch</c> was left out or was given no root, or when <c>--manual</c> was given without a
-    /// root for it to name.
+    /// <c>--scratch</c> was left out or was given no root, when <c>--manual</c> was given without a
+    /// root for it to name, or when <c>--filter</c> was given nothing to match.
     /// </returns>
     internal static async Task<int> RunAsync(string[] args, IReadOnlyList<TestCase> cases)
     {
@@ -60,7 +60,16 @@ internal sealed class TestRunner
             return 2;
         }
 
-        var filter = ParseFilter(args);
+        if (!TryParseFilter(args, out var filter, out var filterProblem))
+        {
+            Console.Error.WriteLine(
+                "--filter takes the substring a test name must contain, such as --filter LongPathSuite or -f Empty. " +
+                "A flag after it is read as a missing substring rather than as one, and no substring at all means " +
+                "no narrowing rather than an error -- so the run you asked for is the run that happens.");
+            Console.Error.WriteLine($"        {filterProblem}");
+            return 2;
+        }
+
         var kind = SelectKind(manualRoots, args);
 
         ScratchWorkspace.Configure(scratchRoot);
@@ -391,16 +400,44 @@ internal sealed class TestRunner
         return true;
     }
 
-    private static string? ParseFilter(string[] args)
+    /// <summary>
+    /// Reads the <c>--filter</c> substring, and refuses the two command lines that name no substring.
+    /// </summary>
+    /// <returns>
+    /// <see langword="false"/> when the flag has nothing usable after it. Returning a null filter instead
+    /// would run the whole regular group: a narrowing flag that quietly does not narrow is a run nobody
+    /// asked for, and reading a report off it afterwards says nothing about what was tested.
+    /// </returns>
+    private static bool TryParseFilter(string[] args, out string? filter, out string problem)
     {
+        filter = null;
+        problem = string.Empty;
+
         for (var i = 0; i < args.Length; i++)
         {
-            if (args[i] is "--filter" or "-f" && i + 1 < args.Length)
+            if (args[i] is not ("--filter" or "-f"))
             {
-                return args[i + 1];
+                continue;
             }
+
+            var value = i + 1 < args.Length ? args[i + 1] : null;
+
+            // The same rule --scratch and --manual follow: a flag is not a substring. Taking the next token
+            // either way turns `--filter --load` into a filter matching "--load", which selects nothing and
+            // reports an empty run rather than the typo it is.
+            if (string.IsNullOrWhiteSpace(value) || value.StartsWith('-'))
+            {
+                problem = value is null
+                    ? "--filter is the last thing on the command line, so it has no substring to match."
+                    : $"--filter is followed by \"{value}\", which is a flag rather than a substring to match.";
+
+                return false;
+            }
+
+            filter = value;
+            return true;
         }
 
-        return null;
+        return true;
     }
 }
