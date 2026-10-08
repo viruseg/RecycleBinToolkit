@@ -27,7 +27,89 @@ internal static class StatusSuite
         new TestCase("StatusSuite." + nameof(TheVolumeKeyIsNamedTheWayWindowsNamesIt), TheVolumeKeyIsNamedTheWayWindowsNamesIt),
         new TestCase("StatusSuite." + nameof(NoRecycleBinVolumeIsNamedNotIndeterminate), NoRecycleBinVolumeIsNamedNotIndeterminate),
         new TestCase("StatusSuite." + nameof(AMissingPerVolumeKeyIsNotAnEnabledVolume), AMissingPerVolumeKeyIsNotAnEnabledVolume),
+        new TestCase("StatusSuite." + nameof(OneShareHasOneSpelling), OneShareHasOneSpelling),
+        new TestCase("StatusSuite." + nameof(OneShareIsTheSameHoweverItIsNamed), OneShareIsTheSameHoweverItIsNamed),
+        new TestCase("StatusSuite." + nameof(AnUncRootIsRecognised), AnUncRootIsRecognised),
         ];
+
+    /// <summary>
+    /// Whether a path names a network share, decided from the path itself and not from the machine.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DriveInfo"/> throws <see cref="ArgumentException"/> on a UNC path instead of reporting
+    /// <see cref="DriveType.Network"/>, so a caller that asks it leaves the type
+    /// <see cref="DriveType.Unknown"/> and the volume
+    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> — a guess, when the path already names
+    /// a remote share. The prefix has to come off before the test: <c>\\?\UNC\server\share</c> names a
+    /// share as plainly as <c>\\server\share</c> does.
+    /// </remarks>
+    private static Task AnUncRootIsRecognised(TestContext context)
+    {
+        Check.True(RecycleBinVolumeState.IsUncRoot(@"\\server\share\"), @"a share with its trailing separator is a UNC root");
+        Check.True(RecycleBinVolumeState.IsUncRoot(@"\\server\share"), "the same share without the separator is still a UNC root");
+        Check.True(RecycleBinVolumeState.IsUncRoot(@"\\?\UNC\server\share\"), "the extended-length spelling of a share is still a UNC root, prefix and all");
+
+        Check.False(RecycleBinVolumeState.IsUncRoot(@"E:\"), @"a drive root is not a UNC root");
+        Check.False(RecycleBinVolumeState.IsUncRoot("E:"), "and neither is a bare drive letter");
+        Check.False(RecycleBinVolumeState.IsUncRoot(Path.Combine("relative", "path")), "and neither is a relative path");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Every spelling of one share names one volume, so every spelling has to normalise to the same
+    /// root and pass the same root test. They did not: <see cref="Path.GetPathRoot(string)"/> answers a
+    /// UNC path without its trailing separator whether or not the caller typed one, and hands back an
+    /// extended-length root with the <c>\\?\UNC\</c> prefix still attached — so the same share came back
+    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> with the separator and
+    /// <see cref="RecycleBinAvailabilityReason.VolumeNotFound"/> without it.
+    /// </summary>
+    /// <remarks>
+    /// Pure, and reachable without a share: every string here is a name, so nothing is read and no
+    /// network is touched. That is also what lets the answer be about spelling alone.
+    /// </remarks>
+    private static Task OneShareHasOneSpelling(TestContext context)
+    {
+        var share = @"\\server\share";
+        var expected = share + Path.DirectorySeparatorChar;
+
+        foreach (var spelling in new[] { share, share + Path.DirectorySeparatorChar, @"\\?\UNC\server\share\" })
+        {
+            Check.Equal(
+                expected,
+                RecycleBinVolumeState.NormalizeVolumeRoot(spelling),
+                $"'{spelling}' normalises to the share root, with its trailing separator and no prefix");
+
+            Check.True(
+                RecycleBinVolumeState.IsVolumeRoot(spelling),
+                $"'{spelling}' is recognised as the root of a volume rather than as a path inside one");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A caller naming the share and a caller naming a path inside it are asking about one volume, so
+    /// both have to reduce to the same root. This is what makes a filtered listing keep the same entries
+    /// whichever of the two the caller passed.
+    /// </summary>
+    private static Task OneShareIsTheSameHoweverItIsNamed(TestContext context)
+    {
+        var share = RecycleBinVolumeState.NormalizeVolumeRoot(@"\\server\share");
+        var inside = RecycleBinVolumeState.NormalizeVolumeRoot(@"\\server\share\deep\inside");
+
+        Check.Equal(
+            @"\\server\share\",
+            share,
+            "the share itself reduces to the share root");
+
+        Check.Equal(
+            share,
+            inside,
+            "a path inside the share reduces to the same root, so both callers ask about the same volume");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// A volume the Shell reports no Recycle Bin for is named as such, not left as Indeterminate. The

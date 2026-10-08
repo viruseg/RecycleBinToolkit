@@ -97,14 +97,66 @@ internal static class RecycleBinVolumeState
     }
 
     /// <summary>
+    /// Whether the path names a network share, decided from the path itself rather than by asking the
+    /// machine. Pure, and true for every spelling of a share.
+    /// </summary>
+    /// <remarks>
+    /// The extended-length prefix comes off first: <c>\\?\UNC\server\share</c> names a share as plainly
+    /// as <c>\\server\share</c> does, and reading it for its first characters alone would answer no.
+    /// <para>
+    /// This is asked instead of <see cref="DriveInfo"/> because <see cref="DriveInfo"/> throws
+    /// <see cref="ArgumentException"/> on a UNC path rather than reporting
+    /// <see cref="DriveType.Network"/>. The type then reads <see cref="DriveType.Unknown"/> and the
+    /// volume is reported <see cref="RecycleBinAvailabilityReason.Indeterminate"/>, which is a guess
+    /// about a location whose type the path already states.
+    /// </para>
+    /// </remarks>
+    /// <param name="root">A path or volume root, in any spelling.</param>
+    /// <returns>
+    /// <see langword="true"/> for a UNC path, including the extended-length spelling; otherwise
+    /// <see langword="false"/>.
+    /// </returns>
+    internal static bool IsUncRoot(string root) =>
+        RecycleTarget.StripExtendedPrefix(root).StartsWith(@"\\", StringComparison.Ordinal);
+
+    /// <summary>
     /// Whether the path is a volume root rather than something inside one. The trailing separator is
     /// what separates them, and it is what callers get wrong.
     /// </summary>
-    private static bool IsVolumeRoot(string volumeRoot) =>
-        string.Equals(volumeRoot, Path.GetPathRoot(volumeRoot), StringComparison.OrdinalIgnoreCase);
+    /// <remarks>
+    /// The two sides are compared in a reduced form rather than as the caller typed them, because
+    /// <see cref="Path.GetPathRoot(string)"/> does not spell a root the way its caller did:
+    /// <c>\\server\share</c> is the root of both <c>\\server\share</c> and <c>\\server\share\</c>, and
+    /// the root it derives from <c>\\?\UNC\server\share\</c> still carries the prefix. Comparing either
+    /// pair verbatim calls one share two volumes, and the caller gets two answers to one question.
+    /// <para>
+    /// The reduction drops the extended-length prefix and the trailing separator, but nothing else — a
+    /// path that goes <em>past</em> the root has to stay distinguishable from the root. Comparing whole
+    /// roots instead would answer that <c>E:\RC\Test\</c> is the same volume as <c>E:\</c>.
+    /// </para>
+    /// </remarks>
+    internal static bool IsVolumeRoot(string volumeRoot) =>
+        string.Equals(RootForm(volumeRoot), RootForm(Path.GetPathRoot(volumeRoot)), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// One spelling of a root reduced to the form every spelling of it shares: no extended-length prefix,
+    /// no trailing separator. Two spellings of one volume are equal here and unequal anywhere else.
+    /// </summary>
+    private static string RootForm(string? path) =>
+        string.IsNullOrEmpty(path)
+            ? string.Empty
+            : RecycleTarget.StripExtendedPrefix(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     private static DriveType ReadDriveType(string root)
     {
+        // A share is asked about its own path rather than through DriveInfo, which throws on a UNC path
+        // and would leave the type Unknown and the volume Indeterminate — a guess about a location that
+        // named itself.
+        if (IsUncRoot(root))
+        {
+            return DriveType.Network;
+        }
+
         try
         {
             return new DriveInfo(root).DriveType;
@@ -166,6 +218,14 @@ internal static class RecycleBinVolumeState
     /// <c>GetVolumeNameForVolumeMountPoint</c>. Collapsing to a root alone is therefore not enough: the
     /// separator has to be added back.
     /// <para>
+    /// A UNC path needs both corrections more than a drive letter does, because <c>Path</c> spells it
+    /// differently from the way callers write it: it answers <c>\\server\share</c> for a share whether or
+    /// not the caller typed the trailing separator, and it hands back <c>\\?\UNC\server\share</c> with
+    /// the extended-length prefix still attached. <see cref="RecycleTarget.StripExtendedPrefix"/> turns
+    /// the second back into <c>\\server\share</c>, and the separator this method adds is what makes every
+    /// spelling of one share the same string.
+    /// </para>
+    /// <para>
     /// The extended-length prefix comes off for the same reason it comes off everywhere else here:
     /// <see cref="DriveInfo"/> throws on <c>\\?\E:\</c>, so a prefixed root is handed back as a volume
     /// whose type could not be read and is reported Indeterminate rather than as the fact it is.
@@ -173,6 +233,10 @@ internal static class RecycleBinVolumeState
     /// </para>
     /// </remarks>
     /// <param name="volumeRoot">A volume root or any path inside one.</param>
+    /// <returns>
+    /// The root with a trailing separator and no prefix — <c>E:\</c>, or <c>\\server\share\</c> for a
+    /// share in any of its spellings.
+    /// </returns>
     internal static string NormalizeVolumeRoot(string volumeRoot)
     {
         var root = Path.GetPathRoot(volumeRoot);
@@ -181,11 +245,7 @@ internal static class RecycleBinVolumeState
             return AppendSeparator(RecycleTarget.StripExtendedPrefix(volumeRoot));
         }
 
-        var shellForm = RecycleTarget.StripExtendedPrefix(root);
-
-        return shellForm.EndsWith(Path.DirectorySeparatorChar) || shellForm.EndsWith(Path.AltDirectorySeparatorChar)
-            ? shellForm
-            : shellForm + Path.DirectorySeparatorChar;
+        return AppendSeparator(RecycleTarget.StripExtendedPrefix(root));
     }
 
     private static string AppendSeparator(string path) =>
