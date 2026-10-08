@@ -75,21 +75,21 @@ internal readonly struct RecycleTarget
     /// Whether a path names its volume by GUID rather than by a drive letter or a mount point.
     /// </summary>
     /// <remarks>
-    /// The Shell's item parser rejects <c>\\?\Volume{GUID}\…</c> with <c>E_INVALIDARG</c> — measured — and
-    /// no prefixless spelling of one exists to fall back to, because the GUID form is the only spelling
-    /// there is. Nothing above this library can read such a volume either: <c>DriveInfo</c> throws on the
-    /// path and <c>SHQueryRecycleBin</c> refuses it, so there is no drive letter to measure, empty or
-    /// report against. A path in this form is refused rather than asked about, which is what stops it
-    /// reaching a decision that would be answered about the wrong thing entirely.
+    /// Only the device form counts. <c>\\?\Volume{GUID}\…</c> is the only spelling such a volume has,
+    /// and the Shell's item parser rejects it with <c>E_INVALIDARG</c> — measured — while nothing above
+    /// this library can read it either: <c>DriveInfo</c> throws on the path and
+    /// <c>SHQueryRecycleBin</c> refuses it, so there is no drive letter to measure, empty or report
+    /// against.
+    /// <para>
+    /// The test is anchored to the prefix rather than to the <c>Volume{</c> text, because that text also
+    /// names an ordinary directory. <c>Path.GetFullPath(@"Volume{guid}\file")</c> resolves to
+    /// <c>X:\Volume{guid}\file</c> under the process's current directory, and that is a path this library
+    /// handles like any other.
+    /// </para>
     /// </remarks>
-    internal static bool IsVolumeGuidPath(string path)
-    {
-        var bare = path.StartsWith(ExtendedPrefix, StringComparison.Ordinal)
-            ? path.AsSpan(ExtendedPrefix.Length)
-            : path.AsSpan();
-
-        return bare.StartsWith("Volume{", StringComparison.OrdinalIgnoreCase);
-    }
+    internal static bool IsVolumeGuidPath(string path) =>
+        path.StartsWith(ExtendedPrefix, StringComparison.Ordinal) &&
+        path.AsSpan(ExtendedPrefix.Length).StartsWith("Volume{", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Removes an extended-length prefix so the Shell can parse the path.
