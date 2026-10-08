@@ -167,18 +167,16 @@ internal static unsafe class RecycleBinLister
         }
         catch (Exception ex) when (ShellOperationContext.IsShellRefusal(ex))
         {
+            // One entry shaped badly — a Shell name that came back malformed, a property the Shell
+            // cannot describe — must not take the listing with it. ArgumentException is in this set
+            // because Path and PropertyKey handling raise it on an answer they will not accept, so the
+            // entry is recorded with whatever HResult the exception carries rather than with the generic
+            // "the Shell gave no code" one: a code is more use to a caller than a shrug, even a wrong one.
             Record(failures, ex.HResult);
         }
         catch (InvalidCastException)
         {
             // An entry that is not IShellItem2 cannot describe itself.
-            Record(failures, ErrorNotSet);
-        }
-        catch (ArgumentException)
-        {
-            // The Shell's names and properties come back through Path and PropertyKey handling that
-            // rejects an empty or malformed answer. One entry shaped that way must not take the listing
-            // with it, so it is recorded as unreadable like any other.
             Record(failures, ErrorNotSet);
         }
     }

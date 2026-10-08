@@ -1,6 +1,7 @@
-using System.Security;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Security;
 using Windows.Win32.UI.Shell;
 
 namespace RecycleBinToolkit;
@@ -74,7 +75,6 @@ internal sealed class RecycleOperationRunner
         private int[] _queueable = [];
         private string[] _queuedPaths = [];
         private bool[] _succeeded = [];
-        private IShellItem?[] _items = [];
         private Dictionary<string, (int HResult, string? RecycleBinPath)>? _outcomes;
 
         internal int[] Buildable => _buildable;
@@ -86,18 +86,15 @@ internal sealed class RecycleOperationRunner
         /// <summary>Per-item verdicts for the round about to run.</summary>
         internal bool[] Succeeded => _succeeded;
 
-        /// <summary>The Shell item for each target, or <see langword="null"/> where none was built.</summary>
-        internal IShellItem?[] Items => _items;
-
         /// <summary>
         /// An empty outcome table for a round, reusing the previous one where that is worth doing.
         /// </summary>
         /// <remarks>
         /// The table holds one entry per queued path and is the largest thing a round allocates, so it is
-        /// kept between rounds like the other buffers. The scratch belongs to one operation, so nothing
-        /// here outlives the call that created it; the limit is about not holding a table sized for an
-        /// enormous batch through what are usually much smaller rounds after it, and past
-        /// <see cref="OutcomeReuseLimit"/> entries the next round allocates its own instead.
+        /// kept between rounds like the other buffers. The scratch belongs to the runner, which serves one
+        /// request at a time, so nothing here is reachable from anywhere else; the limit is about not
+        /// holding a table sized for an enormous batch through what are usually much smaller rounds after
+        /// it, and past <see cref="OutcomeReuseLimit"/> entries the next round allocates its own instead.
         /// </remarks>
         internal Dictionary<string, (int HResult, string? RecycleBinPath)> TakeOutcomes()
         {
@@ -124,7 +121,6 @@ internal sealed class RecycleOperationRunner
                 _queueable = new int[count];
                 _queuedPaths = new string[count];
                 _succeeded = new bool[count];
-                _items = new IShellItem?[count];
             }
         }
 
@@ -132,17 +128,15 @@ internal sealed class RecycleOperationRunner
         /// Prepares the buffers for a round over <paramref name="count"/> targets.
         /// </summary>
         /// <remarks>
-        /// The item buffer is cleared rather than assumed empty because a round writes only where a
-        /// Shell item was built. Without this, a target the Shell refuses would read as carrying the
-        /// previous round's item, and the stale reference would also keep that item's apartment object
-        /// alive for as long as the runner is.
+        /// Only the verdict buffer is cleared, because it is the only one a round writes sparsely. The
+        /// index buffers are written densely before they are read — every entry up to the count this round
+        /// actually produced is assigned before use — so a slot past that count is never read.
         /// </remarks>
         internal void BeginRound(int count)
         {
             EnsureCapacity(count);
 
             Array.Clear(_succeeded, 0, count);
-            Array.Clear(_items, 0, count);
         }
     }
 
@@ -273,7 +267,13 @@ internal sealed class RecycleOperationRunner
             for (var i = 0; i < pending.Count; i++)
             {
                 var path = pending[i].InputPath;
-                verdicts[path] = verdicts.GetValueOrDefault(path) with { Attempts = round };
+
+                // One lookup, not a read followed by a write. Asking the dictionary for a reference to
+                // its entry and stamping the attempt through it hashes the path once, where a
+                // GetValueOrDefault followed by an indexer assignment hashes it twice — and this loop
+                // runs MaxAttempts times over the batch, on paths compared case-insensitively.
+                ref var verdict = ref CollectionsMarshal.GetValueRefOrAddDefault(verdicts, path, out _);
+                verdict.Attempts = round;
 
                 if (outcome.Succeeded[i])
                 {
@@ -320,14 +320,30 @@ internal sealed class RecycleOperationRunner
     /// first real refusal produced.
     /// </summary>
     /// <remarks>
-    /// A record struct rather than three parallel tables, so a path is hashed once instead of three
-    /// times and the three facts cannot drift apart the way three dictionaries can. The Shell's own code
-    /// rides in the same value for the same reason.
+    /// One value rather than three parallel tables, so a path is hashed once instead of three times and
+    /// the three facts cannot drift apart the way three dictionaries can. The Shell's own code rides in
+    /// the same value for the same reason.
+    /// <para>
+    /// A mutable struct rather than a record, because the round loop stamps the attempt count into an
+    /// entry it already has a reference to. A record's positional properties are init-only, which would
+    /// mean reading the value out and writing a modified copy back — the second hash this exists to
+    /// remove.
+    /// </para>
     /// </remarks>
-    private readonly record struct Verdict(
-        int Attempts,
-        int HResult,
-        RecycleFailureStage Stage);
+    private struct Verdict(
+        int attempts,
+        int hResult,
+        RecycleFailureStage stage)
+    {
+        /// <summary>Rounds this path has been through, including the current one.</summary>
+        internal int Attempts { get; set; } = attempts;
+
+        /// <summary>The Shell's own code, or a sentinel when nothing has refused it yet.</summary>
+        internal int HResult { get; set; } = hResult;
+
+        /// <summary>Where the refusal happened.</summary>
+        internal RecycleFailureStage Stage { get; set; } = stage;
+    }
 
     /// <summary>
     /// Puts back anything that was moved aside and then failed to recycle, so a failed operation
@@ -567,9 +583,15 @@ internal sealed class RecycleOperationRunner
         scratch.BeginRound(targets.Count);
         var buildable = scratch.Buildable;
         var queuedPaths = scratch.QueuedPaths;
-        var items = scratch.Items;
         var succeeded = scratch.Succeeded;
         var buildableCount = 0;
+
+        // Deliberately a round's own array rather than part of the runner's reusable buffers. These are
+        // COM objects created on the worker thread's apartment, and they are read only between the two
+        // loops below. Held on the runner, the tail of a large batch's array would keep every Shell item
+        // that batch created alive for the life of the process — a 20,000-path batch followed by small
+        // ones leaves 19,990 references to objects the Shell has long finished with.
+        var items = new IShellItem?[targets.Count];
 
         for (var i = 0; i < targets.Count; i++)
         {
@@ -806,16 +828,34 @@ internal sealed class RecycleOperationRunner
             return false;
         }
 
-        // cancellationToken.WaitHandle allocates a manual-reset event on the token's source and is
-        // documented as something to avoid. A token that cannot be cancelled needs no handle at all,
-        // and that is the common case — a caller that passed nothing.
+        // A token that cannot be cancelled needs no handle at all, which is the common case — a
+        // caller that passed nothing.
         if (!cancellationToken.CanBeCanceled)
         {
             Thread.Sleep(delay);
             return true;
         }
 
-        return !cancellationToken.WaitHandle.WaitOne(delay);
+        // The caller's token source can be disposed while this batch is still queued: their wait ends on
+        // cancellation, their using-block disposes the source, and the worker is still sitting here. A
+        // disposed source's handle throws, and CanBeCanceled keeps reporting true after disposal, so the
+        // branch above cannot keep it away. IsCancellationRequested is safe to ask on a disposed token,
+        // which makes it the check that has to come first.
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        try
+        {
+            return !cancellationToken.WaitHandle.WaitOne(delay);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Disposed between the check above and the handle being asked for. The caller is gone, so this
+            // batch has nobody left to report to either.
+            return false;
+        }
     }
 
     /// <summary>

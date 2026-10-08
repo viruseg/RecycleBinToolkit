@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
@@ -20,7 +21,79 @@ internal static class ShellSuite
         new TestCase("ShellSuite." + nameof(ReportedPathsAreNotHandedOutAgain), ReportedPathsAreNotHandedOutAgain),
         new TestCase("ShellSuite." + nameof(DisposedContextRefusesFurtherWork), DisposedContextRefusesFurtherWork),
         new TestCase("ShellSuite." + nameof(EveryShapeOfShellRefusalIsRecognised), EveryShapeOfShellRefusalIsRecognised),
+        new TestCase("ShellSuite." + nameof(AContextThatLostItsOperationObjectSaysSoRatherThanFaulting), AContextThatLostItsOperationObjectSaysSoRatherThanFaulting),
     ];
+
+    /// <summary>
+    /// Replacing the operation object drops the old one first, so a replacement that cannot be made
+    /// leaves the context alive with nothing behind it. That state has to be reported as the Shell being
+    /// unavailable rather than surfacing as a null reference from a property, because the context is
+    /// shared by every operation in the process: one failure must not turn every later call into a
+    /// NullReferenceException with a stack trace pointing inside this library.
+    /// </summary>
+    /// <remarks>
+    /// The state is entered directly rather than by making COM fail, because a failing
+    /// <c>CoCreateInstance</c> is not something a test can arrange. What is asserted is the invariant the
+    /// state must satisfy, which is the part that was missing.
+    /// </remarks>
+    private static Task AContextThatLostItsOperationObjectSaysSoRatherThanFaulting(TestContext context)
+    {
+        var shell = ShellOperationContext.Create();
+
+        try
+        {
+            shell.SetFlags();
+
+            // The state a failed replacement leaves behind: not disposed, no object, marked as failed.
+            ClearOperationObject(shell);
+            MarkOperationObjectFailed(shell);
+
+            var thrown = Check.Throws<InvalidOperationException>(
+                () => shell.Perform(),
+                "an empty context reports the Shell being unavailable rather than faulting on a null reference");
+
+            Check.NotNull(thrown.InnerException, "and says why the object went missing");
+            Check.False(
+                thrown.Message.Contains("NullReference", StringComparison.OrdinalIgnoreCase),
+                "with nothing pointing at a null reference, which is what the caller would otherwise see");
+
+            // Recreating from the emptied state has to be refused too, or a caller walks straight back
+            // into it. Reflection wraps whatever the method throws, so the wrapper is unwrapped here.
+            Check.Throws<InvalidOperationException>(
+                () => InvokeRecreate(shell),
+                "and recreating from the emptied state is refused rather than allowed to proceed");
+        }
+        finally
+        {
+            shell.Dispose();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static void InvokeRecreate(ShellOperationContext shell)
+    {
+        try
+        {
+            typeof(ShellOperationContext)
+                .GetMethod("RecreateOperationObject", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(shell, null);
+        }
+        catch (TargetInvocationException wrapped) when (wrapped.InnerException is not null)
+        {
+            throw wrapped.InnerException;
+        }
+    }
+
+    private static void ClearOperationObject(ShellOperationContext shell) =>
+        typeof(ShellOperationContext)
+            .GetField("_fileOperation", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(shell, null);
+
+    private static void MarkOperationObjectFailed(ShellOperationContext shell) =>
+        typeof(ShellOperationContext)
+            .GetField("_failed", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(shell, true);
 
     /// <summary>
     /// A Shell refusal reaches managed code as whatever exception the marshaller picks for its HRESULT,

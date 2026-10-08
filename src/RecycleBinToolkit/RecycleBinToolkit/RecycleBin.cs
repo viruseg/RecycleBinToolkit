@@ -100,8 +100,14 @@ public static class RecycleBin
         // waiting for it is part of what the caller waited, and reporting only the Shell's share would
         // understate it by however long the worker was busy with something else.
         var stopwatch = Stopwatch.StartNew();
+
+        // The Shell is handed the same root the measurements and the report are taken against. Passing
+        // the caller's spelling instead would mean a drive-relative "E:" is measured as "E:\" and emptied
+        // as "E:", which is a different request from the one the result claims to describe.
+        var shellRoot = targets.Count == 1 ? targets[0] : null;
+
         var emptied = await RecycleBinWorker
-            .RunAsync(() => Empty(targets, volumeRoot), cancellationToken)
+            .RunAsync(() => Empty(targets, shellRoot), cancellationToken)
             .ConfigureAwait(false);
 
         return emptied with { Elapsed = stopwatch.Elapsed };

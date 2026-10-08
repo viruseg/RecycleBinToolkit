@@ -21,7 +21,48 @@ internal static class EmptySuite
         new TestCase("EmptySuite." + nameof(EmptyOnAnAbsentVolumeIsReportedNotThrown), EmptyOnAnAbsentVolumeIsReportedNotThrown),
         new TestCase("EmptySuite." + nameof(ElapsedCoversTheWaitAsWellAsTheEmpty), ElapsedCoversTheWaitAsWellAsTheEmpty),
         new TestCase("EmptySuite." + nameof(APathInsideAVolumeIsNotAVolumeToEmpty), APathInsideAVolumeIsNotAVolumeToEmpty),
+        new TestCase("EmptySuite." + nameof(ABareDriveLetterEmptiesTheVolumeItNames), ABareDriveLetterEmptiesTheVolumeItNames),
     ];
+
+    /// <summary>
+    /// A bare drive letter names its volume, and so does the same root written with its separator.
+    /// Both spellings have to empty the same volume, and both have to say so in what they report —
+    /// an entry that claims a volume was emptied, having asked the Shell for something else, is worse
+    /// than a refusal because nothing looks wrong.
+    /// </summary>
+    /// <remarks>
+    /// <c>Path.GetPathRoot("E:")</c> is <c>E:</c>, which is drive-relative rather than a root. It is a
+    /// spelling callers get wrong often enough that <see cref="RecycleBin.GetStatusAsync"/> normalises
+    /// it, and the empty has to agree: the volume measured, the volume emptied and the volume named in
+    /// <see cref="RecycleBinEmptyResult.VolumesEmptied"/> must all be the same one.
+    /// </remarks>
+    private static async Task ABareDriveLetterEmptiesTheVolumeItNames(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var file = workspace.CreateRandomFile(4096);
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
+
+        var bare = volumeRoot.TrimEnd(Path.DirectorySeparatorChar);
+        var result = await RecycleBin.EmptyAsync(bare, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(
+            0,
+            result.Failures.Count,
+            result.Failures.Count == 0
+                ? "a bare drive letter is a volume root"
+                : $"a bare drive letter is a volume root (first failure: {result.Failures[0].Stage} 0x{result.Failures[0].HResult:X8})");
+        Check.Equal(1, result.VolumesEmptied.Count, "and one volume is reported as emptied");
+        Check.Equal(volumeRoot, result.VolumesEmptied[0], "named with its separator, however the caller spelled it");
+        Check.True(result.ItemsRemoved >= 1, $"and the entry really went (removed {result.ItemsRemoved})");
+
+        workspace.Dispose();
+    }
 
     /// <summary>
     /// Emptying is the widest thing this library does, so it has to be pointed at the volume the caller

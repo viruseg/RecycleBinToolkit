@@ -38,6 +38,20 @@ internal sealed unsafe class ShellOperationContext : IDisposable
     private bool _uninitializeRequired;
     private bool _disposed;
 
+    /// <summary>
+    /// Whether a replacement operation object could not be created, leaving the context alive with
+    /// nothing behind it.
+    /// </summary>
+    /// <remarks>
+    /// Recreating the operation object drops the old one first, because that is the only way to shed a
+    /// queue the Shell would not clear. If the replacement then cannot be made, the context is in a state
+    /// it cannot serve from: disposed is false, so the disposed check would wave this through, and the
+    /// field is null, so every member that reached for it would fault on a null reference instead of on
+    /// the thing that actually happened. This flag is what the getter checks, so the next caller is told
+    /// the Shell is unavailable — which is both true and something it can act on.
+    /// </remarks>
+    private bool _failed;
+
     private ShellOperationContext()
     {
     }
@@ -123,8 +137,29 @@ internal sealed unsafe class ShellOperationContext : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
+        // Once the replacement has failed there is nothing to recreate from and nothing to recreate to.
+        // Refusing keeps the failure as one reported thing rather than letting a second attempt compound
+        // it, and stops a caller walking back into the state it just failed in.
+        if (_failed)
+        {
+            RecycleBinThrowHelper.ThrowWorkerUnavailable(
+                new InvalidOperationException("The Shell operation object could not be recreated."));
+        }
+
         ReleaseOperationObject();
-        CreateOperationObject();
+
+        try
+        {
+            CreateOperationObject();
+        }
+        catch
+        {
+            // The context is now alive with no operation object behind it. Marking that here rather than
+            // letting it show up later is the difference between the next caller being told the Shell is
+            // unavailable and every one of them after that failing on a null reference inside this getter.
+            _failed = true;
+            throw;
+        }
     }
 
     /// <summary>
@@ -133,20 +168,38 @@ internal sealed unsafe class ShellOperationContext : IDisposable
     internal void SetFlags() => Operation.SetOperationFlags(RecycleFlags);
 
     /// <summary>
-    /// The operation object, or a fault if the context has already been disposed.
+    /// The operation object, or a fault naming what went wrong with the context.
     /// </summary>
     /// <remarks>
     /// <see cref="Dispose"/> nulls the field once the object is released, so the members go through this
     /// rather than touching it directly. Letting a disposed context keep handing out the object it just
     /// released would fault deeper down with a message about a COM pointer, which says nothing about
     /// what the caller actually did.
+    /// <para>
+    /// The same goes for a context whose replacement object could not be created: the field is null but
+    /// the context is not disposed, and returning that null would turn one Shell failure into a null
+    /// reference on every call that follows. It is reported as the Shell being unavailable, which is what
+    /// it is, and which the caller can act on or the worker can retry from scratch.
+    /// </para>
     /// </remarks>
     private IFileOperation Operation
     {
         get
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            return _fileOperation!;
+
+            if (_fileOperation is null)
+            {
+                // Two ways to be here and they are not the same thing to a caller: a context that never
+                // got one, and one that lost it to a replacement that could not be made. Only the second
+                // is worth retrying, and only the second says the Shell was reachable a moment ago.
+                RecycleBinThrowHelper.ThrowWorkerUnavailable(
+                    _failed
+                        ? new InvalidOperationException("The Shell operation object could not be recreated.")
+                        : null);
+            }
+
+            return _fileOperation;
         }
     }
 

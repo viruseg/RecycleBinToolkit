@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
@@ -16,7 +17,80 @@ internal static class RunnerSuite
         new TestCase("RunnerSuite." + nameof(OverallTimeoutStopsFurtherRounds), OverallTimeoutStopsFurtherRounds),
         new TestCase("RunnerSuite." + nameof(FirstShellVerdictSurvivesALaterMissingPath), FirstShellVerdictSurvivesALaterMissingPath),
         new TestCase("RunnerSuite." + nameof(EachFailureKeepsItsOwnVerdictAcrossRounds), EachFailureKeepsItsOwnVerdictAcrossRounds),
+        new TestCase("RunnerSuite." + nameof(TheBackoffSurvivesADisposedTokenSource), TheBackoffSurvivesADisposedTokenSource),
     ];
+
+    /// <summary>
+    /// A caller that disposes its token source while its batch is still queued must not have the retry
+    /// loop fault on the way out. <see cref="CancellationToken.WaitHandle"/> throws once the source is
+    /// disposed, and the token still reports itself cancellable afterwards, so a check on
+    /// <see cref="CancellationToken.CanBeCanceled"/> does not keep that away.
+    /// </summary>
+    /// <remarks>
+    /// Reachable in ordinary code: the caller's wait ends on cancellation, its <c>using</c> disposes the
+    /// source, and the worker is still sitting in its backoff — so the next backoff is the one that
+    /// faults, into a task nobody is reading any more, silently ending a batch that had work left.
+    /// </remarks>
+    private static Task TheBackoffSurvivesADisposedTokenSource(TestContext context)
+    {
+        using var shell = ShellOperationContext.Create();
+        var runner = new RecycleOperationRunner(shell);
+
+        var options = new RecycleBinOptions
+        {
+            MaxAttempts = 4,
+            InitialRetryDelay = TimeSpan.FromMilliseconds(10),
+            OverallTimeout = TimeSpan.FromSeconds(30)
+        };
+
+        var deadline = TimeSpan.FromSeconds(30);
+
+        // A token nobody can cancel has no handle at all, which is the case the branch already covered.
+        Check.True(
+            WaitBeforeRetry(runner, options, 1, deadline, CancellationToken.None),
+            "a wait with no token to honour still happens");
+
+        var cts = new CancellationTokenSource();
+
+        // Taken while the source is alive, which is what a caller does: the token is read once and the
+        // source is disposed afterwards, from a using block or a finally.
+        var orphaned = cts.Token;
+
+        cts.Cancel();
+        cts.Dispose();
+
+        // Must not throw, and must report that no further round should start: the caller's token is
+        // gone, so this batch has nobody left to finish it for.
+        Check.False(
+            WaitBeforeRetry(runner, options, 1, deadline, orphaned),
+            "a disposed source ends the batch rather than faulting inside the wait");
+
+        Check.True(
+            WaitBeforeRetry(runner, options, 1, deadline, CancellationToken.None),
+            "and the runner keeps working afterwards, rather than being left poisoned by the fault");
+
+        return Task.CompletedTask;
+    }
+
+    private static bool WaitBeforeRetry(
+        RecycleOperationRunner runner,
+        RecycleBinOptions options,
+        int round,
+        TimeSpan deadline,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (bool)runner
+                .GetType()
+                .GetMethod("WaitBeforeRetry", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(runner, [options, round, deadline, cancellationToken])!;
+        }
+        catch (TargetInvocationException wrapped) when (wrapped.InnerException is not null)
+        {
+            throw wrapped.InnerException;
+        }
+    }
 
     /// <summary>
     /// A retry round works on fewer items than the round before it, so the verdicts recorded for them have

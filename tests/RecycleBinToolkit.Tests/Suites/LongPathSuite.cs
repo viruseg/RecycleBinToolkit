@@ -43,7 +43,6 @@ internal static class LongPathSuite
         new TestCase("LongPathSuite." + nameof(LockedLongPathFailsTheBatchInsteadOfThrowing), LockedLongPathFailsTheBatchInsteadOfThrowing),
         new TestCase("LongPathSuite." + nameof(AContendedBatchIsNotRetriedOnePathAtATime), AContendedBatchIsNotRetriedOnePathAtATime),
         new TestCase("LongPathSuite." + nameof(StagedItemThatCouldNotBeRecycledIsPutBack), StagedItemThatCouldNotBeRecycledIsPutBack),
-        new TestCase("LongPathSuite." + nameof(AnExceptionDuringTheOperationStillPutsStagedItemsBack), AnExceptionDuringTheOperationStillPutsStagedItemsBack),
         new TestCase("LongPathSuite." + nameof(DeletePermanentlyRemovesALongDirectoryToo), DeletePermanentlyRemovesALongDirectoryToo),
         new TestCase("LongPathSuite." + nameof(AFaultAfterStagingStillPutsTheItemBack), AFaultAfterStagingStillPutsTheItemBack),
     ];
@@ -104,6 +103,11 @@ internal static class LongPathSuite
             File.Exists(extendedPath),
             "and the item it had already moved aside is back where the caller had it");
 
+        Check.Equal(
+            0,
+            CountStagingDirectories(),
+            "and the operation's own scratch directory is gone, because the item was put back out of it");
+
         workspace.Dispose();
         return Task.CompletedTask;
     }
@@ -153,56 +157,6 @@ internal static class LongPathSuite
         Check.Equal(longPath, result.PermanentlyDeletedPaths[0], "by the path the caller passed");
         Check.False(Directory.Exists(longPath), "the directory is gone");
 
-        return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// An item moved aside is the caller's data sitting somewhere the caller did not put it, so the
-    /// move back cannot depend on the rest of the operation going well. Cancellation, a Shell refusal
-    /// or a fault part-way through all have to leave the tree as it was found.
-    /// </summary>
-    /// <remarks>
-    /// The runner is driven with an already-cancelled token, which is the cheapest fault that reaches
-    /// past staging: the round loop checks cancellation before its first round, so the item is staged
-    /// and then the operation throws before it could recycle anything.
-    /// </remarks>
-    private static Task AnExceptionDuringTheOperationStillPutsStagedItemsBack(TestContext context)
-    {
-        using var workspace = new ScratchWorkspace();
-        workspace.Recreate();
-
-        var (plainPath, extendedPath) = BuildLongPath('b');
-
-        using (var stream = new FileStream(extendedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-        {
-            stream.Write(new byte[8192]);
-        }
-
-        var options = new RecycleBinOptions
-        {
-            ThrowOnError = false,
-            LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
-        };
-
-        using var cancelled = new CancellationTokenSource();
-        cancelled.Cancel();
-
-        var stagingBefore = CountStagingDirectories();
-
-        Check.Throws<OperationCanceledException>(
-            () => FileRecycler.MoveToRecycleBinAsync([plainPath], options, cancelled.Token).GetAwaiter().GetResult(),
-            "a cancelled operation reports the cancellation to its caller");
-
-        Check.True(
-            File.Exists(extendedPath),
-            "the item is back where the caller had it, because the operation never got to recycle it");
-
-        Check.Equal(
-            stagingBefore,
-            CountStagingDirectories(),
-            "and nothing of the operation's own is left on the volume");
-
-        workspace.Dispose();
         return Task.CompletedTask;
     }
 

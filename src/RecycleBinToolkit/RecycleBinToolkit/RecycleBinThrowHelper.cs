@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 
 namespace RecycleBinToolkit;
@@ -33,9 +34,14 @@ internal static class RecycleBinThrowHelper
             $"'{failure.Path}' is longer than the Shell can recycle, and the volume offers no short name for it. " +
             "The file was left in place. Set LongPathFailureAction to DeletePermanently to remove it instead.");
 
-    /// <summary>
-    /// Reports that the Shell worker could not be brought up, so no operation can be performed.
+/// <summary>
+    /// Reports that the Recycle Bin worker thread could not be brought up, so no operation can be performed.
     /// </summary>
+    /// <remarks>
+    /// Marked as not returning because it only ever throws. That is what lets the caller keep the flow it
+    /// has rather than a branch on an exception that cannot be caught and handled locally.
+    /// </remarks>
+    [DoesNotReturn]
     internal static void ThrowWorkerUnavailable(Exception? inner) =>
         throw new InvalidOperationException(
             "The Recycle Bin worker thread could not be initialised.",
