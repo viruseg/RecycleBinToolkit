@@ -230,7 +230,14 @@ internal static class ListerSuite
 
         var listed = contents.Items.Where(i => files.Any(file => IsSamePath(i, file))).ToArray();
         Check.True(listed.Length >= fileCount, $"every path is accounted for, allowing for repeat deletions (got {listed.Length} for {fileCount} path(s))");
-        Check.True(contents.TotalSize >= fileCount * (long)fileSize, $"the total size covers the batch ({contents.TotalSize} byte(s))");
+
+        // Summed over the batch's own entries rather than over the listing. contents is the whole of the
+        // volume's Recycle Bin, so TotalSize is satisfied by anything that was already in it -- which is
+        // nothing this case put there. The count above is scoped the same way for the same reason.
+        var batchSize = listed.Sum(item => item.Size);
+        Check.True(
+            batchSize >= fileCount * (long)fileSize,
+            $"the size of the batch's own entries covers the batch (got {batchSize} for {fileCount} x {fileSize} byte(s), whole bin {contents.TotalSize})");
 
         workspace.Dispose();
     }
