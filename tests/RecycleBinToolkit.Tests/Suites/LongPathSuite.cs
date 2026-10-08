@@ -303,6 +303,17 @@ internal static class LongPathSuite
             Check.False(result.Succeeded, "every path is held, so none of them can be staged");
             Check.Equal(pathCount, result.Failures.Count, "and every one of them is reported");
 
+            // Where the arithmetic comes from: StageWithBatchRetries makes StageAttempts sweeps with one
+            // StageRetryDelay sleep between them, so a contended batch pays three 60 ms sleeps whatever
+            // its size. Retrying one path at a time would pay three per path, which for six paths is
+            // eighteen -- 1080 ms before any Shell work at all. The bound sits between the two, at 900.
+            //
+            // A bound in elapsed time is what AGENTS.md calls load-shaped, and this one stays in the
+            // regular run anyway: the claim behind it -- that a contended batch waits once rather than
+            // once per path -- has no ordinary form, because nothing but the clock distinguishes three
+            // sleeps from eighteen. Reclassifying it would leave that claim with no coverage in the
+            // default run, which is the rule the same document states, so the timing stays and is
+            // reasoned about here instead.
             const int SerialRetryFloorMs = 900;
             Check.True(
                 stopwatch.ElapsedMilliseconds < SerialRetryFloorMs,
