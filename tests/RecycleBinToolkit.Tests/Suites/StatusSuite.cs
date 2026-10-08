@@ -26,7 +26,8 @@ internal static class StatusSuite
         new TestCase("StatusSuite." + nameof(ExtendedLengthSpellingOfTheRootIsTheSameVolume), ExtendedLengthSpellingOfTheRootIsTheSameVolume),
         new TestCase("StatusSuite." + nameof(TheVolumeKeyIsNamedTheWayWindowsNamesIt), TheVolumeKeyIsNamedTheWayWindowsNamesIt),
         new TestCase("StatusSuite." + nameof(NoRecycleBinVolumeIsNamedNotIndeterminate), NoRecycleBinVolumeIsNamedNotIndeterminate),
-    ];
+        new TestCase("StatusSuite." + nameof(AMissingPerVolumeKeyIsNotAnEnabledVolume), AMissingPerVolumeKeyIsNotAnEnabledVolume),
+        ];
 
     /// <summary>
     /// A volume the Shell reports no Recycle Bin for is named as such, not left as Indeterminate. The
@@ -65,6 +66,62 @@ internal static class StatusSuite
                 RecycleBinAvailabilityReason.NoRecycleBinOnVolume,
                 status.Reason,
                 "the Shell that reported no bin is named as the reason, rather than the volume being left undecided");
+        }
+        finally
+        {
+            await RemoveSubstitute(letter).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// A volume Windows never configured for recycling is not a volume whose recycling is switched on.
+    /// The per-volume setting has to answer three ways, because a value that is absent is a different
+    /// fact from a value that reads zero, and reading both as "does not delete outright" reports a
+    /// volume that has no bin as one that does.
+    /// </summary>
+    /// <remarks>
+    /// The volume is a <c>subst</c> mapping again, because it is the one shape on which the setting is
+    /// guaranteed absent rather than merely absent today: no GUID resolves, so no subkey is named, so
+    /// there is nothing for <c>RegGetValueW</c> to find.
+    /// <para>
+    /// The second half pins where the downgrade happens. <see cref="RecycleBinVolumePolicy.Classify"/>
+    /// still says Enabled for a fixed volume with no overrides, so the Unknown state cannot be honoured
+    /// inside the registry reader — it has to reach the caller as a three-state answer that
+    /// <see cref="RecycleBinVolumeState.Inspect"/> acts on.
+    /// </para>
+    /// </remarks>
+    private static async Task AMissingPerVolumeKeyIsNotAnEnabledVolume(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var letter = FirstUnusedDriveLetter();
+
+        try
+        {
+            await Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+
+            var volumeRoot = letter + ":" + Path.DirectorySeparatorChar;
+            var keyName = RecycleBinVolumeState.TryGetVolumeGuidKeyName(volumeRoot);
+
+            Check.Equal(
+                RecycleBinVolumePolicy.VolumeRecycleSetting.Unknown,
+                RecycleBinRegistry.ReadNukeOnDelete(keyName),
+                "a volume whose per-volume setting cannot be looked up is unknown, not a volume that recycles");
+
+            Check.NotEqual(
+                RecycleBinVolumePolicy.VolumeRecycleSetting.Nukes,
+                RecycleBinRegistry.ReadNukeOnDelete(keyName),
+                "an absent setting is not read as 'deletes outright' either, which is what makes it a third state");
+
+            Check.Equal(
+                RecycleBinAvailabilityReason.Enabled,
+                RecycleBinVolumePolicy.Classify(
+                    volumeExists: true,
+                    DriveType.Fixed,
+                    disabledByPolicy: false,
+                    nukeOnDelete: false),
+                "the decision itself still cannot see an unknown setting, so the downgrade happens in Inspect and is not hidden in the registry reader");
         }
         finally
         {

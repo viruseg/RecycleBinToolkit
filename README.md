@@ -486,9 +486,11 @@ The outcome of a status check. Immutable.
 | `Indeterminate` | The volume exists but the answer could not be established. Deliberately not `Enabled`. |
 
 `Enabled` is the only value that asserts a fact, and this library does not assert what it could not
-read. A volume whose GUID — which is what the per-volume setting is keyed on — cannot be resolved is
-reported as `Indeterminate`, never optimistically as enabled. A Shell that names no Recycle Bin at all
-is `NoRecycleBinOnVolume` rather than `Indeterminate`: measured here, `SHQueryRecycleBin` answered
+read. The per-volume setting is keyed on the volume's GUID, and Windows writes that key only for
+volumes it has configured a bin for, so an absent key means "this volume was never configured", not
+"this volume recycles". Only a volume whose own key reads `NukeOnDelete=0` is answered `Enabled` from
+configuration; anything else is asked of the Shell. A Shell that names no Recycle Bin at all is
+`NoRecycleBinOnVolume` rather than `Indeterminate`: measured here, `SHQueryRecycleBin` answered
 `0x80004005` on a removable volume with no `$RECYCLE.BIN` and `0x80070003` on a network share, while
 an empty bin queried normally.
 

@@ -63,6 +63,33 @@ internal static class RecycleBinVolumePolicy
     }
 
     /// <summary>
+    /// What a volume's own per-entry Recycle Bin setting says, in the three states the registry can
+    /// actually be in.
+    /// </summary>
+    /// <remarks>
+    /// The three states exist because absence is not the same fact as zero. A volume Windows has
+    /// recorded recycles; a volume recorded as deleting outright does not; a volume recorded at all
+    /// neither — including one Windows never configured, which has no key under the volume list to read.
+    /// </remarks>
+    internal enum VolumeRecycleSetting
+    {
+        /// <summary>
+        /// Nothing was recorded for the volume, so what its deletes do is not known.
+        /// </summary>
+        Unknown,
+
+        /// <summary>
+        /// The volume's setting is present and recycles.
+        /// </summary>
+        Recycled,
+
+        /// <summary>
+        /// The volume's setting is present and deletes immediately, without a Recycle Bin.
+        /// </summary>
+        Nukes,
+    }
+
+    /// <summary>
     /// Decides whether a reason stops the path from being handed to the Shell at all.
     /// </summary>
     /// <param name="reason">The reason <see cref="Classify"/> — or a probe — produced.</param>

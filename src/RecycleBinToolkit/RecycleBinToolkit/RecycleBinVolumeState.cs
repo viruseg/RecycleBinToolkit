@@ -9,9 +9,9 @@ namespace RecycleBinToolkit;
 /// </summary>
 /// <remarks>
 /// Reads what the volume table and the registry say, and asks the Shell only about a volume whose
-/// per-volume setting cannot be looked up at all, because the volume API would not resolve its GUID. It
-/// runs outside the Shell worker, so it neither needs that worker nor waits behind an operation already
-/// queued on it.
+/// per-volume setting was not recorded — one whose GUID the volume API would not resolve, or one Windows
+/// has never configured a bin for. It runs outside the Shell worker, so it neither needs that worker nor
+/// waits behind an operation already queued on it.
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class RecycleBinVolumeState
@@ -24,11 +24,17 @@ internal static class RecycleBinVolumeState
     /// <param name="volumeRoot">Volume root, with or without a trailing separator.</param>
     /// <returns>The status of that volume.</returns>
     /// <remarks>
-    /// The Shell is consulted only for a volume whose per-volume setting cannot be looked up at all —
-    /// one whose GUID the volume API would not resolve — and <see cref="RecycleBinCounter.TryQuery"/> is
-    /// the only question asked of it: an empty Recycle Bin still answers the query successfully, so a
-    /// failure names a volume that has no bin at all rather than a volume whose bin happens to be full of
-    /// nothing.
+    /// The Shell is consulted only for a volume whose per-volume setting was not recorded — one whose GUID
+    /// the volume API would not resolve, or one Windows has never configured a bin for — and
+    /// <see cref="RecycleBinCounter.TryQuery"/> is the only question asked of it: an empty Recycle Bin
+    /// still answers the query successfully, so a failure names a volume that has no bin at all rather
+    /// than a volume whose bin happens to be full of nothing.
+    /// <para>
+    /// Configuration is the evidence throughout, which is also its limit: a key that survives on a volume
+    /// whose bin has since been removed still answers <see cref="RecycleBinAvailabilityReason.Enabled"/>.
+    /// That is a limit rather than a certainty, and nothing here can settle it without asking the Shell on
+    /// every call.
+    /// </para>
     /// <para>
     /// The probe runs last because it is the expensive step. <c>SHQueryRecycleBin</c> walks the bin's
     /// metadata, which took about 11 seconds against a bin of 90,000 entries, so a volume whose own key
@@ -52,12 +58,15 @@ internal static class RecycleBinVolumeState
         var driveType = ReadDriveType(root);
         var disabledByPolicy = RecycleBinRegistry.IsDisabledByPolicy();
 
-        // The per-volume setting lives under a subkey named after the volume's GUID, so a volume
-        // whose GUID cannot be read has no setting to read and the per-volume configuration is unknown
-        // rather than off.
-        var volumeKeyName = TryGetVolumeGuidKeyName(root);
-        var nukeOnDelete = volumeKeyName is not null && RecycleBinRegistry.IsNukeOnDelete(volumeKeyName);
-        var configured = RecycleBinVolumePolicy.Classify(volumeExists: true, driveType, disabledByPolicy, nukeOnDelete);
+        // The per-volume setting lives under a subkey named after the volume's GUID, so both a volume
+        // whose GUID cannot be read and a volume whose key Windows never wrote come back unknown, and
+        // unknown is not the same thing as recycles.
+        var setting = RecycleBinRegistry.ReadNukeOnDelete(TryGetVolumeGuidKeyName(root));
+        var configured = RecycleBinVolumePolicy.Classify(
+            volumeExists: true,
+            driveType,
+            disabledByPolicy,
+            setting is RecycleBinVolumePolicy.VolumeRecycleSetting.Nukes);
 
         // A policy, a volume type that never had a bin, and a volume set to delete outright are all
         // reasons the caller can act on, and each of them is settled above. The Shell could only
@@ -67,18 +76,18 @@ internal static class RecycleBinVolumeState
             return new RecycleBinStatus(root, driveType, configured);
         }
 
-        // The GUID resolved, so the per-volume setting could be looked up and was: the answer is that
-        // reading, which is what keeps the probe off the hot path. A volume reading NukeOnDelete=0
-        // never reaches the Shell at all.
-        if (volumeKeyName is not null)
+        // Windows recorded this volume as recycling, so the answer is that reading and nothing has to be
+        // asked. This is what keeps the probe off the hot path: a volume reading NukeOnDelete=0 never
+        // reaches the Shell at all.
+        if (setting is RecycleBinVolumePolicy.VolumeRecycleSetting.Recycled)
         {
             return new RecycleBinStatus(root, driveType, configured);
         }
 
-        // A volume whose per-volume setting could not be looked up is settled by asking whether the bin
-        // is there at all. One that has a bin says nothing to tell it from a configured volume, which
-        // is what Indeterminate means; one that has none is named, because a delete handed to the Shell
-        // on such a volume is removed for good.
+        // Nothing was recorded for this volume, which is not a fact about whether it recycles. Whether
+        // the bin is there at all is the next question: one that has a bin says nothing to tell it from a
+        // configured volume, which is what Indeterminate means; one that has none is named, because a
+        // delete handed to the Shell on such a volume is removed for good.
         if (!RecycleBinCounter.TryQuery(root, out _, out _))
         {
             return new RecycleBinStatus(root, driveType, RecycleBinAvailabilityReason.NoRecycleBinOnVolume);

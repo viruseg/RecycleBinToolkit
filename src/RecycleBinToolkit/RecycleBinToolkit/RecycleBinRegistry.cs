@@ -124,20 +124,47 @@ internal static partial class RecycleBinRegistry
         IsFlagSet(LocalMachine, PolicySubKey, "NoRecycleFiles");
 
     /// <summary>
-    /// Whether this volume is set to delete immediately instead of recycling.
+    /// What this volume's own Recycle Bin setting says, keeping "nothing was recorded" apart from
+    /// "recorded as recycling".
     /// </summary>
     /// <remarks>
     /// The per-volume state is keyed on the volume's GUID in braces, not on its drive letter, which is
     /// why a volume mounted at more than one letter shares one setting. The caller supplies that GUID
     /// as its own subkey name rather than the volume root, so what gets looked up is exactly the name
     /// Windows wrote.
+    /// <para>
+    /// A missing value cannot collapse into <see cref="RecycleBinVolumePolicy.VolumeRecycleSetting.Nukes"/>
+    /// or into <see cref="RecycleBinVolumePolicy.VolumeRecycleSetting.Recycled"/>. Windows writes that
+    /// key only for volumes it has configured a bin for, so a volume with no key at all has never been
+    /// given one — reporting it as recycling would answer "Enabled" for a volume where a delete is
+    /// removed for good, which is the failure this library exists to prevent.
+    /// </para>
     /// </remarks>
-    /// <param name="volumeGuidKeyName">The volume's GUID in braces, as its subkey is named.</param>
-    internal static bool IsNukeOnDelete(string volumeGuidKeyName)
+    /// <param name="volumeGuidKeyName">
+    /// The volume's GUID in braces, as its subkey is named, or <see langword="null"/> when the volume
+    /// API would not resolve one and there is therefore no key to look under.
+    /// </param>
+    /// <returns>
+    /// <see cref="RecycleBinVolumePolicy.VolumeRecycleSetting.Unknown"/> when no key name was supplied or
+    /// the value was not there to be read.
+    /// </returns>
+    internal static RecycleBinVolumePolicy.VolumeRecycleSetting ReadNukeOnDelete(string? volumeGuidKeyName)
     {
-        ArgumentException.ThrowIfNullOrEmpty(volumeGuidKeyName);
+        if (volumeGuidKeyName is null)
+        {
+            return RecycleBinVolumePolicy.VolumeRecycleSetting.Unknown;
+        }
 
-        return IsFlagSet(CurrentUser, $@"{BitBucketSubKey}\Volume\{volumeGuidKeyName}", "NukeOnDelete");
+        var subKey = $@"{BitBucketSubKey}\Volume\{volumeGuidKeyName}";
+
+        if (!TryReadFlag(CurrentUser, subKey, "NukeOnDelete", out var nukeOnDelete))
+        {
+            return RecycleBinVolumePolicy.VolumeRecycleSetting.Unknown;
+        }
+
+        return nukeOnDelete
+            ? RecycleBinVolumePolicy.VolumeRecycleSetting.Nukes
+            : RecycleBinVolumePolicy.VolumeRecycleSetting.Recycled;
     }
 
     /// <summary>
