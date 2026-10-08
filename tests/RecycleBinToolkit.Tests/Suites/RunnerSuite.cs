@@ -50,20 +50,33 @@ internal static class RunnerSuite
             WaitBeforeRetry(runner, options, 1, deadline, CancellationToken.None),
             "a wait with no token to honour still happens");
 
-        var cts = new CancellationTokenSource();
+        // Disposed without ever being cancelled, which is the shape the catch in the runner is for:
+        // CanBeCanceled still reports true, the wait handle is gone, and IsCancellationRequested
+        // answers false because there is nothing to report. Cancelling first would short-circuit on that
+        // check and the handle would never be asked for, so the branch would go unexercised.
+        var disposedOnly = new CancellationTokenSource();
 
         // Taken while the source is alive, which is what a caller does: the token is read once and the
         // source is disposed afterwards, from a using block or a finally.
-        var orphaned = cts.Token;
+        var handleless = disposedOnly.Token;
 
-        cts.Cancel();
-        cts.Dispose();
+        disposedOnly.Dispose();
 
-        // Must not throw, and must report that no further round should start: the caller's token is
-        // gone, so this batch has nobody left to finish it for.
+        Check.False(
+            WaitBeforeRetry(runner, options, 1, deadline, handleless),
+            "a source disposed without being cancelled ends the batch rather than faulting inside the wait");
+
+        // Disposed after cancelling, which is the shape a caller who cancels actually produces. The
+        // earlier check answers, so the handle is never asked for -- the other half of the same guard.
+        var cancelled = new CancellationTokenSource();
+        var orphaned = cancelled.Token;
+
+        cancelled.Cancel();
+        cancelled.Dispose();
+
         Check.False(
             WaitBeforeRetry(runner, options, 1, deadline, orphaned),
-            "a disposed source ends the batch rather than faulting inside the wait");
+            "and a source disposed after cancelling says the same, because nobody is left to report to");
 
         Check.True(
             WaitBeforeRetry(runner, options, 1, deadline, CancellationToken.None),
