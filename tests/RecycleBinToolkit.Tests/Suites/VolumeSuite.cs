@@ -253,13 +253,12 @@ internal static class VolumeSuite
     /// <param name="Requested">The spelling <c>--manual</c> named, kept for messages.</param>
     /// <param name="Root">
     /// The root <see cref="RecycleBin.GetStatusAsync"/> reported, always with its trailing separator. Every
-    /// call below is made with this string rather than with <paramref name="Requested"/>, so the oracle, the
-    /// empty and the Shell are all asked about one root.
+    /// call below is made with this string rather than with the spelling <c>--manual</c> named, so the oracle,
+    /// the empty and the Shell are all asked about one root.
     /// </param>
     /// <param name="HResult">The Shell's own code for failing to answer a question about that volume's Recycle Bin.</param>
     /// <param name="Reason">Why <see cref="RecycleBin.GetStatusAsync"/> says the volume cannot recycle.</param>
     private sealed record VolumeWithNoRecycleBin(
-        string Requested,
         string Root,
         RecycleBinAvailabilityReason Reason,
         int HResult);
@@ -269,11 +268,11 @@ internal static class VolumeSuite
     /// created on it or handed to the Shell.
     /// </summary>
     /// <remarks>
-    /// Two answers have to agree before a case in this group does anything, and neither is a formality: the
-    /// library's own reading settles the volume, and the Shell's, asked directly about the same string, is
-    /// what establishes that there is nothing here to recycle into. A volume whose bin answers would make
-    /// the empty in one case destroy the caller's files and would make the other two reason about a volume
-    /// that recycles.
+    /// Two answers have to line up before a case in this group does anything, and neither is a formality.
+    /// The library's own reading settles the reason. The Shell's, asked directly about the same string, is
+    /// what keeps the group off a volume whose Recycle Bin answers — which is what stops the empty from
+    /// removing the caller's recycled files, and what stops the other two from reasoning about a volume that
+    /// recycles.
     /// <para>
     /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> is admitted only when the Shell has no
     /// answer either. That reason covers two opposite facts — a volume whose type could not be read, and a
@@ -284,8 +283,11 @@ internal static class VolumeSuite
     /// answer a question about this volume at this spelling. That is true both of a volume with no Recycle
     /// Bin and of one it cannot be asked about at all — an unreachable share, a denial — and the two are not
     /// separable from here. It is also a near-clone of the library's own probe rather than a second
-    /// implementation: a different assembly calling the same API. It gates a case that would otherwise delete
-    /// files, which is what it is for; the reason itself comes from the library and is reported as such.
+    /// implementation: a different assembly calling the same API.
+    /// <para>
+    /// The empty is gated on that pairing rather than on the fact, and cannot do better: it hands the Shell a
+    /// root to empty without consulting a counter first, so "the Shell did not answer here" is what stands in
+    /// for "there is nothing to empty". That is the limit of this gate, stated where the gate is.
     /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">The runner selected this case without a root.</exception>
@@ -315,12 +317,12 @@ internal static class VolumeSuite
 
         if (librarySaysItCannotRecycle && !bin.Ok)
         {
-            return new VolumeWithNoRecycleBin(requested, status.VolumeRoot, status.Reason, bin.HResult);
+            return new VolumeWithNoRecycleBin(status.VolumeRoot, status.Reason, bin.HResult);
         }
 
         var whatItIs = bin.Ok
             ? $"the Shell answered for its Recycle Bin with {bin.Items} item(s), so this is a volume that does recycle"
-            : "it is not a volume that cannot recycle";
+            : $"the Shell did not answer about its Recycle Bin either (0x{bin.HResult:X8}), so it is not a volume that cannot recycle";
 
         throw new CheckFailedException(
             $"{requested} reads as {status.Reason}, and {whatItIs}. A case in this group needs a volume with no " +
