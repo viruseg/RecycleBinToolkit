@@ -96,12 +96,33 @@ internal static class Check
         }
     }
 
+    /// <summary>
+    /// Ends a case as not run, with the reason it cannot run on this machine.
+    /// </summary>
+    /// <remarks>
+    /// A case that returns normally is counted as passed, so a skip written as a plain return makes a run
+    /// report coverage it did not produce -- the same failure AGENTS.md treats as a defect for the load
+    /// and manual groups, and the reason this is a separate outcome rather than a comment.
+    /// </remarks>
+    /// <exception cref="CheckSkippedException">Always.</exception>
+    internal static void Skip(string because) => throw new CheckSkippedException(because);
+
     private static string Format<T>(T value) => value switch
     {
         null => "<null>",
         string s => $"\"{s}\"",
         _ => value.ToString() ?? "<null>"
     };
+}
+
+/// <summary>
+/// Raised when a case cannot run on this machine, and says why.
+/// </summary>
+internal sealed class CheckSkippedException : Exception
+{
+    internal CheckSkippedException(string message) : base(message)
+    {
+    }
 }
 
 /// <summary>

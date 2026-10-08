@@ -62,8 +62,8 @@ internal static class FacadeSuite
 
         if (guid is null)
         {
-            Console.WriteLine($"        skipped: {volumeRoot} has no volume GUID to address a path by, which a substituted drive is one example of");
             workspace.Dispose();
+            Check.Skip($"{volumeRoot} has no volume GUID to address a path by, which a substituted drive is one example of");
             return;
         }
 
@@ -932,7 +932,7 @@ internal static class FacadeSuite
         // volume, and it is what the sibling long-path cases already do.
         if (ShortPathResolver.TryResolveShort(file) is not null)
         {
-            Console.WriteLine("        skipped: this volume issues 8.3 names, so a long path is recycled rather than refused");
+            Check.Skip("this volume issues 8.3 names, so a long path is recycled rather than refused");
             workspace.Dispose();
             return;
         }

@@ -120,6 +120,7 @@ internal sealed class TestRunner
     private static async Task<int> ExecuteAsync(List<(TestCase Case, string? Root)> runs)
     {
         var passed = 0;
+        var skipped = 0;
         List<string>? failures = null;
 
         foreach (var (testCase, root) in runs)
@@ -133,6 +134,16 @@ internal sealed class TestRunner
                 stopwatch.Stop();
                 passed++;
                 Console.WriteLine($"  PASS  {name} ({stopwatch.ElapsedMilliseconds} ms)");
+            }
+            catch (CheckSkippedException skip)
+            {
+                // Counted apart from both outcomes. A case that cannot run on this machine produced no
+                // coverage, and a run that calls it a pass says otherwise -- which is the failure the
+                // deferral lines exist to prevent, applied to a case rather than to a group.
+                stopwatch.Stop();
+                skipped++;
+                Console.WriteLine($"  SKIP  {name}");
+                Console.WriteLine($"        {skip.Message}");
             }
             catch (Exception ex)
             {
@@ -151,10 +162,8 @@ internal sealed class TestRunner
         Console.WriteLine();
         // Counted from the runs rather than the selection: a manual run is one case per named root, and a
         // tally that read the selection would report fewer failures than it printed.
-        var failedCount = runs.Count - passed;
-        Console.WriteLine(failedCount == 0
-            ? $"all {passed} test(s) passed"
-            : $"{passed} passed, {failedCount} failed");
+        var failedCount = runs.Count - passed - skipped;
+        Console.WriteLine(Summary(passed, skipped, failedCount));
 
         if (failures is not null)
         {
@@ -163,6 +172,18 @@ internal sealed class TestRunner
 
         return failedCount == 0 ? 0 : 1;
     }
+
+    /// <summary>
+    /// The tally line, naming a skip rather than folding it into either outcome.
+    /// </summary>
+    private static string Summary(int passed, int skipped, int failed) => (passed, skipped, failed) switch
+    {
+        (0, 0, _) => $"all {passed + skipped + failed} test(s) ran and none of them passed",
+        (_, 0, 0) => $"all {passed} test(s) passed",
+        (_, 0, _) => $"{passed} passed, {failed} failed",
+        (_, > 0, 0) => $"{passed} passed, {skipped} skipped (no failures)",
+        _ => $"{passed} passed, {skipped} skipped, {failed} failed"
+    };
 
     /// <summary>
     /// The runs a selection stands for: one per case, or one per case per named root for the manual

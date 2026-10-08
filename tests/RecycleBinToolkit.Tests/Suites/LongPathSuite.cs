@@ -72,7 +72,7 @@ internal static class LongPathSuite
         // directly and never staged, so there would be nothing here to put back.
         if (ShortPathResolver.TryResolveShort(plainPath) is not null)
         {
-            Console.WriteLine("        skipped: this volume issues 8.3 names, so long paths never reach staging");
+            Check.Skip("this volume issues 8.3 names, so long paths never reach staging");
             workspace.Dispose();
             return Task.CompletedTask;
         }
@@ -286,7 +286,7 @@ internal static class LongPathSuite
             // the thing it names. Skipping is the honest outcome on such a volume, not a pass.
             if (ShortPathResolver.TryResolveShort(paths[0]) is not null)
             {
-                Console.WriteLine("        skipped: this volume issues 8.3 names, so long paths never reach the staging backoff");
+                Check.Skip("this volume issues 8.3 names, so long paths never reach the staging backoff");
                 return;
             }
 
@@ -667,7 +667,7 @@ internal static class LongPathSuite
             // path is recycled directly and the refusal these assertions are about never happens.
             if (ShortPathResolver.TryResolveShort(plainPath) is not null)
             {
-                Console.WriteLine("        skipped: this volume issues 8.3 names, so a long path is recycled rather than refused");
+                Check.Skip("this volume issues 8.3 names, so a long path is recycled rather than refused");
                 return Task.CompletedTask;
             }
 
@@ -885,7 +885,7 @@ internal static class LongPathSuite
             // Same reason the backoff and the put-back cases skip.
             if (ShortPathResolver.TryResolveShort(plainPath) is not null)
             {
-                Console.WriteLine("        skipped: this volume issues 8.3 names, so a long path is recycled rather than refused");
+                Check.Skip("this volume issues 8.3 names, so a long path is recycled rather than refused");
                 return Task.CompletedTask;
             }
 
