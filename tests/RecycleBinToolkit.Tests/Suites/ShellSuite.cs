@@ -25,6 +25,30 @@ internal static class ShellSuite
     ];
 
     /// <summary>
+    /// Runs a body that drives the Shell directly on a dedicated single-threaded apartment.
+    /// </summary>
+    /// <remarks>
+    /// The rule <see cref="StaThread"/> states, enforced here rather than left to each case. The runner
+    /// awaits every case with <c>ConfigureAwait(false)</c>, so a body runs on a thread-pool thread, which
+    /// is MTA — and COM asked for STA on a thread already in another apartment answers
+    /// <c>RPC_E_CHANGED_MODE</c>, which <c>ShellOperationContext.Create</c> swallows as "still usable".
+    /// So a case that forgot this would run and pass in an apartment the library itself never uses, and
+    /// nothing about its result would say so. The assertion inside is what keeps the wrapping honest
+    /// rather than decorative.
+    /// </remarks>
+    private static void OnTheShellThread(Action body) =>
+        StaThread.Run(() =>
+        {
+            Check.Equal(
+                ApartmentState.STA,
+                Thread.CurrentThread.GetApartmentState(),
+                "the body runs on a single-threaded apartment, which is what the Shell requires of every COM object it makes");
+
+            body();
+            return 0;
+        });
+
+    /// <summary>
     /// Replacing the operation object drops the old one first, so a replacement that cannot be made
     /// leaves the context alive with nothing behind it. That state has to be reported as the Shell being
     /// unavailable rather than surfacing as a null reference from a property, because the context is
@@ -38,35 +62,38 @@ internal static class ShellSuite
     /// </remarks>
     private static Task AContextThatLostItsOperationObjectSaysSoRatherThanFaulting(TestContext context)
     {
-        var shell = ShellOperationContext.Create();
-
-        try
+        OnTheShellThread(() =>
         {
-            shell.SetFlags();
+            var shell = ShellOperationContext.Create();
 
-            // The state a failed replacement leaves behind: not disposed, no object, marked as failed.
-            ClearOperationObject(shell);
-            MarkOperationObjectFailed(shell);
+            try
+            {
+                shell.SetFlags();
 
-            var thrown = Check.Throws<InvalidOperationException>(
-                () => shell.Perform(),
-                "an empty context reports the Shell being unavailable rather than faulting on a null reference");
+                // The state a failed replacement leaves behind: not disposed, no object, marked as failed.
+                ClearOperationObject(shell);
+                MarkOperationObjectFailed(shell);
 
-            Check.NotNull(thrown.InnerException, "and says why the object went missing");
-            Check.False(
-                thrown.Message.Contains("NullReference", StringComparison.OrdinalIgnoreCase),
-                "with nothing pointing at a null reference, which is what the caller would otherwise see");
+                var thrown = Check.Throws<InvalidOperationException>(
+                    () => shell.Perform(),
+                    "an empty context reports the Shell being unavailable rather than faulting on a null reference");
 
-            // Recreating from the emptied state has to be refused too, or a caller walks straight back
-            // into it. Reflection wraps whatever the method throws, so the wrapper is unwrapped here.
-            Check.Throws<InvalidOperationException>(
-                () => InvokeRecreate(shell),
-                "and recreating from the emptied state is refused rather than allowed to proceed");
-        }
-        finally
-        {
-            shell.Dispose();
-        }
+                Check.NotNull(thrown.InnerException, "and says why the object went missing");
+                Check.False(
+                    thrown.Message.Contains("NullReference", StringComparison.OrdinalIgnoreCase),
+                    "with nothing pointing at a null reference, which is what the caller would otherwise see");
+
+                // Recreating from the emptied state has to be refused too, or a caller walks straight back
+                // into it. Reflection wraps whatever the method throws, so the wrapper is unwrapped here.
+                Check.Throws<InvalidOperationException>(
+                    () => InvokeRecreate(shell),
+                    "and recreating from the emptied state is refused rather than allowed to proceed");
+            }
+            finally
+            {
+                shell.Dispose();
+            }
+        });
 
         return Task.CompletedTask;
     }
@@ -168,19 +195,22 @@ internal static class ShellSuite
     /// </remarks>
     private static Task DisposedContextRefusesFurtherWork(TestContext context)
     {
-        var shell = ShellOperationContext.Create();
+        OnTheShellThread(() =>
+        {
+            var shell = ShellOperationContext.Create();
 
-        shell.SetFlags();
-        shell.Dispose();
+            shell.SetFlags();
+            shell.Dispose();
 
-        Check.Throws<ObjectDisposedException>(
-            () => shell.SetFlags(),
-            "applying flags to a disposed context is refused rather than using a released object");
-        Check.Throws<ObjectDisposedException>(
-            () => shell.Perform(),
-            "performing through a disposed context is refused");
+            Check.Throws<ObjectDisposedException>(
+                () => shell.SetFlags(),
+                "applying flags to a disposed context is refused rather than using a released object");
+            Check.Throws<ObjectDisposedException>(
+                () => shell.Perform(),
+                "performing through a disposed context is refused");
 
-        shell.Dispose();
+            shell.Dispose();
+        });
 
         return Task.CompletedTask;
     }
@@ -325,14 +355,15 @@ internal static class ShellSuite
         Check.True(probeBefore.Items >= 0, $"the library reads the volume too (got {probeBefore.Items})");
         Check.True(oracleBefore.Items == probeBefore.Items, $"the two counters agree before the delete (Shell {oracleBefore.Items}, library {probeBefore.Items})");
 
-        using (var shell = ShellOperationContext.Create())
+        OnTheShellThread(() =>
         {
+            using var shell = ShellOperationContext.Create();
             shell.SetFlags();
             var sink = new RecycleProgressSink(files);
             Check.True(shell.TryCreateShellItem(files[0], out var item, out _), "Shell item created");
             Check.True(shell.TryQueue(item!, sink, out _), "item queued");
             shell.Perform();
-        }
+        });
 
         var oracleAfter = RecycleBinVolume.Measure(volumeRoot);
         var probeAfter = RecycleBinProbe.Measure(volumeRoot);
@@ -373,8 +404,9 @@ internal static class ShellSuite
         var files = workspace.CreateRandomFiles(5, 4096);
         var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
 
-        using (var context2 = ShellOperationContext.Create())
+        OnTheShellThread(() =>
         {
+            using var context2 = ShellOperationContext.Create();
             context2.SetFlags();
 
             var sink = new RecycleProgressSink(files);
@@ -397,7 +429,7 @@ internal static class ShellSuite
                     binPath!.Contains(@"$RECYCLE.BIN", StringComparison.OrdinalIgnoreCase),
                     $"{file} landed inside the Recycle Bin (got {binPath})");
             }
-        }
+        });
 
         var after = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
         Console.WriteLine($"        bin tracked items: {before} -> {after}");
@@ -422,8 +454,9 @@ internal static class ShellSuite
             files.Add(file);
         }
 
-        using (var shell = ShellOperationContext.Create())
+        OnTheShellThread(() =>
         {
+            using var shell = ShellOperationContext.Create();
             shell.SetFlags();
             var sink = new RecycleProgressSink(files);
 
@@ -441,7 +474,7 @@ internal static class ShellSuite
                 Check.True(IsSuccess(hresult), $"hrDelete for {file} succeeded (0x{hresult:X8})");
                 Check.False(File.Exists(file), $"{file} is gone from disk");
             }
-        }
+        });
 
         workspace.Dispose();
         return Task.CompletedTask;
@@ -454,10 +487,12 @@ internal static class ShellSuite
         var files = workspace.CreateRandomFiles(2, 4096);
 
         // Opened without FileShare.Delete: the Shell cannot recycle this one and must say so
-        // through hrDelete instead of skipping it silently.
-        using (new FileStream(files[0], FileMode.Open, FileAccess.Read, FileShare.Read))
-        using (var shell = ShellOperationContext.Create())
+        // through hrDelete instead of skipping it silently. The handle is taken inside the STA body so
+        // it is released on that thread too, rather than from whichever thread disposes it.
+        OnTheShellThread(() =>
         {
+            using var held = new FileStream(files[0], FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var shell = ShellOperationContext.Create();
             shell.SetFlags();
             var sink = new RecycleProgressSink(files);
 
@@ -484,7 +519,7 @@ internal static class ShellSuite
                 sink.TryGetOutcome(files[1], out var freeHresult, out var freeBinPath),
                 "the Shell reported on the free sibling too, so the batch was not all-or-nothing");
             Console.WriteLine($"        free sibling hrDelete=0x{freeHresult:X8}, binPath={freeBinPath ?? "<null>"}");
-        }
+        });
 
         workspace.Dispose();
         return Task.CompletedTask;
@@ -496,12 +531,13 @@ internal static class ShellSuite
         workspace.Recreate();
         var missing = Path.Combine(ScratchWorkspace.Root, "definitely-absent.bin");
 
-        using (var shell = ShellOperationContext.Create())
+        OnTheShellThread(() =>
         {
+            using var shell = ShellOperationContext.Create();
             Check.False(shell.TryCreateShellItem(missing, out var item, out var hresult), "a missing path produces no Shell item");
             Check.True(item is null, "no Shell item is handed back for a missing path");
             Check.Equal(unchecked((int)0x80070002), hresult, "the original Shell HRESULT is reported, not a fallback");
-        }
+        });
 
         workspace.Dispose();
         return Task.CompletedTask;
