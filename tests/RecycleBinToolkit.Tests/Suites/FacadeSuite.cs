@@ -910,6 +910,16 @@ internal static class FacadeSuite
 
         Check.True(file.Length > 260, $"the test path is genuinely long ({file.Length} chars)");
 
+        // Where the volume issues 8.3 names, this path is recycled rather than refused, and the
+        // assertions below would be about the other outcome. Skipping is the honest result on such a
+        // volume, and it is what the sibling long-path cases already do.
+        if (ShortPathResolver.TryResolveShort(file) is not null)
+        {
+            Console.WriteLine("        skipped: this volume issues 8.3 names, so a long path is recycled rather than refused");
+            workspace.Dispose();
+            return;
+        }
+
         // Past the Shell's recycling limit a file is removed permanently while the operation still
         // reports success, so the path must be refused with the file intact. LongPathSuite covers
         // the Shell-facing side of this; here the point is only that the facade surfaces the refusal

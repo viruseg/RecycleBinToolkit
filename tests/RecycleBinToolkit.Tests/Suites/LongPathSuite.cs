@@ -652,6 +652,14 @@ internal static class LongPathSuite
                 stream.Write(new byte[8192]);
             }
 
+            // Same reason the backoff and the put-back cases skip: where the volume issues 8.3 names the
+            // path is recycled directly and the refusal these assertions are about never happens.
+            if (ShortPathResolver.TryResolveShort(plainPath) is not null)
+            {
+                Console.WriteLine("        skipped: this volume issues 8.3 names, so a long path is recycled rather than refused");
+                return Task.CompletedTask;
+            }
+
             var quiet = new RecycleBinOptions
             {
                 ThrowOnError = false,
@@ -861,6 +869,13 @@ internal static class LongPathSuite
             using (var stream = new FileStream(extendedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 stream.Write(new byte[4096]);
+            }
+
+            // Same reason the backoff and the put-back cases skip.
+            if (ShortPathResolver.TryResolveShort(plainPath) is not null)
+            {
+                Console.WriteLine("        skipped: this volume issues 8.3 names, so a long path is recycled rather than refused");
+                return Task.CompletedTask;
             }
 
             var options = new RecycleBinOptions { ThrowOnError = true, LongPathFailureAction = LongPathFailureAction.Throw };
