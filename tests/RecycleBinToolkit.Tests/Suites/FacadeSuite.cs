@@ -815,9 +815,22 @@ internal static class FacadeSuite
 
     private static async Task NullPathFailsWithoutThrowOnError(TestContext context)
     {
-        var result = await FileRecycler.MoveToRecycleBinAsync(
-            new string?[] { null },
-            cancellationToken: context.CancellationToken);
+        // Throwing off, stated rather than inherited: the single-path overload decides between raising and
+        // returning false on exactly this flag, and a case named for it that relied on the default was
+        // asserting the opposite of what it said.
+        var options = new RecycleBinOptions { ThrowOnError = false };
+
+        Check.False(
+            await FileRecycler.MoveToRecycleBinAsync((string?)null, options, context.CancellationToken).ConfigureAwait(false),
+            "the single-path overload answers false for a null path when throwing is off, rather than raising");
+
+        Check.False(
+            await FileRecycler.MoveToRecycleBinAsync("   ", options, context.CancellationToken).ConfigureAwait(false),
+            "and the same for a whitespace path, which names nothing either");
+
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync(new string?[] { null }, options, context.CancellationToken)
+            .ConfigureAwait(false);
 
         Check.False(result.Succeeded, "a null path without throwOnError reports failure instead of throwing");
         Check.Equal(1, result.Failures.Count, "exactly one failure is reported");
