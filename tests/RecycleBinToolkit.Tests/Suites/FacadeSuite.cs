@@ -42,23 +42,37 @@ internal static class FacadeSuite
     /// well under the spelling the caller did not use.
     /// </summary>
     /// <remarks>
-    /// Refused at the path rather than settled against the Shell, so nothing is spent on it: no filesystem
-    /// probe, no volume inspection, no round. <see cref="RecycleFailure.Attempts"/> is therefore zero,
-    /// which is what "nothing was attempted" means.
+    /// Refused at the path rather than settled against the Shell, so nothing is spent on it: no volume
+    /// inspection, no round. <see cref="RecycleFailure.Attempts"/> is therefore zero, which is what
+    /// "nothing was attempted" means.
+    /// <para>
+    /// The file is created under the run's own directory and only addressed by GUID afterwards, so the
+    /// write stays where every other write in this suite stays and the run's teardown removes it. A
+    /// volume with no GUID of its own is a case this cannot set up — <c>GetVolumeNameForVolumeMountPoint</c>
+    /// answers nothing for a substituted drive, for instance — and that is a skip rather than a failure.
+    /// </para>
     /// </remarks>
     private static async Task AVolumeGuidPathIsSettledOnceRatherThanRetried(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var guid = RecycleBinVolumeState.TryGetVolumeGuidKeyName(Path.GetPathRoot(ScratchWorkspace.Root)!)
-            ?? throw new CheckFailedException("the scratch volume has no GUID to address it by");
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+        var guid = RecycleBinVolumeState.TryGetVolumeGuidKeyName(volumeRoot);
 
-        var file = $@"\\?\Volume{guid}\addressed-by-guid.bin";
+        if (guid is null)
+        {
+            Console.WriteLine($"        skipped: {volumeRoot} has no volume GUID to address a path by, which a substituted drive is one example of");
+            workspace.Dispose();
+            return;
+        }
+
+        var name = $"addressed-by-guid-{Environment.ProcessId}.bin";
+        var file = Path.Combine(ScratchWorkspace.Root, name);
         File.WriteAllBytes(file, new byte[4096]);
 
         var result = await FileRecycler
-            .MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync([$@"\\?\Volume{guid}\{name}"], cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.False(result.Succeeded, $"a path nothing above the library can read is not recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
