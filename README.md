@@ -14,6 +14,8 @@ await RecycleBin.EmptyAsync(@"W:\");
 
 - **Targets** `net10.0`, Windows only. The library is `AnyCPU`; the test project is `x64`.
 - **Dependency**: `Microsoft.Windows.CsWin32` only, and it is a build-time source generator.
+- **Two paths to the Recycle Bin**: the Shell's `IFileOperation`, or the bin's own files. You choose,
+  per call — see [Two paths to the Recycle Bin](#two-paths-to-the-recycle-bin).
 
 ---
 
@@ -38,6 +40,7 @@ This library wraps that API so a caller gets the answer instead of the guess:
 | `Marshal.ReleaseComObject` on a live RCW risks a double `IUnknown::Release` | RCWs are left to the garbage collector |
 | `SHEmptyRecycleBin` reports success without saying what it removed | Counted before and after, per volume, and the totals are measured |
 | Explorer column indexes for Recycle Bin details shift with locale and Windows build | Documented property keys and Shell names, which do not |
+| Every operation is a COM round trip serialised behind one thread | A second backend that writes the bin's own files with ordinary I/O, chosen per call |
 
 ## Why it exists
 
@@ -161,12 +164,13 @@ if (!result.Succeeded)
 | --- | --- | --- |
 | `FileRecycler.MoveToRecycleBinAsync(string? filePath, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<bool>` | Recycles one file or directory. `true` when it is gone from disk. |
 | `FileRecycler.MoveToRecycleBinAsync(IReadOnlyList<string?> filePaths, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinResult>` | Recycles a batch and reports the outcome of every item. |
-| `RecycleBin.GetItemsAsync(string? volumeRoot = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinContents>` | Lists what is in the Recycle Bin. |
-| `RecycleBin.EmptyAsync(string? volumeRoot = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinEmptyResult>` | Empties it, and reports how much it freed. |
-| `RecycleBin.GetStatusAsync(string volumeRoot, CancellationToken cancellationToken = default)` | `Task<RecycleBinStatus>` | Whether it is in use for a volume, and why not if it is not. |
+| `RecycleBin.GetItemsAsync(string? volumeRoot = null, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinContents>` | Lists what is in the Recycle Bin. |
+| `RecycleBin.EmptyAsync(string? volumeRoot = null, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinEmptyResult>` | Empties it, and reports how much it freed. |
+| `RecycleBin.GetStatusAsync(string volumeRoot, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinStatus>` | Whether it is in use for a volume, and why not if it is not. |
 
 All five are safe to call from any thread, including one that already runs on a single-threaded
-apartment.
+apartment, and all five reach the Recycle Bin through the backend `RecycleBinOptions.Backend` names —
+see [Two paths to the Recycle Bin](#two-paths-to-the-recycle-bin).
 
 ### `MoveToRecycleBinAsync(string?, RecycleBinOptions?, CancellationToken)`
 
@@ -190,6 +194,7 @@ under an explicit policy.
 | `PathTooLongException` | The path cannot be recycled, no short name is available, and `LongPathFailureAction` is `Throw` |
 | `IOException` | The Shell refused the delete, the Shell faulted, or a staging directory was left on the volume; or the volume cannot recycle the path and `NoRecycleBinAction` is `Throw`, or that action is `DeletePermanently` and the file system refused the removal — and `ThrowOnError` is on. The file is left in place in every one of those cases. `HResult` carries the Shell's or the file system's own code, or `0` where the volume was refused without the Shell being asked |
 | `NotSupportedException` | The path names its volume by GUID and `ThrowOnError` is on. Nothing was attempted; address the same location by drive letter instead |
+| `PlatformNotSupportedException` | `Backend` is `Native` and this machine's Shell is older than Windows 10 build 14393, so it could not read the records the native backend writes. Nothing was attempted, no file was touched, and `ThrowOnError` does **not** suppress it — use `WinApi` on such a machine |
 | `InvalidOperationException` | A staging directory was left on the volume and `ThrowOnError` is on, or the Shell worker could not be brought up at all |
 | `OperationCanceledException` | `cancellationToken` was cancelled before the work started |
 
@@ -240,12 +245,15 @@ Lists the Recycle Bin.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `volumeRoot` | `string?` | Volume root to keep, such as `"W:\"`, or `null` for every volume. |
+| `options` | `RecycleBinOptions?` | Which backend to read through. `null` means `RecycleBinOptions.Default`, which is `WinApi`. |
 | `cancellationToken` | `CancellationToken` | Cancels the wait. |
 
 **Returns** a `RecycleBinContents`.
 
-The Recycle Bin is a single Shell folder spanning every mounted volume, so `volumeRoot` narrows an
-enumeration that has already happened. It is a filter, not a cheaper query.
+On `WinApi` the Recycle Bin is a single Shell folder spanning every mounted volume, so `volumeRoot`
+narrows an enumeration that has already happened. It is a filter, not a cheaper query. On `Native` each
+volume's bin is enumerated directly and `volumeRoot` selects which directories to read, which is the
+cheaper of the two. Both return the same entries.
 
 ### `EmptyAsync`
 
@@ -254,15 +262,20 @@ library must never put a dialog on a caller's desktop.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `volumeRoot` | `string?` | Volume root to empty, or `null` for every volume, in which case every mounted Fixed or Removable volume is covered in a single Shell call. A path inside a volume is not a volume root: it is reported in `Failures` rather than emptied as that whole volume. |
-| `cancellationToken` | `CancellationToken` | Cancels the wait. An empty already handed to the Shell always finishes. |
+| `volumeRoot` | `string?` | Volume root to empty, or `null` for every volume, in which case every mounted Fixed or Removable volume is covered in a single call. A path inside a volume is not a volume root: it is reported in `Failures` rather than emptied as that whole volume. |
+| `options` | `RecycleBinOptions?` | Which backend to empty through. `null` means `RecycleBinOptions.Default`, which is `WinApi`. |
+| `cancellationToken` | `CancellationToken` | Cancels the wait. On `WinApi` an empty already handed to the Shell always finishes; on `Native` the sweep stops between entries and raises. |
 
 **Returns** a `RecycleBinEmptyResult`.
 
 `SHEmptyRecycleBin` reports success whether it removed ten thousand entries or none, and says nothing
-about either count. Each volume is therefore queried before and after with `SHQueryRecycleBin`, and
-`ItemsRemoved` and `BytesFreed` are the measured differences. Neither is ever negative: a Recycle Bin
-that grew mid-run is reported as zero rather than as a negative removal.
+about either count. On `WinApi` each volume is therefore queried before and after with
+`SHQueryRecycleBin`, and `ItemsRemoved` and `BytesFreed` are the measured differences. Neither is ever
+negative: a Recycle Bin that grew mid-run is reported as zero rather than as a negative removal.
+
+On `Native` the counts are exact rather than measured: every entry's own record carries its size, so the
+totals are summed from the records being deleted. That also means a record whose payload is already gone
+is removed and counted, where the Shell's counter cannot see it at all.
 
 A volume counts as failed only when the Shell refused **and** something is demonstrably still in it.
 The Shell reports an error when asked to empty a Recycle Bin that is already empty, so trusting the
@@ -275,6 +288,7 @@ Whether the Recycle Bin is in use for one volume.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `volumeRoot` | `string` | Volume root to inspect. Must be a volume root, not a directory inside one. |
+| `options` | `RecycleBinOptions?` | Accepted for uniformity and **not used**. This method answers what a volume's configuration says, not how items are moved, so its answer is the same on both backends. |
 | `cancellationToken` | `CancellationToken` | Checked before the work starts. |
 
 **Returns** a `RecycleBinStatus`. **Throws** `ArgumentException` for a null or blank path.
@@ -312,9 +326,10 @@ Immutable; set with object initialisers. Every property has a production default
 | `OverallTimeout` | `TimeSpan` | `30s` | Upper bound on wall-clock time spent retrying the batch. A backoff that does not fit the remaining budget ends the loop immediately rather than starting an over-budget round. |
 | `VerifyRecycleBinReceipt` | `bool` | `true` | Reject a delete whose reported destination is outside `$RECYCLE.BIN`. See [Limitations](#limitations). |
 | `ThrowOnError` | `bool` | `true` | Whether a failure raises instead of being returned. The global switch; it has the final say over `LongPathFailureAction`. |
-| `LongPathFailureAction` | `LongPathFailureAction` | `Throw` | What happens to a file the Shell cannot recycle. |
-| `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. |
-| `MaxShellPathLength` | `int` | `260` | Longest path the Shell can be asked to recycle. Measured: 251 recycles, 261 does not. Clamped to at least 1. |
+| `LongPathFailureAction` | `LongPathFailureAction` | `Throw` | What happens to a file the Shell cannot recycle. **Inert on `Native`**, which never refuses on length. |
+| `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. Applies on **both** backends. |
+| `MaxShellPathLength` | `int` | `260` | Longest path the Shell can be asked to recycle. Measured: 251 recycles, 261 does not. Clamped to at least 1. **Inert on `Native`** — there is no length limit there. |
+| `Backend` | `RecycleBinBackend` | `WinApi` | Which path to the Recycle Bin this call takes. See [Two paths to the Recycle Bin](#two-paths-to-the-recycle-bin). |
 
 ```csharp
 // Every property has a production default, so RecycleBinOptions.Default — which is what a null
@@ -560,6 +575,24 @@ Every example below is compiled as the body of a method in
 `tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs`, so what is shown here is what was built
 against. They are in the order they appear in that file.
 
+### Choose the path to the Recycle Bin
+
+```csharp
+using RecycleBinToolkit;
+
+// Native writes the Recycle Bin's own files under <volume>$RECYCLE.BIN\<SID>\ and reads them back
+// with ordinary file calls: no STA thread, no COM, and work that scales across cores on a
+// solid-state volume. It needs Windows 10 version 1607 (build 14393) or later, because that is the
+// first Shell that can read the index records it writes; below that the call raises
+// PlatformNotSupportedException, and ThrowOnError does not suppress that.
+var native = new RecycleBinOptions { Backend = RecycleBinBackend.Native };
+
+await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip", native);
+
+var contents = await RecycleBin.GetItemsAsync(@"W:\", native);
+await RecycleBin.EmptyAsync(@"W:\", native);
+```
+
 ### List what is in the Recycle Bin
 
 ```csharp
@@ -693,6 +726,10 @@ foreach (var directory in result.LeftoverStagingDirectories)
 }
 ```
 
+On `Backend = Native` none of this applies: the path is written into the bin's record whole and the
+payload moves to a short destination, so a 500-character path recycles with no staging, no policy and
+no limit. That is the one thing the native path does that the Shell path cannot do at all.
+
 ### Never let a file be destroyed without a decision
 
 ```csharp
@@ -761,20 +798,62 @@ foreach (var path in result.RecycledPaths)
 
 ---
 
+## Two paths to the Recycle Bin
+
+`RecycleBinOptions.Backend` chooses how a call reaches the Recycle Bin. The default is `WinApi`, which
+is what every call did before the property existed, and no machine or volume changes it for you.
+
+The Recycle Bin has no private store. It is a directory per volume — `<volume>$RECYCLE.BIN\<SID>\` —
+holding paired `$I` records and `$R` payloads. The Shell exposes that as a virtual folder; the native
+backend reads and writes it directly.
+
+| | `WinApi` | `Native` |
+| --- | --- | --- |
+| Reaches the bin through | COM on a process-wide STA worker | ordinary file calls on the thread pool |
+| Needs an STA thread | yes | no |
+| Visible bin | every mounted volume, one aggregate folder | the current user's bin on the volumes named |
+| Long paths | refused past 260 characters, or staged aside | no limit; nothing is staged |
+| `MaxShellPathLength`, `LongPathFailureAction` | apply | inert |
+| `NoRecycleBinAction` | applies | **applies, unchanged** |
+| `ItemsRemoved`, `BytesFreed` from an empty | measured before and after with `SHQueryRecycleBin` | exact, summed from the records being deleted |
+| Cancelling an empty | always finishes | stops between entries and raises |
+| Needs a particular Windows build | no | **10.0.14393 or later** |
+
+**The version requirement is a refusal, not a warning.** Windows 10 build 14393 is the first Shell
+that reads a version 2 index record. An older Shell does not reject one — it reads it as something it
+cannot use, so the item appears in the bin and cannot be restored from it. `FileRecycler` therefore
+throws `RecycleBinNativeBackendUnavailableException` (a `PlatformNotSupportedException`) before it
+touches anything, and `ThrowOnError` does not suppress it: there is no path to report and no
+`RecycleFailureStage` that describes it, because nothing failed. `GetItemsAsync` and `EmptyAsync` are
+not gated — this backend reads version 1 records as well as writing version 2, and emptying parses
+nothing — so a machine too old to *write* can still *read* and *clear* at full speed.
+
+---
+
 ## How it works
 
 ```
 FileRecycler          validates, normalises, de-duplicates, dispatches
-  └─ RecycleBinWorker one STA thread per process, warmed up, reused
-       ├─ RecycleOperationRunner   attempt loop, selective retry, receipt check
-       │    ├─ ShellOperationContext   COM apartment + one reused IFileOperation
-       │    ├─ RecycleProgressSink     IFileOperationProgressSink -> hrDelete per item
-       │    ├─ RecycleBinReceipt       did it land in $RECYCLE.BIN?
-       │    └─ LongPathStager          short path on the same volume
-       ├─ RecycleBinLister          virtual Recycle Bin folder -> per-entry properties
-       └─ RecycleBinCounter         SHQueryRecycleBin, for before-and-after measurement
+  ├─ RecycleBinBackends          the one place a backend is chosen
+  └─ RecycleBinWorker           one STA thread per process, warmed up, reused
+       └─ ShellRecycleBinBackend  the only thing that reaches it
+            ├─ RecycleOperationRunner   attempt loop, selective retry, receipt check
+            │    ├─ ShellOperationContext   COM apartment + one reused IFileOperation
+            │    ├─ RecycleProgressSink     IFileOperationProgressSink -> hrDelete per item
+            │    ├─ RecycleBinReceipt       did it land in $RECYCLE.BIN?
+            │    └─ LongPathStager          short path on the same volume
+            ├─ RecycleBinLister          virtual Recycle Bin folder -> per-entry properties
+            └─ RecycleBinCounter         SHQueryRecycleBin, for before-and-after measurement
+
+  └─ NativeRecycleBinBackend   plain file calls on the thread pool; never touches the worker
+       ├─ NativeBinLayout         $RECYCLE.BIN\<SID>\ and the $I/$R name pair
+       ├─ NativeIndexFile         version 1 and 2 records, read and written
+       ├─ NativeRecycleRunner     record first, then the move, then the receipt
+       ├─ NativeBinLister         FileSystemEnumerable + RandomAccess, parallel per drive
+       └─ NativeBinEmptier        payload first, then the record, counted from the records
 
 RecycleBin            validates, filters, reports
+  ├─ RecycleBinVolumeSet   which volumes an operation covers
   ├─ RecycleBinVolumeState  volume table + registry facts
   └─ RecycleBinVolumePolicy the decision, separated so it can be checked exhaustively
 ```

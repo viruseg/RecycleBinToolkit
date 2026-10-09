@@ -180,7 +180,7 @@ internal static class NativeBinSuite
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for the directory to be recorded in");
 
-        var directory = Path.Combine(ScratchWorkspace.Root, "a-directory");
+        var directory = Path.Combine(ScratchWorkspace.Root, "a-directory-" + RunTag);
         Directory.CreateDirectory(directory);
         File.WriteAllBytes(Path.Combine(directory, "inside.bin"), Content);
 
@@ -384,7 +384,7 @@ internal static class NativeBinSuite
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for the directory to be listed out of");
 
-        var directory = Path.Combine(ScratchWorkspace.Root, "listed-directory");
+        var directory = Path.Combine(ScratchWorkspace.Root, "listed-directory-" + RunTag);
         Directory.CreateDirectory(directory);
         File.WriteAllBytes(Path.Combine(directory, "inside.bin"), Content);
 
@@ -772,7 +772,7 @@ internal static class NativeBinSuite
         var paths = new List<string>(count);
         for (var i = 0; i < count; i++)
         {
-            var path = Path.Combine(ScratchWorkspace.Root, $"batch-{i}.bin");
+            var path = Path.Combine(ScratchWorkspace.Root, $"batch-{RunTag}-{i}.bin");
             File.WriteAllBytes(path, content);
             paths.Add(path);
         }
@@ -918,9 +918,21 @@ internal static class NativeBinSuite
         }
     }
 
+    /// <summary>
+    /// Makes every file this suite creates unique to this process, so that two runs on one machine cannot
+    /// put the same original path in the Recycle Bin twice.
+    /// </summary>
+    /// <remarks>
+    /// The Recycle Bin is the one piece of state here that outlives a run: a leftover from the previous one
+    /// is still there, and a case that asserts "exactly one listed entry names this path" would see two the
+    /// second time it was run against the same volume. The path is the only thing a recycled record keeps,
+    /// so it has to differ between runs for the assertion to be about this run's operation.
+    /// </remarks>
+    private static readonly string RunTag = $"{Environment.ProcessId}-{DateTime.UtcNow.Ticks % 1_000_000}";
+
     private static string CreateFile(string name)
     {
-        var path = Path.Combine(ScratchWorkspace.Root, name);
+        var path = Path.Combine(ScratchWorkspace.Root, name + "-" + RunTag + ".bin");
         File.WriteAllBytes(path, Content);
         return path;
     }
@@ -945,7 +957,7 @@ internal static class NativeBinSuite
             directory = deeper;
         }
 
-        var path = Path.Combine(directory, new string('f', 100) + ".bin");
+        var path = Path.Combine(directory, new string('f', 100) + "-" + RunTag + ".bin");
         File.WriteAllBytes(path, Content);
         return path;
     }

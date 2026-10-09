@@ -117,6 +117,21 @@ internal static class ReadmeExamples
         Console.WriteLine($"{result.Succeeded} {result.Elapsed} {result.FirstFailure is null}");
     }
 
+    internal static async Task ChooseThePathToTheRecycleBin()
+    {
+        // Native writes the Recycle Bin's own files under <volume>$RECYCLE.BIN\<SID>\ and reads them back
+        // with ordinary file calls: no STA thread, no COM, and work that scales across cores on a
+        // solid-state volume. It needs Windows 10 version 1607 (build 14393) or later, because that is the
+        // first Shell that can read the index records it writes; below that the call raises
+        // PlatformNotSupportedException, and ThrowOnError does not suppress that.
+        var native = new RecycleBinOptions { Backend = RecycleBinBackend.Native };
+
+        await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip", native);
+
+        var contents = await RecycleBin.GetItemsAsync(@"W:\", native);
+        await RecycleBin.EmptyAsync(@"W:\", native);
+    }
+
     internal static async Task ListTheRecycleBin()
     {
         var contents = await RecycleBin.GetItemsAsync();

@@ -10,6 +10,7 @@ framework.
 dotnet build src/RecycleBinToolkit/RecycleBinToolkit/RecycleBinToolkit.csproj
 dotnet build tests/RecycleBinToolkit.Tests/RecycleBinToolkit.Tests.csproj
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --all
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --backend native --all
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --filter LongPathSuite
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --load
 ```
@@ -61,12 +62,23 @@ The harness has two disjoint groups. `--all` and `--filter <substring>` select t
 names only load cases fails with a message naming them and telling the reader to pass `--load`, so the
 flag cannot be worked around by accident.
 
-There are 158 registered cases and four load cases, so `--all` runs 154 of them. The rest is what the
-volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the cases that
-recycle one and runs the cases that are about a volume the Shell reports no bin for. Measured on both
-kinds of volume, 144 pass and 10 skip where there is a bin and 111 pass and 43 skip where there is none,
-with nothing failing either way; a share is a third kind and measured 109 pass and 45 skip. `--all` prints
-the counts, so a count in a document that disagrees with them is the document being wrong.
+`--backend <winapi|native>` chooses which path to the Recycle Bin a run measures, and defaults to
+`winapi`. It is refused rather than guessed at when the value is not one of the two, and the runner
+prints the choice in its header, so a report always says which path it exercised. The suites that
+drive the public facade follow it; the suites that test the Shell implementation's internals
+(`WorkerSuite`, `RunnerSuite`, `ShellSuite`, `ListerSuite`, `LongPathSuite`, `RegistrySuite`) do not,
+because the flag is a caller's choice rather than a statement about which code exists.
+`NativeBinSuite` passes `RecycleBinBackend.Native` explicitly and therefore measures the same backend
+whatever the run was told.
+
+There are 185 registered cases, of which four are load cases, so `--all` runs 181 of them. The rest is
+what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
+cases that recycle one and runs the cases that are about a volume the Shell reports no bin for.
+Measured with `--backend winapi` and again with `--backend native` on a volume with a bin: **171 pass
+and 10 skip** either way, with nothing failing. On a volume with no bin: **119 pass and 62 skip**
+either way. A share is a third kind and is not measured here; the share figures this file used to
+carry predate the native backend. `--all` prints the counts, so a count in a document that disagrees
+with them is the document being wrong.
 
 ## What the tests may touch
 
