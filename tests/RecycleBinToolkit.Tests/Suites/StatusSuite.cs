@@ -128,7 +128,7 @@ internal static class StatusSuite
     /// </remarks>
     private static async Task NoRecycleBinVolumeIsNamedNotIndeterminate(TestContext context)
     {
-        ScratchWorkspace.RequireNonRecycling("a volume the Shell reports no bin for is the shape this case is about");
+        ScratchWorkspace.RequireNonRecycling("a volume the Shell reports no bin for");
 
         var status = await RecycleBin.GetStatusAsync(ScratchWorkspace.VolumeRoot, context.CancellationToken).ConfigureAwait(false);
 

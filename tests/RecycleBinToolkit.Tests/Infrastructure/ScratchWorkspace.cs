@@ -106,8 +106,9 @@ internal sealed class ScratchWorkspace : IDisposable
     /// <see cref="RecycleBinAvailabilityReason.Enabled"/>.
     /// </summary>
     /// <param name="because">
-    /// What the case needed from the volume, in the reader's words. Carried into the skip line, because that
-    /// line is the only record left of a case that produced no coverage.
+    /// What the case needed from the volume, as a noun phrase the skip line can carry: it completes
+    /// "This case needs ___". Carried into that line because it is the only record left of a case that
+    /// produced no coverage.
     /// </param>
     /// <remarks>
     /// Its counterpart is <see cref="RequireRecycling"/>. A run on a volume with no Recycle Bin is a run that
@@ -123,7 +124,7 @@ internal sealed class ScratchWorkspace : IDisposable
     {
         if (Reason == RecycleBinAvailabilityReason.Enabled)
         {
-            Check.Skip($"{VolumeRoot} has a Recycle Bin, so this machine is not the one {because} needs");
+            Check.Skip($"{VolumeRoot} has a Recycle Bin. This case needs {because}");
         }
     }
 
@@ -132,8 +133,9 @@ internal sealed class ScratchWorkspace : IDisposable
     /// <see cref="RecycleBinAvailabilityReason.Enabled"/>.
     /// </summary>
     /// <param name="because">
-    /// What the case needed from the volume, in the reader's words. Carried into the skip line, because that
-    /// line is the only record left of a case that produced no coverage.
+    /// What the case needed from the volume, as a noun phrase the skip line can carry: it completes
+    /// "This case needs ___". Carried into that line because it is the only record left of a case that
+    /// produced no coverage.
     /// </param>
     /// <remarks>
     /// A case that recycles a file and reads the bin back cannot produce its answer on a volume with no bin:
@@ -151,7 +153,7 @@ internal sealed class ScratchWorkspace : IDisposable
     {
         if (Reason != RecycleBinAvailabilityReason.Enabled)
         {
-            Check.Skip($"{VolumeRoot} has no Recycle Bin ({Reason}), so this machine is not the one {because} needs");
+            Check.Skip($"{VolumeRoot} has no Recycle Bin ({Reason}). This case needs {because}");
         }
     }
 

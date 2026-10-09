@@ -157,7 +157,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
 
         var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
@@ -227,7 +227,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
 
         var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
@@ -279,7 +279,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
 
         var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
@@ -348,7 +348,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
 
         var file = Path.Combine(ScratchWorkspace.Root, $"allowed-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
@@ -451,7 +451,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
 
         var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
@@ -493,7 +493,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
 
         var file = Path.Combine(ScratchWorkspace.Root, $"signed-away-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
@@ -537,7 +537,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
 
         var directory = Path.Combine(ScratchWorkspace.Root, $"tree-{Environment.ProcessId}");
         var inner = Path.Combine(directory, "nested");
@@ -585,7 +585,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
 
         var file = Path.Combine(ScratchWorkspace.Root, $"held-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
@@ -653,7 +653,7 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
 
         var files = workspace.CreateRandomFiles(2, 4096);
 
