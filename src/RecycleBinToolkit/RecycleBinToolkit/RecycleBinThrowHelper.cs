@@ -91,11 +91,14 @@ internal static class RecycleBinThrowHelper
 /// could not be moved back from.
 /// </summary>
 /// <remarks>
-/// The one place the caller's data can end up somewhere it cannot be told about from a result, because an
-/// operation that threw has no result. The original failure is carried inside rather than discarded, and
-/// <see cref="OperationCanceledException"/> stays reachable through it for a caller that inspects
-/// <see cref="Exception.InnerException"/> — what changed is that the exception which surfaces now names
-/// where the file is.
+/// <b>A cancelled caller does not see this.</b> Cancelling ends the wait rather than the work, and the
+/// wait ends with an <see cref="OperationCanceledException"/> raised by the caller's own token — the
+/// worker goes on regardless, and its outcome is read by nobody. That is the documented contract of
+/// cancellation, and it means a batch cancelled after staging can strand an item without the caller
+/// being able to learn where from anything it is handed. This type surfaces for the failures that do
+/// reach the caller: a Shell fault escaping the rounds, an unrecreatable operation object, or the
+/// single-path overload with <see cref="RecycleBinOptions.ThrowOnError"/> on. Cancelled or not, a
+/// directory named <c>$RCW-</c> on the volume root is worth looking for.
 /// </remarks>
 internal sealed class RecycleBinItemLeftBehindException : IOException
 {

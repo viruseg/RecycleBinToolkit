@@ -226,12 +226,14 @@ internal sealed class RecycleOperationRunner
                 throw;
             }
 
-            // A staging directory that could not be emptied means the caller's data is in it and there
-            // is no result to name that. Cancellation is the reachable way in here: the rounds are
-            // entered before any of them, so a token cancelled after the items were moved aside throws
-            // with the move back never attempted. Throwing the original would name a cancelled call and
-            // leave the caller with no idea where its file went, which is the one answer available and is
-            // not in the exception it would otherwise see.
+            // A staging directory that could not be emptied is the caller's data left at a path they did
+            // not choose, with no result to name it, because an operation that threw has none. The move
+            // back is attempted first and is what usually empties it; this only runs when it did not, or
+            // when the directory itself would not go.
+            //
+            // A cancelled caller never reaches this: RecycleBinWorker releases the caller's wait with an
+            // OperationCanceledException of its own, so the work continues and this outcome is read by
+            // nobody. See RecycleBinItemLeftBehindException for what that leaves a caller with.
             throw new RecycleBinItemLeftBehindException(leftover, operation);
         }
     }
