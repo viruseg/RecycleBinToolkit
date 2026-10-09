@@ -380,10 +380,10 @@ internal static class VolumeSuite
     /// </remarks>
     private static (string Path, ScratchDirectory Claim) CreateManualDirectory(string root)
     {
-        // A separator is added rather than one trimmed off. Path.Combine("F:", name) is the drive-relative
-        // "F:name", and a directory made under it belongs to whatever current directory the process happens
+        // A separator is added rather than one trimmed off. Path.Combine("W:", name) is the drive-relative
+        // "W:name", and a directory made under it belongs to whatever current directory the process happens
         // to have for that drive — so both where the case writes and what its cleanup deletes would be
-        // decided by ambient state rather than by the root the caller named. A bare "F:" is drive-relative
+        // decided by ambient state rather than by the root the caller named. A bare "W:" is drive-relative
         // for the same reason, which is why the separator is added rather than required.
         var parent = root.EndsWith(Path.DirectorySeparatorChar) || root.EndsWith(Path.AltDirectorySeparatorChar)
             ? root

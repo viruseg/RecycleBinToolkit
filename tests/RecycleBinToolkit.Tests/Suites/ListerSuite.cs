@@ -148,7 +148,7 @@ internal static class ListerSuite
     /// The root a caller holds and the spelling the Shell recorded are written by different parties, and
     /// only one of them is the Shell's answer. Windows writes the drive letter in whichever case it likes
     /// and reads every case, the library passes the recorded path through as recorded, and a caller who
-    /// reached for <c>e:\</c> still has to find <c>E:\…</c>. The filter is the library's side of that: a
+    /// reached for <c>w:\</c> still has to find <c>W:\…</c>. The filter is the library's side of that: a
     /// listing filtered by a differently written root that comes back empty is a listing the caller cannot
     /// tell apart from an empty Recycle Bin.
     /// </summary>
@@ -262,7 +262,7 @@ internal static class ListerSuite
     /// The same root with its first letter written in the opposite case.
     /// </summary>
     /// <remarks>
-    /// The drive letter for <c>D:\</c>, the server name for <c>\\server\share\</c> — whichever letter comes
+    /// The drive letter for <c>W:\</c>, the server name for <c>\\server\share\</c> — whichever letter comes
     /// first is the one Windows rewrites on its own and never echoes back, so flipping it yields a
     /// spelling that certainly differs from the one a path on that volume was recorded under.
     /// </remarks>

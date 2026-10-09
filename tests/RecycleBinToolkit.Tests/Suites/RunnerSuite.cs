@@ -405,20 +405,20 @@ internal static class RunnerSuite
 
     private static Task ReceiptRecognisesOnlyRecycleBinPaths(TestContext context)
     {
-        const string original = @"X:\work\a.bin";
+        const string original = @"W:\work\a.bin";
 
         Check.False(RecycleBinReceipt.IsInsideRecycleBin(null, original), "an unreported result is not a receipt");
         Check.True(
-            RecycleBinReceipt.IsInsideRecycleBin(@"X:\$RECYCLE.BIN\S-1-5-21-1001\$RABCDEF.bin", original),
+            RecycleBinReceipt.IsInsideRecycleBin(@"W:\$RECYCLE.BIN\S-1-5-21-1001\$RABCDEF.bin", original),
             "a Shell-reported path under the volume's \\$RECYCLE.BIN is a receipt");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"X:\work\a.bin", original),
+            RecycleBinReceipt.IsInsideRecycleBin(@"W:\work\a.bin", original),
             "the original path itself is not a receipt");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"X:\work\backup\a.bin", original),
+            RecycleBinReceipt.IsInsideRecycleBin(@"W:\work\backup\a.bin", original),
             "a delete outside the Recycle Bin is not a receipt");
         Check.False(
-            RecycleBinReceipt.IsInsideRecycleBin(@"D:\$RECYCLE.BIN\S-1-5-21-1001\$RABCDEF.bin", original),
+            RecycleBinReceipt.IsInsideRecycleBin(@"V:\$RECYCLE.BIN\S-1-5-21-1001\$RABCDEF.bin", original),
             "a Recycle Bin on another volume is not a receipt for this path");
 
         return Task.CompletedTask;

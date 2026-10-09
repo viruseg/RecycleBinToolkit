@@ -60,7 +60,7 @@ internal static class AbsentVolume
     /// <param name="letter">A drive letter, as returned by <see cref="Letter"/>.</param>
     /// <returns>The root with its trailing separator.</returns>
     /// <remarks>
-    /// The separator is added here rather than left to the caller because a bare <c>X:</c> is
+    /// The separator is added here rather than left to the caller because a bare <c>W:</c> is
     /// drive-relative: it names whichever directory the process happens to have current for that drive
     /// rather than the volume, which is the same trap <c>VolumeRoot.Normalize</c> refuses.
     /// </remarks>

@@ -243,10 +243,10 @@ internal static class ShellSuite
     /// </summary>
     private static Task UnreportedItemsAreNotReportedAsSuccess(TestContext context)
     {
-        var sink = new RecycleProgressSink([@"X:\work\never-reported-a.bin", @"X:\work\never-reported-b.bin"]);
+        var sink = new RecycleProgressSink([@"W:\work\never-reported-a.bin", @"W:\work\never-reported-b.bin"]);
 
         Check.False(
-            sink.TryGetOutcome(@"X:\work\never-reported-a.bin", out var hresult, out var binPath),
+            sink.TryGetOutcome(@"W:\work\never-reported-a.bin", out var hresult, out var binPath),
             "an item the Shell never reported on has no outcome");
 
         Check.True(
@@ -255,7 +255,7 @@ internal static class ShellSuite
         Check.True(binPath is null, "a missing outcome carries no Recycle Bin path");
 
         Check.False(
-            sink.TryGetOutcome(@"X:\work\never-reported-b.bin", out _, out _),
+            sink.TryGetOutcome(@"W:\work\never-reported-b.bin", out _, out _),
             "every unreported path stays unreported");
 
         return Task.CompletedTask;
@@ -278,9 +278,9 @@ internal static class ShellSuite
 
         var paths = new[]
         {
-            @"X:\work\ordered-a.bin",
-            @"X:\work\ordered-b.bin",
-            @"X:\work\ordered-c.bin"
+            @"W:\work\ordered-a.bin",
+            @"W:\work\ordered-b.bin",
+            @"W:\work\ordered-c.bin"
         };
 
         var sink = new RecycleProgressSink(paths);
@@ -316,7 +316,7 @@ internal static class ShellSuite
         const int Success = 0x00270008;
         const int Failure = unchecked((int)0x80070005);
 
-        var paths = new[] { @"X:\work\exhausted-a.bin", @"X:\work\exhausted-b.bin" };
+        var paths = new[] { @"W:\work\exhausted-a.bin", @"W:\work\exhausted-b.bin" };
         var sink = new RecycleProgressSink(paths);
 
         sink.PostDeleteItem(0, null!, new HRESULT(Success), null!);

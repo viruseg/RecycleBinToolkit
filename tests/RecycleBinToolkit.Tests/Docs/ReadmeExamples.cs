@@ -13,22 +13,22 @@ internal static class ReadmeExamples
 {
     internal static async Task QuickStart()
     {
-        await FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip");
+        await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
     }
 
     internal static async Task QuickStartWithTheBinItself()
     {
-        await FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip");
+        await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
 
         await RecycleBin.GetItemsAsync();
-        await RecycleBin.EmptyAsync(@"X:\");
+        await RecycleBin.EmptyAsync(@"W:\");
     }
 
     internal static async Task BatchReportingFailures()
     {
         // TopDirectoryOnly on purpose: a whole tree is one item, and the batch overload is for many
         // paths the caller already has.
-        var paths = Directory.GetFiles(@"C:\Users\me\Downloads", "*", SearchOption.TopDirectoryOnly);
+        var paths = Directory.GetFiles(@"W:\Users\me\Downloads", "*", SearchOption.TopDirectoryOnly);
 
         // This overload never throws for a per-item failure — a bad path lands in result.Failures
         // and the rest of the batch still runs.
@@ -94,7 +94,7 @@ internal static class ReadmeExamples
 
     internal static void ReadHResult()
     {
-        var failure = new RecycleFailure(@"C:\x.bin", unchecked((int)0x80270027), 1, RecycleFailureStage.Performing);
+        var failure = new RecycleFailure(@"W:\x.bin", unchecked((int)0x80270027), 1, RecycleFailureStage.Performing);
 
         // The Shell reports a successful delete as 0x00270008, never as S_OK, so success and failure
         // are told apart by the severity bit rather than by comparing with zero. On its own that is
@@ -136,9 +136,9 @@ internal static class ReadmeExamples
     {
         // The Recycle Bin is one Shell folder spanning every mounted volume, so this filters an
         // enumeration that has already happened rather than being a cheaper query.
-        var onE = await RecycleBin.GetItemsAsync(@"X:\");
+        var onW = await RecycleBin.GetItemsAsync(@"W:\");
 
-        foreach (var failure in onE.Failures)
+        foreach (var failure in onW.Failures)
         {
             Console.Error.WriteLine($"could not read an entry: 0x{failure.HResult:X8}");
         }
@@ -148,7 +148,7 @@ internal static class ReadmeExamples
     {
         // Confirmation, progress window and sound are always suppressed: an unattended library must
         // never put a dialog on a caller's desktop.
-        var emptied = await RecycleBin.EmptyAsync(@"X:\");
+        var emptied = await RecycleBin.EmptyAsync(@"W:\");
 
         // SHEmptyRecycleBin says nothing about how much it removed, so both figures are measured per
         // volume before and after. Neither is ever negative.
@@ -163,7 +163,7 @@ internal static class ReadmeExamples
     internal static async Task ActOnAVolumeWhoseRecycleBinIsOff()
     {
         // A volume root, not a directory inside one.
-        var status = await RecycleBin.GetStatusAsync(@"X:\");
+        var status = await RecycleBin.GetStatusAsync(@"W:\");
 
         if (!status.IsEnabled)
         {
@@ -182,7 +182,7 @@ internal static class ReadmeExamples
     {
         // A directory tree is one path. The single-path overload returns a bool and no reason, so the
         // batch overload with one element is the way to learn why it failed.
-        IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
+        IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
         var result = await FileRecycler.MoveToRecycleBinAsync(paths);
 
         if (result.Succeeded)
@@ -208,7 +208,7 @@ internal static class ReadmeExamples
     internal static async Task ReportEveryFailure()
     {
         // A path that is not there comes back as a failure and does not stop the other entries.
-        IReadOnlyList<string?> paths = [@"C:\Projects\build-output", @"C:\Projects\gone.log"];
+        IReadOnlyList<string?> paths = [@"W:\Projects\build-output", @"W:\Projects\gone.log"];
         var result = await FileRecycler.MoveToRecycleBinAsync(paths);
 
         foreach (var failure in result.Failures)
@@ -220,7 +220,7 @@ internal static class ReadmeExamples
 
     internal static async Task LongPathsIntoTheBin()
     {
-        IReadOnlyList<string?> paths = [@"C:\Projects\a-very-long-path\build-output"];
+        IReadOnlyList<string?> paths = [@"W:\Projects\a-very-long-path\build-output"];
         var options = new RecycleBinOptions
         {
             LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
@@ -245,7 +245,7 @@ internal static class ReadmeExamples
 
     internal static async Task OptInToPermanentDeletion()
     {
-        IReadOnlyList<string?> paths = [@"C:\Projects\a-very-long-path\archive.zip"];
+        IReadOnlyList<string?> paths = [@"W:\Projects\a-very-long-path\archive.zip"];
         var options = new RecycleBinOptions
         {
             LongPathFailureAction = LongPathFailureAction.DeletePermanently
@@ -262,7 +262,7 @@ internal static class ReadmeExamples
 
     internal static async Task CancelTheWait()
     {
-        IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
+        IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         // Cancelling stops the wait, not the work: a round already handed to the Shell runs to
@@ -272,7 +272,7 @@ internal static class ReadmeExamples
 
     internal static async Task RefuseABatchOnAVolumeWithoutARecycleBin()
     {
-        IReadOnlyList<string?> paths = [@"F:\Reports\quarterly.xlsx"];
+        IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];
         var options = new RecycleBinOptions { ThrowOnError = false };
 
         // The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the Shell removes the
@@ -292,7 +292,7 @@ internal static class ReadmeExamples
     // Assert.False. Everything else here is character for character.
     internal static async Task AssertInATest()
     {
-        IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
+        IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
         var result = await FileRecycler.MoveToRecycleBinAsync(paths);
 
         Check.True(result.Succeeded, "the batch succeeded");

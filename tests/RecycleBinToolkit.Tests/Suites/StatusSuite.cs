@@ -46,8 +46,8 @@ internal static class StatusSuite
         Check.True(RecycleBinVolumeState.IsUncRoot(@"\\server\share"), "the same share without the separator is still a UNC root");
         Check.True(RecycleBinVolumeState.IsUncRoot(@"\\?\UNC\server\share\"), "the extended-length spelling of a share is still a UNC root, prefix and all");
 
-        Check.False(RecycleBinVolumeState.IsUncRoot(@"X:\"), @"a drive root is not a UNC root");
-        Check.False(RecycleBinVolumeState.IsUncRoot("X:"), "and neither is a bare drive letter");
+        Check.False(RecycleBinVolumeState.IsUncRoot(@"W:\"), @"a drive root is not a UNC root");
+        Check.False(RecycleBinVolumeState.IsUncRoot("W:"), "and neither is a bare drive letter");
         Check.False(RecycleBinVolumeState.IsUncRoot(Path.Combine("relative", "path")), "and neither is a relative path");
 
         return Task.CompletedTask;
@@ -248,11 +248,11 @@ internal static class StatusSuite
     private static string Escape(string value) => value.Replace("\0", "<NUL>");
 
     /// <summary>
-    /// A caller holding a volume as <c>X:</c> and a caller holding the same volume as <c>X:\</c> are
+    /// A caller holding a volume as <c>W:</c> and a caller holding the same volume as <c>W:\</c> are
     /// asking the same question, and have to get the same answer.
     /// </summary>
     /// <remarks>
-    /// <c>Path.GetPathRoot("X:")</c> is <c>X:</c>, which is a drive-relative path rather than a root. It
+    /// <c>Path.GetPathRoot("W:")</c> is <c>W:</c>, which is a drive-relative path rather than a root. It
     /// satisfies an equality check against itself while being useless to
     /// <c>GetVolumeNameForVolumeMountPoint</c>, which needs the trailing separator — so the volume GUID
     /// came back unreadable and the answer degraded to Indeterminate for a volume that is plainly there.

@@ -710,7 +710,7 @@ internal static class FacadeSuite
     /// </summary>
     /// <remarks>
     /// Depends on the mapping already being in place, so the file is written through the drive letter the
-    /// case then hands to the library. Writing it through <c>X:\</c> instead would put it on the healthy
+    /// case then hands to the library. Writing it through <c>W:\</c> instead would put it on the healthy
     /// volume and test nothing.
     /// </remarks>
     private static string CreateOnSubstitutedVolume(char letter)

@@ -115,12 +115,12 @@ internal static class EmptySuite
     /// happened, and it needs no network to show it.
     /// </summary>
     /// <remarks>
-    /// <c>Path.GetPathRoot("X:/")</c> answers <c>X:\</c>, so comparing a caller's spelling against its
+    /// <c>Path.GetPathRoot("W:/")</c> answers <c>W:\</c>, so comparing a caller's spelling against its
     /// root as typed calls that a path inside a volume — while a reduced comparison calls it the root,
     /// which is what it is. The two public methods used to reduce differently, and one of them refused
-    /// this string while the other answered for <c>X:\</c>.
+    /// this string while the other answered for <c>W:\</c>.
     /// <para>
-    /// This is the guard for that duplication on a local drive. <c>\\?\X:\</c> is not: the Shell hands
+    /// This is the guard for that duplication on a local drive. <c>\\?\W:\</c> is not: the Shell hands
     /// that spelling back as its own root, so both predicates read it as a root and
     /// <see cref="AnExtendedLengthRootIsTheVolumeToEmpty"/> cannot tell them apart. A share root can tell
     /// them apart, and is the later manual group's case to make, because the empty hands an accepted share
@@ -165,7 +165,7 @@ internal static class EmptySuite
     /// than a refusal because nothing looks wrong.
     /// </summary>
     /// <remarks>
-    /// <c>Path.GetPathRoot("X:")</c> is <c>X:</c>, which is drive-relative rather than a root. It is a
+    /// <c>Path.GetPathRoot("W:")</c> is <c>W:</c>, which is drive-relative rather than a root. It is a
     /// spelling callers get wrong often enough that <see cref="RecycleBin.GetStatusAsync"/> normalises
     /// it, and the empty has to agree: the volume measured, the volume emptied and the volume named in
     /// <see cref="RecycleBinEmptyResult.VolumesEmptied"/> must all be the same one.
@@ -211,7 +211,7 @@ internal static class EmptySuite
     /// A share root is the spelling that first showed it, and it cannot be the one pinned here: once the
     /// empty accepts a share it goes on to query that share's bin and hand it an empty, and neither is a
     /// question to ask of a name that may turn out to be somebody's real share. What this case does pin is
-    /// the prefix side of the same predicate — <c>Path.GetPathRoot</c> hands <c>\\?\X:\</c> back
+    /// the prefix side of the same predicate — <c>Path.GetPathRoot</c> hands <c>\\?\W:\</c> back
     /// verbatim, so that root was never the one the two disagreed about, and its value is the agreement
     /// itself: both public methods reading a root as a root, and the empty reporting which volume it
     /// emptied.

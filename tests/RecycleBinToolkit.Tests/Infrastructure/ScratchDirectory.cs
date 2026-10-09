@@ -42,7 +42,7 @@ internal sealed class ScratchDirectory
     /// Claims a directory of the suite's own directly under <paramref name="volumeRoot"/>.
     /// </summary>
     /// <param name="volumeRoot">
-    /// The root of a volume the caller named, such as <c>D:\</c> or <c>\\server\share\</c>. A path that is
+    /// The root of a volume the caller named, such as <c>W:\</c> or <c>\\server\share\</c>. A path that is
     /// not a root is refused, because a directory created inside one would be created inside somebody's
     /// data and removed with its parent.
     /// </param>

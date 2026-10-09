@@ -404,7 +404,7 @@ internal static class ScratchSuite
     }
 
     /// <summary>
-    /// <c>Path.GetPathRoot</c> answers <c>X:</c> for a bare letter, and that is drive-relative: what it
+    /// <c>Path.GetPathRoot</c> answers <c>W:</c> for a bare letter, and that is drive-relative: what it
     /// names is whichever directory the process happens to have current for that drive.
     /// </summary>
     private static Task ADriveLetterIsNotAVolumeRoot(TestContext context)
@@ -456,8 +456,8 @@ internal static class ScratchSuite
     /// written-down letter mounted cannot be handed a stranger's volume to empty.
     /// </summary>
     /// <remarks>
-    /// Neither assertion can tell a looked-up letter from a written-down one — <c>'Z'</c> comes out of
-    /// the lookup whenever <c>Z:</c> is genuinely free, and that is the lookup working rather than the
+    /// Neither assertion can tell a looked-up letter from a written-down one — <c>'W'</c> comes out of
+    /// the lookup whenever <c>W:</c> is genuinely free, and that is the lookup working rather than the
     /// source deciding. What is checkable is the property it guarantees, and both halves of it are
     /// checked here: a letter that <see cref="DriveInfo"/> does not report and whose root does not
     /// resolve.
@@ -511,7 +511,7 @@ internal static class ScratchSuite
     /// <summary>
     /// A path without its trailing separator, so two spellings of one directory compare equal.
     /// <c>Directory.GetParent</c> is not symmetric about the separator at a volume root: asked for the
-    /// parent of <c>D:\</c> it answers <c>D:</c>, and asked for the parent of a directory on a share it
+    /// parent of <c>W:\</c> it answers <c>W:</c>, and asked for the parent of a directory on a share it
     /// answers without one.
     /// </summary>
     private static string Trimmed(string path) => Normalize(path);

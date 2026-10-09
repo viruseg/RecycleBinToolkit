@@ -6,10 +6,10 @@ tell you *why* an item failed — and read, empty, and inspect the Recycle Bin i
 ```csharp
 using RecycleBinToolkit;
 
-await FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip");
+await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
 
 await RecycleBin.GetItemsAsync();
-await RecycleBin.EmptyAsync(@"X:\");
+await RecycleBin.EmptyAsync(@"W:\");
 ```
 
 - **Targets** `net10.0`, Windows only. The library is `AnyCPU`; the test project is `x64`.
@@ -96,7 +96,7 @@ One file:
 ```csharp
 using RecycleBinToolkit;
 
-await FileRecycler.MoveToRecycleBinAsync(@"C:\Users\me\Downloads\archive.zip");
+await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
 ```
 
 A batch, reporting failures as data:
@@ -104,7 +104,7 @@ A batch, reporting failures as data:
 ```csharp
 // TopDirectoryOnly on purpose: a whole tree is one item, and the batch overload is for many
 // paths the caller already has.
-var paths = Directory.GetFiles(@"C:\Users\me\Downloads", "*", SearchOption.TopDirectoryOnly);
+var paths = Directory.GetFiles(@"W:\Users\me\Downloads", "*", SearchOption.TopDirectoryOnly);
 
 // This overload never throws for a per-item failure — a bad path lands in result.Failures
 // and the rest of the batch still runs.
@@ -239,7 +239,7 @@ Lists the Recycle Bin.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `volumeRoot` | `string?` | Volume root to keep, such as `"X:\"`, or `null` for every volume. |
+| `volumeRoot` | `string?` | Volume root to keep, such as `"W:\"`, or `null` for every volume. |
 | `cancellationToken` | `CancellationToken` | Cancels the wait. |
 
 **Returns** a `RecycleBinContents`.
@@ -385,7 +385,7 @@ One item that was not handled.
 zero: the Shell reports a successful delete as `0x00270008`, never as `S_OK`.
 
 ```csharp
-var failure = new RecycleFailure(@"C:\x.bin", unchecked((int)0x80270027), 1, RecycleFailureStage.Performing);
+var failure = new RecycleFailure(@"W:\x.bin", unchecked((int)0x80270027), 1, RecycleFailureStage.Performing);
 
 // The Shell reports a successful delete as 0x00270008, never as S_OK, so success and failure
 // are told apart by the severity bit rather than by comparing with zero. On its own that is
@@ -581,9 +581,9 @@ Console.WriteLine($"{contents.Items.Count} item(s), {contents.TotalSize} byte(s)
 ```csharp
 // The Recycle Bin is one Shell folder spanning every mounted volume, so this filters an
 // enumeration that has already happened rather than being a cheaper query.
-var onE = await RecycleBin.GetItemsAsync(@"X:\");
+var onW = await RecycleBin.GetItemsAsync(@"W:\");
 
-foreach (var failure in onE.Failures)
+foreach (var failure in onW.Failures)
 {
     Console.Error.WriteLine($"could not read an entry: 0x{failure.HResult:X8}");
 }
@@ -594,7 +594,7 @@ foreach (var failure in onE.Failures)
 ```csharp
 // Confirmation, progress window and sound are always suppressed: an unattended library must
 // never put a dialog on a caller's desktop.
-var emptied = await RecycleBin.EmptyAsync(@"X:\");
+var emptied = await RecycleBin.EmptyAsync(@"W:\");
 
 // SHEmptyRecycleBin says nothing about how much it removed, so both figures are measured per
 // volume before and after. Neither is ever negative.
@@ -610,7 +610,7 @@ foreach (var failure in emptied.Failures)
 
 ```csharp
 // A volume root, not a directory inside one.
-var status = await RecycleBin.GetStatusAsync(@"X:\");
+var status = await RecycleBin.GetStatusAsync(@"W:\");
 
 if (!status.IsEnabled)
 {
@@ -630,7 +630,7 @@ if (!status.IsEnabled)
 ```csharp
 // A directory tree is one path. The single-path overload returns a bool and no reason, so the
 // batch overload with one element is the way to learn why it failed.
-IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
+IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
 var result = await FileRecycler.MoveToRecycleBinAsync(paths);
 
 if (result.Succeeded)
@@ -657,7 +657,7 @@ else
 
 ```csharp
 // A path that is not there comes back as a failure and does not stop the other entries.
-IReadOnlyList<string?> paths = [@"C:\Projects\build-output", @"C:\Projects\gone.log"];
+IReadOnlyList<string?> paths = [@"W:\Projects\build-output", @"W:\Projects\gone.log"];
 var result = await FileRecycler.MoveToRecycleBinAsync(paths);
 
 foreach (var failure in result.Failures)
@@ -670,7 +670,7 @@ foreach (var failure in result.Failures)
 ### Get long paths into the Recycle Bin
 
 ```csharp
-IReadOnlyList<string?> paths = [@"C:\Projects\a-very-long-path\build-output"];
+IReadOnlyList<string?> paths = [@"W:\Projects\a-very-long-path\build-output"];
 var options = new RecycleBinOptions
 {
     LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
@@ -696,7 +696,7 @@ foreach (var directory in result.LeftoverStagingDirectories)
 ### Never let a file be destroyed without a decision
 
 ```csharp
-IReadOnlyList<string?> paths = [@"C:\Projects\a-very-long-path\archive.zip"];
+IReadOnlyList<string?> paths = [@"W:\Projects\a-very-long-path\archive.zip"];
 var options = new RecycleBinOptions
 {
     LongPathFailureAction = LongPathFailureAction.DeletePermanently
@@ -714,7 +714,7 @@ if (result.PermanentlyDeletedPaths.Count > 0)
 ### Cancel the wait
 
 ```csharp
-IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
+IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
 // Cancelling stops the wait, not the work: a round already handed to the Shell runs to
@@ -725,7 +725,7 @@ await FileRecycler.MoveToRecycleBinAsync(paths, cancellationToken: cts.Token);
 ### Refuse a batch on a volume without a Recycle Bin
 
 ```csharp
-IReadOnlyList<string?> paths = [@"F:\Reports\quarterly.xlsx"];
+IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];
 var options = new RecycleBinOptions { ThrowOnError = false };
 
 // The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the Shell removes the
@@ -746,7 +746,7 @@ foreach (var failure in result.Failures)
 lines read `Assert.True`, `Assert.Equal` and `Assert.False`.
 
 ```csharp
-IReadOnlyList<string?> paths = [@"C:\Projects\build-output"];
+IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
 var result = await FileRecycler.MoveToRecycleBinAsync(paths);
 
 Check.True(result.Succeeded, "the batch succeeded");
@@ -840,7 +840,7 @@ Stated plainly, because these are properties of Windows rather than choices.
   elevation, and the Shell reports those as zero too, so there is no figure to give. `IsDirectory` is
   the honest signal that a size is not available.
 - **A listing covers every mounted volume, always.** Filtering by volume happens after enumeration
-  because the Recycle Bin is a single aggregate folder. A caller who wants only `X:\` still pays for
+  because the Recycle Bin is a single aggregate folder. A caller who wants only `W:\` still pays for
   the volumes it does not care about, and it cannot see a volume that is not mounted.
 - **`GetStatusAsync` answers configuration and the Shell, but not the future.** Where the registry
   records a volume's own setting, that setting is the whole answer. Only volumes that configuration says

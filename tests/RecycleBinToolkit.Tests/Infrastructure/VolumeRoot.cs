@@ -33,7 +33,7 @@ internal static class VolumeRoot
             throw new ArgumentException("A volume root is required and nothing was given.");
         }
 
-        // A bare "X:" is drive-relative, and Path.GetPathRoot answers "X:" for it — a root by the same rule
+        // A bare "W:" is drive-relative, and Path.GetPathRoot answers "W:" for it — a root by the same rule
         // that says a directory is one, and resolved against whatever directory the process happens to have
         // current for that drive. Requiring a trailing separator is what tells the two apart.
         var spelled = value.StartsWith("//", StringComparison.Ordinal)
@@ -44,7 +44,7 @@ internal static class VolumeRoot
         {
             throw new ArgumentException(
                 $"\"{value}\" is not a volume root: it names no trailing separator, so what it names would be resolved " +
-                "against the current directory rather than against a volume. Name the root itself, such as D:\\ or \\\\server\\share\\.");
+                "against the current directory rather than against a volume. Name the root itself, such as W:\\ or \\\\server\\share\\.");
         }
 
         if (!Path.IsPathFullyQualified(spelled))
@@ -53,7 +53,7 @@ internal static class VolumeRoot
         }
 
         // Compared with the trailing separator left off on both sides, because GetPathRoot is not symmetric about
-        // it: `Path.GetPathRoot(@"D:\")` answers `D:\` while `Path.GetPathRoot(@"\\server\share\")` answers
+        // it: `Path.GetPathRoot(@"W:\")` answers `W:\` while `Path.GetPathRoot(@"\\server\share\")` answers
         // `\\server\share\`. Both name the volume the caller typed.
         var withoutSeparator = spelled[..^1];
         var root = Path.GetPathRoot(spelled);
