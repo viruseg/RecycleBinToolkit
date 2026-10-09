@@ -637,7 +637,11 @@ if (result.Succeeded)
 }
 else
 {
-    Console.WriteLine($"{result.Failures.Count} failed, and {result.LeftoverStagingDirectories.Count} staging director(ies) left holding data");
+    // A count is not a location. Your data is in one of these directories, not where you left it.
+    foreach (var directory in result.LeftoverStagingDirectories)
+    {
+        Console.Error.WriteLine($"still holding your data: {directory}");
+    }
 }
 ```
 

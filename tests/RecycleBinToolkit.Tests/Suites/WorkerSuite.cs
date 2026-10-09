@@ -119,7 +119,6 @@ internal static class WorkerSuite
             // queued behind a batch whose token has just been cancelled.
             var stopwatch = Stopwatch.StartNew();
 
-
             var after = await RecycleBinWorker
                 .SubmitAsync(Targets([second]), RecycleBinOptions.Default, context.CancellationToken)
                 .ConfigureAwait(false);
