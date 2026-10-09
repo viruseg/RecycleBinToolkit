@@ -48,6 +48,7 @@ internal static class ScratchSuite
         new TestCase("ScratchSuite." + nameof(ClaimRefusesAParentOutsideTheRunRoot), ClaimRefusesAParentOutsideTheRunRoot),
         new TestCase("ScratchSuite." + nameof(ClaimRefusesAParentThatOnlyLooksLikeItIsInsideTheRunRoot), ClaimRefusesAParentThatOnlyLooksLikeItIsInsideTheRunRoot),
         new TestCase("ScratchSuite." + nameof(ClaimRefusesAParentThatOnlyLooksLikeItIsInsideUntilItIsResolved), ClaimRefusesAParentThatOnlyLooksLikeItIsInsideUntilItIsResolved),
+        new TestCase("ScratchSuite." + nameof(ClaimAcceptsAParentSpelledWithForwardSlashes), ClaimAcceptsAParentSpelledWithForwardSlashes),
         new TestCase("ScratchSuite." + nameof(ClaimRefusesAnEmptyParent), ClaimRefusesAnEmptyParent),
         new TestCase("ScratchSuite." + nameof(ClaimRunRootRefusesASecondRunInOneProcess), ClaimRunRootRefusesASecondRunInOneProcess),
         new TestCase("ScratchSuite." + nameof(AVolumeRootIsItsOwnNormalizedSpelling), AVolumeRootIsItsOwnNormalizedSpelling),
@@ -413,6 +414,60 @@ internal static class ScratchSuite
         Check.False(
             Directory.Exists(Path.Combine(ScratchWorkspace.VolumeRoot, besideTheRun)),
             $"and nothing was created in the volume root beside the run's directory ({besideTheRun})");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The other half of the same defect. One directory is two spellings, and a claim has to take both: a
+    /// parent written with forward slashes resolves to a directory inside the run and nowhere else, so
+    /// refusing it turns a correct call into a failure that reads as a broken harness rather than as a
+    /// boundary.
+    /// </summary>
+    /// <remarks>
+    /// The fixture is <see cref="ScratchWorkspace.Root"/> with its separators swapped, not a path written
+    /// here, so it cannot drift out of the run's directory; and the first assertion proves the two
+    /// spellings really differ, so the case cannot quietly stop exercising the spelling it is about.
+    /// </remarks>
+    private static Task ClaimAcceptsAParentSpelledWithForwardSlashes(TestContext context)
+    {
+        var spelledWithBackslashes = ScratchWorkspace.Root;
+        var spelledWithSlashes = spelledWithBackslashes.Replace(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar);
+
+        Check.NotEqual(
+            spelledWithBackslashes,
+            spelledWithSlashes,
+            "the two spellings differ, so this case is about the spelling rather than about a path that reads the same either way");
+
+        var before = Directory.GetDirectories(spelledWithBackslashes).Length;
+        var claimed = ScratchDirectory.Claim(spelledWithSlashes);
+
+        try
+        {
+            Check.Equal(
+                spelledWithBackslashes,
+                claimed.Parent,
+                "the claim keeps the parent in the one spelling the filesystem uses, rather than the one it was handed");
+            Check.True(Directory.Exists(claimed.FullPath), $"the claimed directory exists: {claimed.FullPath}");
+            Check.Equal(
+                Trimmed(ParentOf(claimed.FullPath)),
+                Trimmed(spelledWithBackslashes),
+                "and it is a direct child of the same directory the backslash spelling names");
+
+            claimed.Remove();
+
+            Check.False(Directory.Exists(Normalize(claimed.FullPath)), "removing it takes the directory away again");
+            Check.Equal(
+                before,
+                Directory.GetDirectories(spelledWithBackslashes).Length,
+                "and leaves nothing of its own behind in the parent");
+        }
+        finally
+        {
+            claimed.Remove();
+        }
 
         return Task.CompletedTask;
     }
