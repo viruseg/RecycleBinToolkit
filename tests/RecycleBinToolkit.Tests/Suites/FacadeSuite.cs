@@ -943,9 +943,8 @@ internal static class FacadeSuite
         // volume, and it is what the sibling long-path cases already do.
         if (ShortPathResolver.TryResolveShort(file) is not null)
         {
-            Check.Skip("this volume issues 8.3 names, so a long path is recycled rather than refused");
             workspace.Dispose();
-            return;
+            Check.Skip("this volume issues 8.3 names, so a long path is recycled rather than refused");
         }
 
         // Past the Shell's recycling limit a file is removed permanently while the operation still

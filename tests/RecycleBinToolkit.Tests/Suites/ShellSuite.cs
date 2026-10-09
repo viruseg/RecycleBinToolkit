@@ -10,10 +10,18 @@ namespace RecycleBinToolkit.Tests.Suites;
 internal static class ShellSuite
 {
     /// <summary>
-    /// How long a body on the Shell's own thread may take. Matches the runner's per-case budget, so
-    /// moving a case onto the STA thread does not also shorten it.
+    /// How long a body on the Shell's own thread may take.
     /// </summary>
-    private static readonly TimeSpan CaseBudget = TimeSpan.FromMinutes(10);
+    /// <remarks>
+    /// Deliberately shorter than the runner's own per-case budget, and deliberately a different number.
+    /// Matching it is not the same as being safe: <see cref="StaThread.Run"/> bounds its wait with a
+    /// join, and the runner's budget is a cancellation token handed to the case, which none of these
+    /// bodies observe. A body that exceeds this is abandoned mid-Shell-call while the runner is still
+    /// waiting on the join, so the shorter of the two is what fails fast and says why. fea4bae set
+    /// this to the runner's ten minutes, which turned a two-minute failure into a ten-minute one across
+    /// seven cases; five keeps the two distinguishable and the failure inside the outer one.
+    /// </remarks>
+    private static readonly TimeSpan CaseBudget = TimeSpan.FromMinutes(5);
 
     internal static IReadOnlyList<TestCase> Cases =>
     [

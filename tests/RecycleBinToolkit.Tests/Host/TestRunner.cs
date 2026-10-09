@@ -116,7 +116,11 @@ internal sealed class TestRunner
     /// Runs the selected cases in order and reports what they did.
     /// </summary>
     /// <param name="runs">One entry per case, or per case per named root for the manual group.</param>
-    /// <returns>0 when every case passed, 1 when one failed.</returns>
+    /// <returns>
+    /// 0 when at least one case passed and none failed. 1 when one failed, or when every case was
+    /// skipped -- a run that produced no coverage is not a green run, the same shape an empty selection
+    /// already returns 1 for.
+    /// </returns>
     private static async Task<int> ExecuteAsync(List<(TestCase Case, string? Root)> runs)
     {
         var passed = 0;
@@ -170,7 +174,7 @@ internal sealed class TestRunner
             Console.WriteLine("failed: " + string.Join(", ", failures));
         }
 
-        return failedCount == 0 ? 0 : 1;
+        return failedCount == 0 && passed > 0 ? 0 : 1;
     }
 
     /// <summary>

@@ -72,9 +72,8 @@ internal static class LongPathSuite
         // directly and never staged, so there would be nothing here to put back.
         if (ShortPathResolver.TryResolveShort(plainPath) is not null)
         {
-            Check.Skip("this volume issues 8.3 names, so long paths never reach staging");
             workspace.Dispose();
-            return Task.CompletedTask;
+            Check.Skip("this volume issues 8.3 names, so long paths never reach staging");
         }
 
         var options = new RecycleBinOptions
@@ -287,7 +286,6 @@ internal static class LongPathSuite
             if (ShortPathResolver.TryResolveShort(paths[0]) is not null)
             {
                 Check.Skip("this volume issues 8.3 names, so long paths never reach the staging backoff");
-                return;
             }
 
             var options = new RecycleBinOptions
@@ -668,7 +666,6 @@ internal static class LongPathSuite
             if (ShortPathResolver.TryResolveShort(plainPath) is not null)
             {
                 Check.Skip("this volume issues 8.3 names, so a long path is recycled rather than refused");
-                return Task.CompletedTask;
             }
 
             var quiet = new RecycleBinOptions
@@ -892,7 +889,6 @@ internal static class LongPathSuite
             if (ShortPathResolver.TryResolveShort(plainPath) is not null)
             {
                 Check.Skip("this volume issues 8.3 names, so a long path is recycled rather than refused");
-                return Task.CompletedTask;
             }
 
             var options = new RecycleBinOptions { ThrowOnError = true, LongPathFailureAction = LongPathFailureAction.Throw };
