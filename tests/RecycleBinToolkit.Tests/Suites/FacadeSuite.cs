@@ -727,14 +727,12 @@ internal static class FacadeSuite
     /// </remarks>
     private static async Task ExtendedPrefixOnAShortPathStillReportsSuccess(TestContext context)
     {
-        const string ExtendedPrefix = @"\\?\";
-
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for a prefixed short path's bytes to be counted in");
 
         var plain = workspace.CreateRandomFile(4096);
-        var extended = ExtendedPrefix + plain;
+        var extended = ExtendedPath.For(plain);
         var volumeRoot = Path.GetPathRoot(plain)!;
 
         Check.True(plain.Length <= 260, $"the path is short enough to recycle unprefixed ({plain.Length} chars)");
@@ -776,6 +774,13 @@ internal static class FacadeSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+
+        // The claim is about the code the Shell itself gave. A volume whose recycling is settled from
+        // configuration — a share, or one the Shell has never been asked about — is refused before it is
+        // reached, and such a refusal carries HResult 0 because there is no Shell code to report, which is
+        // what RecycleFailure.HResult documents. Guarded ahead of the file so a skip leaves nothing behind.
+        ScratchWorkspace.RequireRecycling("a Shell refusal to carry the Shell's own error code");
+
         var files = workspace.CreateRandomFiles(1, 4096);
 
         IOException thrown;

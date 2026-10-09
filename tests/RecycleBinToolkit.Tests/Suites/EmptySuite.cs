@@ -234,7 +234,7 @@ internal static class EmptySuite
 
         var file = workspace.CreateRandomFile(4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
-        var prefixed = @"\\?\" + volumeRoot;
+        var prefixed = ExtendedPath.For(volumeRoot);
 
         var recycled = await FileRecycler.MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);

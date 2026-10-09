@@ -241,7 +241,7 @@ internal static class StatusSuite
 
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
         var plain = await RecycleBin.GetStatusAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
-        var extended = await RecycleBin.GetStatusAsync(@"\\?\" + volumeRoot, context.CancellationToken).ConfigureAwait(false);
+        var extended = await RecycleBin.GetStatusAsync(ExtendedPath.For(volumeRoot), context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(plain.VolumeRoot, extended.VolumeRoot, "both spellings name the same volume root");
         Check.Equal(plain.DriveType, extended.DriveType, "and the same drive type, so the volume is not unreadable");

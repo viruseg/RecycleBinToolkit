@@ -18,8 +18,6 @@ namespace RecycleBinToolkit.Tests.Suites;
 /// </remarks>
 internal static class LongPathSuite
 {
-    private const string ExtendedPrefix = @"\\?\";
-
     /// <summary>Length of the generated file name, kept under the 255-character component limit.</summary>
     private const int FileNameLength = 250;
 
@@ -140,8 +138,8 @@ internal static class LongPathSuite
 
         Check.True(longPath.Length > MaxPathThreshold, $"the directory path is past the Shell limit ({longPath.Length})");
 
-        Directory.CreateDirectory(ExtendedPrefix + longPath);
-        File.WriteAllBytes(Path.Combine(ExtendedPrefix + longPath, "inner.bin"), new byte[4096]);
+        Directory.CreateDirectory(LongPathStager.PathForIo(longPath));
+        File.WriteAllBytes(Path.Combine(LongPathStager.PathForIo(longPath), "inner.bin"), new byte[4096]);
 
         var options = new RecycleBinOptions
         {
@@ -267,6 +265,11 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        // The bound below measures the staging backoff, and a volume that cannot recycle has every path taken
+        // out of the batch before the runner is entered. The retries this case is about would not happen, so
+        // it would pass on a volume where the thing it names cannot.
+        ScratchWorkspace.RequireRecycling("a long path that reaches the staging retries");
+
         var held = new List<FileStream>(pathCount);
 
         try
@@ -380,7 +383,7 @@ internal static class LongPathSuite
                     (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
                     $"the failure carries the file system's own error code (got 0x{result.FirstFailure.HResult:X8})");
                 Check.Equal(0, result.PermanentlyDeletedPaths.Count, "nothing is reported as removed that was not removed");
-                Check.True(File.Exists(ExtendedPrefix + longPath), "the file is still there, because nothing deleted it");
+                Check.True(File.Exists(LongPathStager.PathForIo(longPath)), "the file is still there, because nothing deleted it");
             }
         }
         finally
@@ -431,7 +434,7 @@ internal static class LongPathSuite
                 result.PermanentlyDeletedPaths.Count,
                 $"the long path is still named as permanently deleted (got {Describe(result)})");
             Check.Equal(longPath, result.PermanentlyDeletedPaths[0], "and it is the caller's own path");
-            Check.False(File.Exists(ExtendedPrefix + longPath), "the long file is gone, as the caller asked for");
+            Check.False(File.Exists(LongPathStager.PathForIo(longPath)), "the long file is gone, as the caller asked for");
         }
         finally
         {
@@ -625,6 +628,11 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        // Ahead of the file, and for the reason its sibling StagingDirectoryIsRemovedAfterTheOperation is
+        // guarded: a volume that cannot recycle has every path taken out of the batch before the runner is
+        // entered, so nothing is ever staged and this case would be comparing two zeroes.
+        ScratchWorkspace.RequireRecycling("a long path that reaches staging");
+
         try
         {
             var (plainPath, extendedPath) = BuildLongPath();
@@ -767,7 +775,7 @@ internal static class LongPathSuite
                 Check.True(
                     result.PermanentlyDeletedPaths.Contains(path, StringComparer.OrdinalIgnoreCase),
                     $"the report names '{Path.GetFileName(path)}'");
-                Check.False(File.Exists(ExtendedPrefix + path), $"'{Path.GetFileName(path)}' is gone, as the caller asked for");
+                Check.False(File.Exists(LongPathStager.PathForIo(path)), $"'{Path.GetFileName(path)}' is gone, as the caller asked for");
             }
         }
         finally
@@ -1013,6 +1021,12 @@ internal static class LongPathSuite
     {
         var fileName = new string(filler, FileNameLength - Path.GetExtension(".bin").Length) + ".bin";
         var plainPath = Path.Combine(ScratchWorkspace.Root, fileName);
-        return (plainPath, ExtendedPrefix + plainPath);
+
+        // The library's own spelling rather than a prefix built here, because the prefix is not one prefix:
+        // a share is written \\?\UNC\server\share\ and not \\?\\server\share\, and the second is a path
+        // beginning with a separator, which resolves against the current drive and raises IOException from
+        // the first FileStream. Every path this suite names is past the Shell's limit, so asking for the
+        // prefixed form always gives one.
+        return (plainPath, LongPathStager.PathForIo(plainPath));
     }
 }
