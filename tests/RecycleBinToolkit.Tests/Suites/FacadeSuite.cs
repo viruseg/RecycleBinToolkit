@@ -48,8 +48,9 @@ internal static class FacadeSuite
     /// <para>
     /// The file is created under the run's own directory and only addressed by GUID afterwards, so the
     /// write stays where every other write in this suite stays and the run's teardown removes it. A
-    /// volume with no GUID of its own is a case this cannot set up — <c>GetVolumeNameForVolumeMountPoint</c>
-    /// answers nothing for a substituted drive, for instance — and that is a skip rather than a failure.
+    /// volume whose GUID <c>GetVolumeNameForVolumeMountPoint</c> cannot name is a case this cannot set up
+    /// at all — there is no spelling of the path the case would be about — and that is a skip rather than a
+    /// failure.
     /// </para>
     /// </remarks>
     private static async Task AVolumeGuidPathIsSettledOnceRatherThanRetried(TestContext context)
@@ -63,7 +64,7 @@ internal static class FacadeSuite
         if (guid is null)
         {
             workspace.Dispose();
-            Check.Skip($"{volumeRoot} has no volume GUID to address a path by, which a substituted drive is one example of");
+            Check.Skip($"{volumeRoot} has no volume GUID, so no path on it can be addressed the way this case is about");
         }
 
         var name = $"addressed-by-guid-{Environment.ProcessId}.bin";
@@ -130,17 +131,25 @@ internal static class FacadeSuite
     /// error code.
     /// </summary>
     /// <remarks>
-    /// The volume is a <c>subst</c> mapping of the scratch root, so this is the whole failure with no
-    /// flash drive and no share: the Shell removes a file handed to it on such a volume for good and
-    /// still reports success. Nothing here is asserted about the Shell's behaviour on the volume — only
-    /// about what this library did with the answer, which is why the file is asserted to be untouched.
+    /// The Shell removes a file handed to it on a volume with no Recycle Bin for good and still reports
+    /// success, which is what makes the refusal this case is about necessary rather than cautious.
+    /// Nothing here is asserted about the Shell's behaviour on the volume — only about what this library
+    /// did with the answer, which is why the file is asserted to be untouched.
+    /// <para>
+    /// The file lives on the volume <c>--scratch</c> named, and this case needs that volume to have no
+    /// Recycle Bin, so <see cref="ScratchWorkspace.RequireNonRecycling"/> decides whether it runs at all:
+    /// a machine with a bin reports this one as not run rather than failing it.
+    /// </para>
     /// <para>
     /// <c>HResult</c> is pinned against an independent read of the same volume rather than against a
-    /// literal. The code is the Shell's and it differs by volume — <c>0x80070003</c> on a substituted
-    /// drive, <c>0x80004005</c> on the removable volume measured in the spec — so what matters is that
-    /// the volume's own code came through unchanged instead of being normalised to zero or standing in
-    /// as a constant. The severity bit is checked as well, because it is the check a caller is told to
-    /// make in the README and it would not notice a substituted constant.
+    /// literal, and only on the branch where there is a code to pin. Which branch that is follows from
+    /// <see cref="ScratchWorkspace.Reason"/>: a volume whose bin the Shell itself could not find carries
+    /// the Shell's code, while a reason settled from configuration — a policy, a per-volume setting, a
+    /// volume type that never had a bin — carries <c>0</c>, because the Shell was never asked and has
+    /// nothing to report. What matters on the first branch is that the volume's own code came through
+    /// unchanged instead of being normalised to zero or standing in as a constant. The severity bit is
+    /// checked there as well, because it is the check a caller is told to make in the README and it would
+    /// not notice a substituted constant.
     /// </para>
     /// </remarks>
     private static async Task RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff(TestContext context)
@@ -148,41 +157,45 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
 
-        try
+        var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
+        File.WriteAllBytes(file, new byte[4096]);
+
+        var options = new RecycleBinOptions { ThrowOnError = false };
+
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.False(result.Succeeded, $"a volume with no Recycle Bin cannot report success (recycled {result.RecycledPaths.Count})");
+        Check.Equal(1, result.Failures.Count, "the refused path is the only failure reported");
+        Check.Equal(RecycleFailureStage.NoRecycleBinOnVolume, result.FirstFailure!.Stage, "the failure names the volume, not the Shell's doing");
+        Check.Equal(file, result.FirstFailure.Path, "the failure names the caller's path");
+        Check.Equal(0, result.FirstFailure.Attempts, "nothing was attempted, because nothing was handed over");
+
+        if (ScratchWorkspace.Reason is RecycleBinAvailabilityReason.NoRecycleBinOnVolume)
         {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
-
-            var file = CreateOnSubstitutedVolume(letter);
-
-            var options = new RecycleBinOptions { ThrowOnError = false };
-
-            var result = await FileRecycler
-                .MoveToRecycleBinAsync([file], options, context.CancellationToken)
-                .ConfigureAwait(false);
-
-            Check.False(result.Succeeded, $"a volume with no Recycle Bin cannot report success (recycled {result.RecycledPaths.Count})");
-            Check.Equal(1, result.Failures.Count, "the refused path is the only failure reported");
-            Check.Equal(RecycleFailureStage.NoRecycleBinOnVolume, result.FirstFailure!.Stage, "the failure names the volume, not the Shell's doing");
-            Check.Equal(file, result.FirstFailure.Path, "the failure names the caller's path");
-            Check.Equal(0, result.FirstFailure.Attempts, "nothing was attempted, because nothing was handed over");
             Check.Equal(
-                RecycleBinVolume.Measure(SubstitutedRoot(letter)).HResult,
+                RecycleBinVolume.Measure(ScratchWorkspace.VolumeRoot).HResult,
                 result.FirstFailure.HResult,
-                "the code is the Shell's own for this volume, not a constant");
+                $"the Shell stated this refusal itself, so its own code comes through unchanged (got 0x{result.FirstFailure.HResult:X8})");
             Check.NotEqual(0, result.FirstFailure.HResult, "the Shell's own error code came through rather than a zero");
             Check.True(
                 (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
                 $"the carried code is a refusal (got 0x{result.FirstFailure.HResult:X8})");
-            Check.Equal(0, result.PermanentlyDeletedPaths.Count, "nothing was removed permanently either");
-            Check.Equal(0, result.RecycledPaths.Count, "a refused path is not reported as recycled");
-            Check.True(File.Exists(file), "the file is still on disk, which is the whole point");
         }
-        finally
+        else
         {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+            Check.Equal(
+                0,
+                result.FirstFailure.HResult,
+                $"the reason was settled from configuration, so there is no code of the Shell's to carry (got 0x{result.FirstFailure.HResult:X8})");
         }
+
+        Check.Equal(0, result.PermanentlyDeletedPaths.Count, "nothing was removed permanently either");
+        Check.Equal(0, result.RecycledPaths.Count, "a refused path is not reported as recycled");
+        Check.True(File.Exists(file), "the file is still on disk, which is the whole point");
 
         workspace.Dispose();
     }
@@ -197,7 +210,13 @@ internal static class FacadeSuite
     /// the Shell code, and this is one. The file assertion is inside the same call's aftermath, so a
     /// caller that catches the exception and then looks at the path learns the truth.
     /// <para>
-    /// The code is pinned against an independent read of the same volume for the reason given on
+    /// The file lives on the volume <c>--scratch</c> named and the case needs that volume to have no
+    /// Recycle Bin, so it runs where <see cref="ScratchWorkspace.RequireNonRecycling"/> allows and is a
+    /// skip rather than a failure elsewhere.
+    /// </para>
+    /// <para>
+    /// The code is pinned against an independent read of the same volume, on the branch where the reason
+    /// leaves the Shell a code to report, for the reason given on
     /// <see cref="RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff"/>: a constant or a normalised zero would
     /// satisfy the severity bit alone, and this overload is the one a caller who sets
     /// <see cref="RecycleBinOptions.ThrowOnError"/> actually reads.
@@ -208,34 +227,37 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
 
-        try
+        var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
+        File.WriteAllBytes(file, new byte[4096]);
+
+        var thrown = await Check
+            .ThrowsAsync<IOException>(
+                () => FileRecycler.MoveToRecycleBinAsync(file, cancellationToken: context.CancellationToken),
+                "a refused volume raises on the single-path overload when ThrowOnError is on")
+            .ConfigureAwait(false);
+
+        if (ScratchWorkspace.Reason is RecycleBinAvailabilityReason.NoRecycleBinOnVolume)
         {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
-
-            var file = CreateOnSubstitutedVolume(letter);
-
-            var thrown = await Check
-                .ThrowsAsync<IOException>(
-                    () => FileRecycler.MoveToRecycleBinAsync(file, cancellationToken: context.CancellationToken),
-                    "a refused volume raises on the single-path overload when ThrowOnError is on")
-                .ConfigureAwait(false);
-
             Check.Equal(
-                RecycleBinVolume.Measure(SubstitutedRoot(letter)).HResult,
+                RecycleBinVolume.Measure(ScratchWorkspace.VolumeRoot).HResult,
                 thrown.HResult,
-                "the code is the Shell's own for this volume, not a constant");
+                $"the Shell stated this refusal itself, so its own code comes through unchanged (got 0x{thrown.HResult:X8})");
             Check.NotEqual(0, thrown.HResult, "the exception carries a real error code");
             Check.True(
                 (thrown.HResult & unchecked((int)0x80000000)) != 0,
                 $"the carried code is a refusal (got 0x{thrown.HResult:X8})");
-            Check.True(File.Exists(file), "the file survived the exception, because the Shell was never asked");
         }
-        finally
+        else
         {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+            Check.Equal(
+                0,
+                thrown.HResult,
+                $"the reason was settled from configuration, so there is no code of the Shell's to carry (got 0x{thrown.HResult:X8})");
         }
+
+        Check.True(File.Exists(file), "the file survived the exception, because the Shell was never asked");
 
         workspace.Dispose();
     }
@@ -247,31 +269,27 @@ internal static class FacadeSuite
     /// <remarks>
     /// A regression here is the quiet kind: returning <see langword="true"/> would tell the caller the
     /// file is gone when it is on disk, and the caller would not look any further.
+    /// <para>
+    /// The refusal it needs comes from a volume with no Recycle Bin, so the file is written on the volume
+    /// <c>--scratch</c> named and the case is a skip on a volume that recycles.
+    /// </para>
     /// </remarks>
     private static async Task SinglePathOverloadReturnsFalseWhenRefused(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
 
-        try
-        {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+        var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
+        File.WriteAllBytes(file, new byte[4096]);
 
-            var file = CreateOnSubstitutedVolume(letter);
+        var options = new RecycleBinOptions { ThrowOnError = false };
 
-            var options = new RecycleBinOptions { ThrowOnError = false };
+        var removed = await FileRecycler.MoveToRecycleBinAsync(file, options, context.CancellationToken).ConfigureAwait(false);
 
-            var removed = await FileRecycler.MoveToRecycleBinAsync(file, options, context.CancellationToken).ConfigureAwait(false);
-
-            Check.False(removed, "a refused path reports false rather than throwing");
-            Check.True(File.Exists(file), "and the file is still there, so false is the honest answer");
-        }
-        finally
-        {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
-        }
+        Check.False(removed, "a refused path reports false rather than throwing");
+        Check.True(File.Exists(file), "and the file is still there, so false is the honest answer");
 
         workspace.Dispose();
     }
@@ -283,41 +301,29 @@ internal static class FacadeSuite
     /// <remarks>
     /// This is the case that keeps the gate cheap: a batch of missing paths pays one filesystem probe
     /// each and nothing else. It also pins that the refusal is decided on existence rather than on the
-    /// volume, so a missing path on a healthy volume and a missing path on a bin-less one are the same
-    /// failure.
+    /// volume — a missing path on a healthy volume and a missing path on a bin-less one are the same
+    /// failure — so it runs on whatever volume <c>--scratch</c> named rather than on a volume
+    /// manufactured to be certain. A missing path in the run's own directory is the honest form of that
+    /// claim: the path is absent for the ordinary reason, and the volume is never asked about at all.
     /// </remarks>
     private static async Task AMissingPathIsRefusedWithoutAProbe(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
-        var missing = Path.Combine(SubstitutedRoot(letter), "definitely-absent.bin");
+        var missing = Path.Combine(ScratchWorkspace.Root, $"definitely-absent-{Environment.ProcessId}.bin");
+        var options = new RecycleBinOptions { ThrowOnError = false };
 
-        try
-        {
-            await SubstitutedVolume
-                .Substitute(letter, ScratchWorkspace.Root, context.CancellationToken)
-                .ConfigureAwait(false);
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync([missing], options, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
 
-            var options = new RecycleBinOptions { ThrowOnError = false };
-
-            var result = await FileRecycler
-                .MoveToRecycleBinAsync([missing], options, context.CancellationToken)
-                .ConfigureAwait(false);
-
-            Check.False(result.Succeeded, "a path that is not there cannot succeed");
-            Check.Equal(1, result.Failures.Count, "it is reported once");
-            Check.Equal(
-                RecycleFailureStage.PathValidation,
-                result.FirstFailure!.Stage,
-                "and it fails at validation, not at the volume that holds it");
-            Check.Equal(0, result.FirstFailure.HResult, "no Shell code is involved when the Shell was never asked");
-        }
-        finally
-        {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
-        }
+        Check.False(result.Succeeded, "a path that is not there cannot succeed");
+        Check.Equal(1, result.Failures.Count, "it is reported once");
+        Check.Equal(missing, result.FirstFailure!.Path, "naming the path the caller passed");
+        Check.Equal(RecycleFailureStage.PathValidation, result.FirstFailure.Stage, "and it fails at validation, not at the volume that holds it");
+        Check.Equal(0, result.FirstFailure.Attempts, "nothing was handed over, because there was nothing to hand over");
+        Check.Equal(0, result.FirstFailure.HResult, "no Shell code is involved when the Shell was never asked");
 
         workspace.Dispose();
     }
@@ -331,49 +337,46 @@ internal static class FacadeSuite
     /// says the caller accepts being wrong about the bin, so the Shell is asked anyway and reports its
     /// own success. What the case proves is that the option reaches the pipeline at all — a gate that
     /// refused regardless of the setting would fail it — and that a passing path is reported as recycled.
+    /// <para>
+    /// The Shell only behaves that way on a volume with no Recycle Bin, so the file is written on the
+    /// volume <c>--scratch</c> named and the case is a skip on a volume that recycles, where the option
+    /// would be a no-op and would prove nothing.
+    /// </para>
     /// </remarks>
     private static async Task NoRecycleBinOptionDecidesWhetherTheShellIsAsked(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
 
-        try
+        var file = Path.Combine(ScratchWorkspace.Root, $"allowed-{Environment.ProcessId}.bin");
+        File.WriteAllBytes(file, new byte[4096]);
+
+        var options = new RecycleBinOptions
         {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+            ThrowOnError = false,
+            NoRecycleBinAction = NoRecycleBinAction.AllowIndeterminate,
+        };
 
-            var file = CreateOnSubstitutedVolume(letter);
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+            .ConfigureAwait(false);
 
-            var options = new RecycleBinOptions
-            {
-                ThrowOnError = false,
-                NoRecycleBinAction = NoRecycleBinAction.AllowIndeterminate,
-            };
-
-            var result = await FileRecycler
-                .MoveToRecycleBinAsync([file], options, context.CancellationToken)
-                .ConfigureAwait(false);
-
-            Check.True(
-                result.Succeeded,
-                $"AllowIndeterminate hands the path over and the Shell reports success (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
-            Check.Equal(1, result.RecycledPaths.Count, "the path comes back as recycled, because the Shell said so");
-            Check.Equal(file, result.RecycledPaths[0], "in the spelling the caller supplied");
-            Check.Equal(0, result.Failures.Count, "the volume's answer did not become a failure");
-            Check.False(File.Exists(file), "the Shell removed the file, which is the risk the caller accepted");
-        }
-        finally
-        {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
-        }
+        Check.True(
+            result.Succeeded,
+            $"AllowIndeterminate hands the path over and the Shell reports success (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.Equal(1, result.RecycledPaths.Count, "the path comes back as recycled, because the Shell said so");
+        Check.Equal(file, result.RecycledPaths[0], "in the spelling the caller supplied");
+        Check.Equal(0, result.Failures.Count, "the volume's answer did not become a failure");
+        Check.False(File.Exists(file), "the Shell removed the file, which is the risk the caller accepted");
 
         workspace.Dispose();
     }
 
     /// <summary>
-    /// One volume in a batch that cannot recycle is not the whole batch's verdict: the paths on healthy
-    /// volumes are still recycled.
+    /// One volume in a batch that cannot recycle a path of the caller's is not the whole batch's verdict:
+    /// the paths on the volumes that are there are still recycled.
     /// </summary>
     /// <remarks>
     /// The gate groups a batch by volume root, so this is the case that fails if it inspects only the
@@ -381,10 +384,14 @@ internal static class FacadeSuite
     /// of the other kind — a batch that skips the healthy paths, and a batch that gives up on all of them
     /// because of one.
     /// <para>
-    /// The healthy path is on the volume hosting <see cref="ScratchWorkspace.Root"/>, which is the same
-    /// directory the substituted drive points at, so both paths in this batch resolve to the same file
-    /// system and only the spelling of the volume differs. That is what makes it a test of the grouping
-    /// rather than of the storage.
+    /// The second volume is a drive letter nothing is mounted on, found on this machine rather than named
+    /// in the source. Its path fails at <see cref="RecycleFailureStage.PathValidation"/> rather than at
+    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/>, and that is the whole story about this
+    /// shape of bad volume: the path is not there either, and a path that is not there is settled before
+    /// any volume is asked about. Asserting the volume stage here would claim a detail this case never
+    /// measures — no volume with a bin in it is involved on either side of the batch. What is measured is
+    /// that one unusable path leaves the rest of the batch alone, and the healthy path is on the volume
+    /// that really is there and really does recycle.
     /// </para>
     /// </remarks>
     private static async Task OneBadVolumeDoesNotSinkTheBatch(TestContext context)
@@ -392,37 +399,24 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
-        var healthyFiles = workspace.CreateRandomFiles(1, 4096);
+        var letter = AbsentVolume.Letter();
+        var healthy = workspace.CreateRandomFiles(1, 4096)[0];
+        var refused = Path.Combine(AbsentVolume.RootOf(letter), "on-a-volume-that-is-not-there.bin");
 
-        try
-        {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+        var options = new RecycleBinOptions { ThrowOnError = false };
+        var batch = new List<string?> { refused, healthy };
 
-            var refusedFile = CreateOnSubstitutedVolume(letter);
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync(batch, options, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
 
-            var options = new RecycleBinOptions { ThrowOnError = false };
-
-            var batch = new List<string?> { refusedFile };
-            batch.AddRange(healthyFiles);
-
-            var result = await FileRecycler
-                .MoveToRecycleBinAsync(batch, options, context.CancellationToken)
-                .ConfigureAwait(false);
-
-            Check.False(result.Succeeded, "the refused path still makes the batch report failure");
-            Check.Equal(1, result.Failures.Count, "exactly one failure, the one from the volume with no bin");
-            Check.Equal(refusedFile, result.FirstFailure!.Path, "and it is the path on that volume");
-            Check.Equal(RecycleFailureStage.NoRecycleBinOnVolume, result.FirstFailure.Stage, "at the volume stage");
-            Check.Equal(1, result.RecycledPaths.Count, "the path on the healthy volume was still recycled");
-            Check.Equal(healthyFiles[0], result.RecycledPaths[0], "and it is the one the caller supplied");
-            Check.False(File.Exists(healthyFiles[0]), "so the healthy file is gone from disk");
-            Check.True(File.Exists(refusedFile), "while the refused one is untouched");
-        }
-        finally
-        {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
-        }
+        Check.False(result.Succeeded, "the refused path still makes the batch report failure");
+        Check.Equal(1, result.Failures.Count, "exactly one failure, from the volume that is not there");
+        Check.Equal(refused, result.FirstFailure!.Path, "and it is the path the caller supplied for it");
+        Check.Equal(RecycleFailureStage.PathValidation, result.FirstFailure.Stage, "a path on a volume that is not there is refused before the volume is asked about");
+        Check.Equal(1, result.RecycledPaths.Count, "the path on the volume that is there was still recycled");
+        Check.Equal(healthy, result.RecycledPaths[0], "and it is the one the caller supplied");
+        Check.False(File.Exists(healthy), "so that file is gone from disk");
 
         workspace.Dispose();
     }
@@ -437,36 +431,32 @@ internal static class FacadeSuite
     /// file — the outcome <c>RunnerSuite.DuplicatePathsAreNotReportedAsFailures</c> pins as wrong for the
     /// ordinary path. Both spellings stay in the batch on purpose: what is being checked is the gate's
     /// bookkeeping, not the runner's.
+    /// <para>
+    /// The gate the bookkeeping belongs to needs a volume with no Recycle Bin, so the file is written on
+    /// the volume <c>--scratch</c> named and the case is a skip on a volume that recycles.
+    /// </para>
     /// </remarks>
     private static async Task ARepeatedRefusedPathIsRefusedOnce(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
 
-        try
-        {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+        var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
+        File.WriteAllBytes(file, new byte[4096]);
 
-            var file = CreateOnSubstitutedVolume(letter);
+        var options = new RecycleBinOptions { ThrowOnError = false };
 
-            var options = new RecycleBinOptions { ThrowOnError = false };
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync([file, file], options, context.CancellationToken)
+            .ConfigureAwait(false);
 
-            var result = await FileRecycler
-                .MoveToRecycleBinAsync([file, file], options, context.CancellationToken)
-                .ConfigureAwait(false);
-
-            Check.False(result.Succeeded, "the refused path still fails the operation");
-            Check.Equal(1, result.Failures.Count, "one path is refused once, however many times it was listed");
-            Check.Equal(file, result.FirstFailure!.Path, "and the failure names the caller's spelling");
-            Check.Equal(0, result.RecycledPaths.Count, "nothing reached the Shell, so nothing was recycled");
-            Check.True(File.Exists(file), "the file is untouched");
-        }
-        finally
-        {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
-        }
+        Check.False(result.Succeeded, "the refused path still fails the operation");
+        Check.Equal(1, result.Failures.Count, "one path is refused once, however many times it was listed");
+        Check.Equal(file, result.FirstFailure!.Path, "and the failure names the caller's spelling");
+        Check.Equal(0, result.RecycledPaths.Count, "nothing reached the Shell, so nothing was recycled");
+        Check.True(File.Exists(file), "the file is untouched");
 
         workspace.Dispose();
     }
@@ -482,41 +472,38 @@ internal static class FacadeSuite
     /// <see cref="RecycleBinResult.RecycledPaths"/> is asserted empty rather than merely smaller, because
     /// that is the claim a caller reads two lists for: a path in both would make the lists contradict each
     /// other, which is worse than either one being wrong on its own.
+    /// <para>
+    /// The option is only a choice on a volume that cannot recycle, so the file is written on the volume
+    /// <c>--scratch</c> named and the case is a skip on a volume that recycles, where the file would go
+    /// to the Recycle Bin and the option would be a no-op.
+    /// </para>
     /// </remarks>
     private static async Task DeletePermanentlyRemovesTheFileAndNamesIt(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
 
-        try
+        var file = Path.Combine(ScratchWorkspace.Root, $"signed-away-{Environment.ProcessId}.bin");
+        File.WriteAllBytes(file, new byte[4096]);
+
+        var options = new RecycleBinOptions
         {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+            ThrowOnError = false,
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+        };
 
-            var file = CreateOnSubstitutedVolume(letter);
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+            .ConfigureAwait(false);
 
-            var options = new RecycleBinOptions
-            {
-                ThrowOnError = false,
-                NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
-            };
-
-            var result = await FileRecycler
-                .MoveToRecycleBinAsync([file], options, context.CancellationToken)
-                .ConfigureAwait(false);
-
-            Check.True(result.Succeeded, $"the caller asked for the file to go (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
-            Check.Equal(1, result.PermanentlyDeletedPaths.Count, "the removed path is named as removed");
-            Check.Equal(file, result.PermanentlyDeletedPaths[0], "in the spelling the caller supplied");
-            Check.Equal(0, result.RecycledPaths.Count, "and it is not also reported as recycled");
-            Check.Equal(0, result.Failures.Count, "removing a file the caller signed away is not a failure");
-            Check.False(File.Exists(file), "the file is gone from disk, which is the whole point of the option");
-        }
-        finally
-        {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
-        }
+        Check.True(result.Succeeded, $"the caller asked for the file to go (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.Equal(1, result.PermanentlyDeletedPaths.Count, "the removed path is named as removed");
+        Check.Equal(file, result.PermanentlyDeletedPaths[0], "in the spelling the caller supplied");
+        Check.Equal(0, result.RecycledPaths.Count, "and it is not also reported as recycled");
+        Check.Equal(0, result.Failures.Count, "removing a file the caller signed away is not a failure");
+        Check.False(File.Exists(file), "the file is gone from disk, which is the whole point of the option");
 
         workspace.Dispose();
     }
@@ -530,48 +517,40 @@ internal static class FacadeSuite
     /// sends an integrator looking for an access bug that is not there. What is asserted here is the
     /// outcome — the tree is gone, the directory is named, and nothing escaped as an exception, since
     /// <c>ThrowOnError</c> is off and a refusal would have been a reported failure rather than a throw.
+    /// <para>
+    /// The option reaches this call only on a volume that cannot recycle, so the tree is built on the
+    /// volume <c>--scratch</c> named and the case is a skip on a volume that recycles.
+    /// </para>
     /// </remarks>
     private static async Task DeletePermanentlyRemovesADirectory(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
 
-        try
+        var directory = Path.Combine(ScratchWorkspace.Root, $"tree-{Environment.ProcessId}");
+        var inner = Path.Combine(directory, "nested");
+        Directory.CreateDirectory(inner);
+        File.WriteAllText(Path.Combine(inner, "a.txt"), "hello");
+
+        var options = new RecycleBinOptions
         {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+            ThrowOnError = false,
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+        };
 
-            var root = SubstitutedRoot(letter);
-            Directory.CreateDirectory(root);
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync([directory], options, context.CancellationToken)
+            .ConfigureAwait(false);
 
-            var directory = Path.Combine(root, $"tree-{Environment.ProcessId}");
-            var inner = Path.Combine(directory, "nested");
-            Directory.CreateDirectory(inner);
-            File.WriteAllText(Path.Combine(inner, "a.txt"), "hello");
-
-            var options = new RecycleBinOptions
-            {
-                ThrowOnError = false,
-                NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
-            };
-
-            var result = await FileRecycler
-                .MoveToRecycleBinAsync([directory], options, context.CancellationToken)
-                .ConfigureAwait(false);
-
-            Check.True(
-                result.Succeeded,
-                $"a directory the caller signed away is removed rather than refused (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
-            Check.Equal(1, result.PermanentlyDeletedPaths.Count, "the directory is named as removed");
-            Check.Equal(directory, result.PermanentlyDeletedPaths[0], "in the spelling the caller supplied");
-            Check.False(Directory.Exists(directory), "the whole tree is gone from disk, contents included");
-            Check.Equal(0, result.RecycledPaths.Count, "and it was not recycled, on a volume that cannot recycle");
-        }
-        finally
-        {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
-        }
+        Check.True(
+            result.Succeeded,
+            $"a directory the caller signed away is removed rather than refused (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.Equal(1, result.PermanentlyDeletedPaths.Count, "the directory is named as removed");
+        Check.Equal(directory, result.PermanentlyDeletedPaths[0], "in the spelling the caller supplied");
+        Check.False(Directory.Exists(directory), "the whole tree is gone from disk, contents included");
+        Check.Equal(0, result.RecycledPaths.Count, "and it was not recycled, on a volume that cannot recycle");
 
         workspace.Dispose();
     }
@@ -586,57 +565,53 @@ internal static class FacadeSuite
     /// contract is the report, not the throw: with <see cref="RecycleBinOptions.ThrowOnError"/> off there is
     /// none. A stage of <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> here would say the caller had
     /// not consented — the opposite of what was asked, and the reason the stage is checked rather than left.
+    /// <para>
+    /// A removal is only this library's own on a volume that cannot recycle, so the file is written on the
+    /// volume <c>--scratch</c> named and the case is a skip on a volume that recycles.
+    /// </para>
     /// </remarks>
     private static async Task DeletePermanentlyReportsAFileSystemRefusal(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
 
-        try
+        var file = Path.Combine(ScratchWorkspace.Root, $"held-{Environment.ProcessId}.bin");
+        File.WriteAllBytes(file, new byte[4096]);
+
+        var options = new RecycleBinOptions
         {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+            ThrowOnError = false,
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+        };
 
-            var file = CreateOnSubstitutedVolume(letter);
-
-            var options = new RecycleBinOptions
-            {
-                ThrowOnError = false,
-                NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
-            };
-
-            using (new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
-            {
-                var result = await FileRecycler
-                    .MoveToRecycleBinAsync([file], options, context.CancellationToken)
-                    .ConfigureAwait(false);
-
-                Check.False(result.Succeeded, "a removal the file system refused is a failure");
-                Check.Equal(1, result.Failures.Count, "and it is the only one reported");
-                Check.Equal(file, result.FirstFailure!.Path, "naming the caller's path");
-                Check.Equal(
-                    RecycleFailureStage.PermanentDeleteFailed,
-                    result.FirstFailure.Stage,
-                    "at the removal itself, not at the volume that held it");
-                Check.Equal(
-                    0,
-                    result.FirstFailure.Attempts,
-                    "nothing was recorded as attempted, because the removal is this library's own and does not go through the Shell's rounds");
-                Check.NotEqual(0, result.FirstFailure.HResult, "the file system's own error code came through");
-                Check.True(
-                    (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
-                    $"that code is a refusal rather than a success (got 0x{result.FirstFailure.HResult:X8})");
-                Check.Equal(0, result.PermanentlyDeletedPaths.Count, "and nothing was claimed as removed");
-                Check.Equal(0, result.RecycledPaths.Count, "nor as recycled");
-            }
-
-            Check.True(File.Exists(file), "the file is still there, because the refusal was the file system's and not the library's");
-        }
-        finally
+        using (new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
+            var result = await FileRecycler
+                .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            Check.False(result.Succeeded, "a removal the file system refused is a failure");
+            Check.Equal(1, result.Failures.Count, "and it is the only one reported");
+            Check.Equal(file, result.FirstFailure!.Path, "naming the caller's path");
+            Check.Equal(
+                RecycleFailureStage.PermanentDeleteFailed,
+                result.FirstFailure.Stage,
+                "at the removal itself, not at the volume that held it");
+            Check.Equal(
+                0,
+                result.FirstFailure.Attempts,
+                "nothing was recorded as attempted, because the removal is this library's own and does not go through the Shell's rounds");
+            Check.NotEqual(0, result.FirstFailure.HResult, "the file system's own error code came through");
+            Check.True(
+                (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
+                $"that code is a refusal rather than a success (got 0x{result.FirstFailure.HResult:X8})");
+            Check.Equal(0, result.PermanentlyDeletedPaths.Count, "and nothing was claimed as removed");
+            Check.Equal(0, result.RecycledPaths.Count, "nor as recycled");
         }
+
+        Check.True(File.Exists(file), "the file is still there, because the refusal was the file system's and not the library's");
 
         workspace.Dispose();
     }
@@ -647,10 +622,17 @@ internal static class FacadeSuite
     /// </summary>
     /// <remarks>
     /// The invariant rather than either outcome: a path cannot be both, so a caller cannot be told the file
-    /// went to the Recycle Bin and was also destroyed. It holds for every combination rather than for the
-    /// one the option makes interesting, which is why the batch carries a healthy volume next to the
-    /// bin-less one — the case that would catch a gate deleting paths it had no business touching, or a
-    /// permanently deleted path arriving through the runner as an ordinary recycle.
+    /// went to the Recycle Bin and was also destroyed.
+    /// <para>
+    /// A batch of two rather than one path, because a single path makes the two lists indistinguishable
+    /// from one — a bug that reported a permanently deleted path as recycled would also report the reverse
+    /// as true. Two paths on the run's own volume, both of which the option removes, is what the batch can
+    /// honestly be here: a call carries one <see cref="RecycleBinOptions.NoRecycleBinAction"/> and the
+    /// volume it runs on answers for every path in it, so a batch that reached one branch and another has
+    /// to span two volumes of different kinds, and this run names one volume. What the assertions still
+    /// catch is the recording rather than the mixture: a path in both lists, and a path recorded in one
+    /// list twice.
+    /// </para>
     /// <para>
     /// Compared without regard to case, because the two lists are written by different code and a caller
     /// comparing them should not have to know that.
@@ -661,67 +643,35 @@ internal static class FacadeSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
-        var healthy = workspace.CreateRandomFiles(1, 4096);
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin is the shape this case is about");
 
-        try
+        var files = workspace.CreateRandomFiles(2, 4096);
+
+        var options = new RecycleBinOptions
         {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
+            ThrowOnError = false,
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+        };
 
-            var removed = CreateOnSubstitutedVolume(letter);
+        var result = await FileRecycler
+            .MoveToRecycleBinAsync(files, options, context.CancellationToken)
+            .ConfigureAwait(false);
 
-            var options = new RecycleBinOptions
-            {
-                ThrowOnError = false,
-                NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
-            };
+        Check.True(result.Succeeded, $"both paths were handled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.Equal(2, result.PermanentlyDeletedPaths.Count, "both paths were removed for good, as the caller asked");
+        Check.Equal(0, result.RecycledPaths.Count, "and neither was reported as recycled, so neither is in both lists");
 
-            var result = await FileRecycler
-                .MoveToRecycleBinAsync([removed, healthy[0]], options, context.CancellationToken)
-                .ConfigureAwait(false);
+        var both = result.RecycledPaths
+            .Intersect(result.PermanentlyDeletedPaths, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
-            Check.True(result.Succeeded, $"both paths were handled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
-            Check.Equal(1, result.PermanentlyDeletedPaths.Count, "the path on the bin-less volume was removed for good");
-            Check.Equal(1, result.RecycledPaths.Count, "and the one on the healthy volume reached the Recycle Bin");
-
-            var both = result.RecycledPaths
-                .Intersect(result.PermanentlyDeletedPaths, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-
-            Check.Equal(0, both.Length, $"no path is in both lists, because the two cannot both be true of one file (overlap: {string.Join(", ", both)})");
-        }
-        finally
-        {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
-        }
+        Check.Equal(0, both.Length, $"no path is in both lists, because the two cannot both be true of one file (overlap: {string.Join(", ", both)})");
+        Check.Equal(
+            result.RecycledPaths.Count + result.PermanentlyDeletedPaths.Count,
+            files.Count,
+            "and each of the two paths is in one list, so no path was recorded in both of them");
 
         workspace.Dispose();
-    }
-
-    /// <summary>
-    /// The drive letter <paramref name="letter"/> answers as a volume root, with its trailing separator.
-    /// </summary>
-    private static string SubstitutedRoot(char letter) =>
-        letter + ":" + Path.DirectorySeparatorChar;
-
-    /// <summary>
-    /// Creates one file on the substituted drive named by <paramref name="letter"/> and returns its path
-    /// in that spelling, which is the spelling the caller under test supplies.
-    /// </summary>
-    /// <remarks>
-    /// Depends on the mapping already being in place, so the file is written through the drive letter the
-    /// case then hands to the library. Writing it through <c>W:\</c> instead would put it on the healthy
-    /// volume and test nothing.
-    /// </remarks>
-    private static string CreateOnSubstitutedVolume(char letter)
-    {
-        var root = SubstitutedRoot(letter);
-        Directory.CreateDirectory(root);
-        var file = Path.Combine(root, $"refused-{Environment.ProcessId}.bin");
-
-        File.WriteAllBytes(file, new byte[4096]);
-
-        return file;
     }
 
     /// <summary>
