@@ -58,10 +58,17 @@ internal static class NativeBinEmptier
     {
         var binDirectory = NativeBinLayout.BinDirectory(volumeRoot);
 
-        // A volume nothing has ever been recycled on has no directory here, and there is nothing to empty.
-        // It is not counted as emptied either: nothing about that volume was touched.
+        // Two different situations hide behind one missing directory, and reporting them the same way would
+        // swallow one of them: a volume nothing has ever been recycled on, and a volume that is not there
+        // at all. The first is an empty bin; the second is a caller who asked to empty something that does
+        // not exist, and silence about that reads as "it was empty".
         if (!Directory.Exists(binDirectory))
         {
+            if (!Directory.Exists(volumeRoot))
+            {
+                failures.Add(new RecycleFailure(volumeRoot, RecycleBinCounter.UnreadableVolume, 1, RecycleFailureStage.Enumeration));
+            }
+
             return (0, 0);
         }
 

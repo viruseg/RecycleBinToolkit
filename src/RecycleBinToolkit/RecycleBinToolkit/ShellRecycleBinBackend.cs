@@ -21,8 +21,6 @@ internal sealed class ShellRecycleBinBackend : IRecycleBinBackend
     /// </summary>
     private const uint EmptyFlags = PInvoke.SHERB_NOCONFIRMATION | PInvoke.SHERB_NOPROGRESSUI | PInvoke.SHERB_NOSOUND;
 
-    /// <summary>Win32 <c>ERROR_NOT_SET</c>, used when the Shell gives no error code of its own.</summary>
-    private const int UnreadableVolume = unchecked((int)0x80070490);
 
     private static readonly ShellRecycleBinBackend Shared = new();
 
@@ -133,7 +131,7 @@ internal sealed class ShellRecycleBinBackend : IRecycleBinBackend
         {
             if (!itemsBefore[i].HasValue || !RecycleBinCounter.TryQuery(targets[i], out var itemsAfter, out var bytesAfter))
             {
-                failures.Add(new RecycleFailure(targets[i], UnreadableVolume, 1, RecycleFailureStage.Enumeration));
+                failures.Add(new RecycleFailure(targets[i], RecycleBinCounter.UnreadableVolume, 1, RecycleFailureStage.Enumeration));
                 continue;
             }
 

@@ -12,6 +12,19 @@ namespace RecycleBinToolkit;
 internal static partial class RecycleBinCounter
 {
     /// <summary>
+    /// Win32 <c>ERROR_NOT_SET</c>, used when the Shell gives no error code of its own and when a volume
+    /// cannot be read at all.
+    /// </summary>
+    /// <remarks>
+    /// Shared rather than declared per caller, so that a volume the caller cannot reach is reported with the
+    /// same code whichever backend found it. A caller who switches backends must not see the code change
+    /// underneath them.
+    /// </remarks>
+    internal const int UnreadableVolume = unchecked((int)0x80070490);
+
+    private const int GuidPathCapacity = 64;
+
+    /// <summary>
     /// Reads how many entries a volume's Recycle Bin holds and how much space they take.
     /// </summary>
     /// <param name="volumeRoot">Volume root with a trailing separator, for example <c>"X:\\"</c>.</param>

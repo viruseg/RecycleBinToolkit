@@ -130,7 +130,7 @@ internal static class StatusSuite
     {
         ScratchWorkspace.RequireNonRecycling("a volume the Shell reports no bin for");
 
-        var status = await RecycleBin.GetStatusAsync(ScratchWorkspace.VolumeRoot, null, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(ScratchWorkspace.VolumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(ScratchWorkspace.VolumeRoot, status.VolumeRoot, "the answer names the volume it was asked about");
         Check.False(status.IsEnabled, $"a volume with no Recycle Bin is not an enabled Recycle Bin (got {status.Reason})");
@@ -240,8 +240,8 @@ internal static class StatusSuite
         workspace.Recreate();
 
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
-        var plain = await RecycleBin.GetStatusAsync(volumeRoot, null, context.CancellationToken).ConfigureAwait(false);
-        var extended = await RecycleBin.GetStatusAsync(ExtendedPath.For(volumeRoot), null, context.CancellationToken).ConfigureAwait(false);
+        var plain = await RecycleBin.GetStatusAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var extended = await RecycleBin.GetStatusAsync(ExtendedPath.For(volumeRoot), TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(plain.VolumeRoot, extended.VolumeRoot, "both spellings name the same volume root");
         Check.Equal(plain.DriveType, extended.DriveType, "and the same drive type, so the volume is not unreadable");
@@ -275,8 +275,8 @@ internal static class StatusSuite
     {
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        var withSeparator = await RecycleBin.GetStatusAsync(volumeRoot, null, context.CancellationToken).ConfigureAwait(false);
-        var bare = await RecycleBin.GetStatusAsync(volumeRoot.TrimEnd(Path.DirectorySeparatorChar), null, context.CancellationToken)
+        var withSeparator = await RecycleBin.GetStatusAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var bare = await RecycleBin.GetStatusAsync(volumeRoot.TrimEnd(Path.DirectorySeparatorChar), TestBackend.Options, context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.Equal(withSeparator.VolumeRoot, bare.VolumeRoot, "both spellings report the same volume root");
@@ -298,11 +298,11 @@ internal static class StatusSuite
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
         var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync(files, TestBackend.Options, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the file was recycled, so the volume demonstrably uses the Recycle Bin");
 
-        var status = await RecycleBin.GetStatusAsync(volumeRoot, null, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(status.IsEnabled, $"a volume that just accepted a recycle is enabled (got {status.Reason})");
         Check.Equal(RecycleBinAvailabilityReason.Enabled, status.Reason, "the reason is the plain enabled one");
@@ -320,7 +320,7 @@ internal static class StatusSuite
         var letter = AbsentVolume.Letter();
         AbsentVolume.RequireAbsent(letter, "asking about a volume that is not there");
 
-        var status = await RecycleBin.GetStatusAsync(AbsentVolume.RootOf(letter), null, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(AbsentVolume.RootOf(letter), TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
 
         Check.False(status.IsEnabled, "a volume that is not mounted is not an enabled Recycle Bin");
         Check.Equal(RecycleBinAvailabilityReason.VolumeNotFound, status.Reason, "the reason is that the volume does not exist");
@@ -335,7 +335,7 @@ internal static class StatusSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var status = await RecycleBin.GetStatusAsync(ScratchWorkspace.Root, null, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(ScratchWorkspace.Root, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
 
         Check.False(status.IsEnabled, "a path that is not a volume root has no Recycle Bin of its own");
         Check.Equal(RecycleBinAvailabilityReason.VolumeNotFound, status.Reason, "the reason is that it is not a volume root");

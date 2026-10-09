@@ -57,7 +57,22 @@ internal sealed class TestRunner
             return 2;
         }
 
-        var kind = SelectKind(args);
+        var backend = TestBackend.Read(args, out var backendProblem);
+
+        if (backendProblem.Length > 0)
+        {
+            Console.Error.WriteLine(
+                "--backend takes the Recycle Bin path this run measures, such as --backend winapi or --backend native. " +
+                "It is refused rather than guessed at, because a run that measured a path its command line did not name " +
+                "would report coverage it does not have. Native writes the Recycle Bin's own files and needs Windows 10 " +
+                "build 14393 or later; the Shell path needs no particular build and is what a run measures by default.");
+            Console.Error.WriteLine($"        {backendProblem}");
+            return 2;
+        }
+
+        TestBackend.Configure(backend);
+
+        var group = SelectGroup(args);
 
         // The run's own directory is claimed from here on, so everything below runs inside the try whose
         // finally removes it — including the empty-selection return, which is an exit path like any other.
@@ -67,18 +82,19 @@ internal sealed class TestRunner
         {
             ScratchWorkspace.Configure(scratchRoot);
 
-            var selected = Select(cases, kind, filter);
+            var selected = Select(cases, group, filter);
 
             if (selected.Length == 0)
             {
-                Console.Error.WriteLine(DescribeEmptySelection(cases, kind, filter));
+                Console.Error.WriteLine(DescribeEmptySelection(cases, group, filter));
                 return 1;
             }
 
             Console.WriteLine($"scratch root {ScratchWorkspace.RunRoot}");
+            Console.WriteLine($"backend {Describe(backend)}");
             Console.WriteLine($"running {selected.Length} of {cases.Count} test(s)");
 
-            DescribeDeferred(cases, kind, filter);
+            DescribeDeferred(cases, group, filter);
 
             Console.WriteLine();
 
@@ -168,7 +184,7 @@ internal sealed class TestRunner
     };
 
     /// <summary>Which group the command line asks for.</summary>
-    private static TestKind SelectKind(string[] args) =>
+    private static TestKind SelectGroup(string[] args) =>
         args.Contains("--load", StringComparer.Ordinal) ? TestKind.Load : TestKind.Regular;
 
     /// <summary>
@@ -240,6 +256,9 @@ internal sealed class TestRunner
     }
 
     /// <summary>The word a group's cases are counted in.</summary>
+    /// <summary>The word a backend is counted in, so a report always says which path it measured.</summary>
+    private static string Describe(TestBackendKind backend) => backend == TestBackendKind.Native ? "native" : "winapi";
+
     private static string Name(TestKind kind) => kind switch
     {
         TestKind.Regular => "regular",

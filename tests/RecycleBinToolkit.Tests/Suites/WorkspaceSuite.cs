@@ -8,7 +8,55 @@ internal static class WorkspaceSuite
     internal static IReadOnlyList<TestCase> Cases =>
     [
         new TestCase("WorkspaceSuite." + nameof(WorkspaceCanBeRecreatedAndPopulated), WorkspaceCanBeRecreatedAndPopulated),
+        new TestCase("WorkspaceSuite." + nameof(TheBackendFlagNamesAKnownBackend), TheBackendFlagNamesAKnownBackend),
     ];
+
+    /// <summary>
+    /// The flag that decides which Recycle Bin path this run measures, read the same way whatever it is
+    /// spelled like.
+    /// </summary>
+    /// <remarks>
+    /// A run that silently measured the wrong path would report every assertion it made and none of them
+    /// about what its command line said, which is the failure this exists to prevent. So the default is
+    /// pinned by name — the Shell path, because that is what every run before this flag existed took — and
+    /// every spelling of a known backend is accepted while everything else is refused with a message.
+    /// <para>
+    /// A flag followed by another flag is refused the way <c>--scratch</c> refuses one. Taking the next token
+    /// either way would read <c>--backend --load</c> as a backend named <c>--load</c>, and a run would measure
+    /// the Shell path while its command line said it asked for something else.
+    /// </para>
+    /// </remarks>
+    private static Task TheBackendFlagNamesAKnownBackend(TestContext context)
+    {
+        Check.Equal(
+            TestBackendKind.WinApi,
+            TestBackend.Read([], out _),
+            "a run that names no backend measures the Shell path, which is what every run before this flag took");
+
+        foreach (var spelling in new[] { "winapi", "WinApi", "WINAPI", "native", "Native", "NATIVE" })
+        {
+            TestBackend.Read(["--backend", spelling], out var accepted);
+
+            Check.Equal(string.Empty, accepted, $"--backend {spelling} names a backend this library has");
+        }
+
+        foreach (var bad in new[] { string.Empty, "   ", "shell", "com", "win32", "native2", "1" })
+        {
+            TestBackend.Read(["--backend", bad], out var problem);
+
+            Check.True(problem.Length > 0, $"--backend \"{bad}\" is refused with a message rather than guessed at");
+        }
+
+        TestBackend.Read(["--backend", "--load"], out var flagInsteadOfValue);
+
+        Check.True(flagInsteadOfValue.Length > 0, "a flag after --backend is refused as a value, the way --scratch refuses one");
+
+        TestBackend.Read(["--backend"], out var nothingAfter);
+
+        Check.True(nothingAfter.Length > 0, "and --backend with nothing after it at all is refused too");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// The scratch root is a directory under this run's own directory, so <see cref="ScratchWorkspace.Dispose"/>

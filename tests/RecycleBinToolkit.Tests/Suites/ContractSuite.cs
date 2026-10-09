@@ -686,6 +686,7 @@ internal static class ContractSuite
 
         var absurd = new RecycleBinOptions
         {
+            Backend = (RecycleBinBackend)TestBackend.Kind,
             // The budget that overflows when added to a non-zero elapsed time, and an attempt count large
             // enough that the doubled delay would exceed what a wait can express if the operation ever
             // had to wait at all.
@@ -833,6 +834,7 @@ internal static class ContractSuite
     {
         var clamped = new RecycleBinOptions
         {
+            Backend = (RecycleBinBackend)TestBackend.Kind,
             MaxAttempts = 0,
             InitialRetryDelay = TimeSpan.FromMilliseconds(-5),
             OverallTimeout = TimeSpan.FromSeconds(-1)
@@ -842,8 +844,8 @@ internal static class ContractSuite
         Check.Equal(TimeSpan.Zero, clamped.InitialRetryDelay, "negative InitialRetryDelay becomes zero");
         Check.Equal(TimeSpan.Zero, clamped.OverallTimeout, "negative OverallTimeout becomes zero");
 
-        var kept = new RecycleBinOptions
-        {
+var kept = new RecycleBinOptions
+{
             MaxAttempts = 3,
             InitialRetryDelay = TimeSpan.FromMilliseconds(10),
             OverallTimeout = TimeSpan.FromSeconds(5),

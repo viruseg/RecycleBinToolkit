@@ -91,7 +91,7 @@ internal static class FacadeSuite
             "and it is that file, not another one of the same name");
 
         var result = await FileRecycler
-            .MoveToRecycleBinAsync([addressed], cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync([addressed], TestBackend.Options, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.False(result.Succeeded, $"a path nothing above the library can read is not recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
@@ -111,7 +111,7 @@ internal static class FacadeSuite
         Check.False(RecycleTarget.IsVolumeGuidPath(slashed), "the caller's own spelling carries no backslashes at all");
 
         var viaSlashes = await FileRecycler
-            .MoveToRecycleBinAsync([slashed], cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync([slashed], TestBackend.Options, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.Equal(1, viaSlashes.Failures.Count, $"the forward-slash spelling is refused too (got {viaSlashes.FirstFailure?.Stage})");
@@ -162,7 +162,7 @@ internal static class FacadeSuite
         var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
 
-        var options = new RecycleBinOptions { ThrowOnError = false };
+        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
 
         var result = await FileRecycler
             .MoveToRecycleBinAsync([file], options, context.CancellationToken)
@@ -234,7 +234,7 @@ internal static class FacadeSuite
 
         var thrown = await Check
             .ThrowsAsync<IOException>(
-                () => FileRecycler.MoveToRecycleBinAsync(file, cancellationToken: context.CancellationToken),
+                () => FileRecycler.MoveToRecycleBinAsync(file, TestBackend.Options, cancellationToken: context.CancellationToken),
                 "a refused volume raises on the single-path overload when ThrowOnError is on")
             .ConfigureAwait(false);
 
@@ -284,7 +284,7 @@ internal static class FacadeSuite
         var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
 
-        var options = new RecycleBinOptions { ThrowOnError = false };
+        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
 
         var removed = await FileRecycler.MoveToRecycleBinAsync(file, options, context.CancellationToken).ConfigureAwait(false);
 
@@ -312,7 +312,7 @@ internal static class FacadeSuite
         workspace.Recreate();
 
         var missing = Path.Combine(ScratchWorkspace.Root, $"definitely-absent-{Environment.ProcessId}.bin");
-        var options = new RecycleBinOptions { ThrowOnError = false };
+        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
 
         var result = await FileRecycler
             .MoveToRecycleBinAsync([missing], options, cancellationToken: context.CancellationToken)
@@ -385,6 +385,7 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions
         {
+            Backend = (RecycleBinBackend)TestBackend.Kind,
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.AllowIndeterminate,
         };
@@ -443,7 +444,7 @@ internal static class FacadeSuite
         var healthy = workspace.CreateRandomFiles(1, 4096)[0];
         var refused = Path.Combine(AbsentVolume.RootOf(letter), "on-a-volume-that-is-not-there.bin");
 
-        var options = new RecycleBinOptions { ThrowOnError = false };
+        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
         var batch = new List<string?> { refused, healthy };
 
         var result = await FileRecycler
@@ -486,7 +487,7 @@ internal static class FacadeSuite
         var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
 
-        var options = new RecycleBinOptions { ThrowOnError = false };
+        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
 
         var result = await FileRecycler
             .MoveToRecycleBinAsync([file, file], options, context.CancellationToken)
@@ -530,6 +531,7 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions
         {
+            Backend = (RecycleBinBackend)TestBackend.Kind,
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
@@ -576,6 +578,7 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions
         {
+            Backend = (RecycleBinBackend)TestBackend.Kind,
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
@@ -622,6 +625,7 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions
         {
+            Backend = (RecycleBinBackend)TestBackend.Kind,
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
@@ -689,6 +693,7 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions
         {
+            Backend = (RecycleBinBackend)TestBackend.Kind,
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
@@ -739,7 +744,7 @@ internal static class FacadeSuite
 
         var (_, sizeBefore) = RecycleBinProbe.MeasureOrFail(volumeRoot, "the baseline size");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync([extended], cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync([extended], TestBackend.Options, cancellationToken: context.CancellationToken);
 
         Check.True(
             result.Succeeded,
@@ -788,6 +793,7 @@ internal static class FacadeSuite
         {
             var options = new RecycleBinOptions
             {
+                Backend = (RecycleBinBackend)TestBackend.Kind,
                 MaxAttempts = 1,
                 InitialRetryDelay = TimeSpan.Zero,
                 OverallTimeout = TimeSpan.FromSeconds(5)
@@ -838,7 +844,7 @@ internal static class FacadeSuite
         var files = workspace.CreateFixtureSet();
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync(files, TestBackend.Options, cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"every generated file is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8} {result.FirstFailure?.Path})");
         Check.Equal(files.Count, result.RecycledPaths.Count, "every generated file is reported as recycled");
@@ -872,7 +878,7 @@ internal static class FacadeSuite
         // Throwing off, stated rather than inherited: the single-path overload decides between raising and
         // returning false on exactly this flag, and a case named for it that relied on the default was
         // asserting the opposite of what it said.
-        var options = new RecycleBinOptions { ThrowOnError = false };
+        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
 
         Check.False(
             await FileRecycler.MoveToRecycleBinAsync((string?)null, options, context.CancellationToken).ConfigureAwait(false),
@@ -904,7 +910,7 @@ internal static class FacadeSuite
         var batch = new List<string?> { missing };
         batch.AddRange(files);
 
-        var result = await FileRecycler.MoveToRecycleBinAsync(batch, cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync(batch, TestBackend.Options, cancellationToken: context.CancellationToken);
 
         Check.False(result.Succeeded, "the missing path makes the batch report failure");
         Check.Equal(1, result.Failures.Count, "only the missing path is reported");
@@ -941,7 +947,7 @@ internal static class FacadeSuite
         File.WriteAllText(Path.Combine(ScratchWorkspace.Root, "tree", "b.txt"), "world");
 
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
-        var result = await FileRecycler.MoveToRecycleBinAsync([directory], cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync([directory], TestBackend.Options, cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"a directory is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
         Check.False(Directory.Exists(directory), "the directory tree is gone from disk");
@@ -967,20 +973,37 @@ internal static class FacadeSuite
 
         Check.True(file.Length > 260, $"the test path is genuinely long ({file.Length} chars)");
 
-        // Where the volume issues 8.3 names, this path is recycled rather than refused, and the
-        // assertions below would be about the other outcome. Skipping is the honest result on such a
-        // volume, and it is what the sibling long-path cases already do.
+        // Past the Shell's recycling limit a file is removed permanently while the operation still
+        // reports success, so the path must be refused with the file intact. LongPathSuite covers the
+        // Shell-facing side of this; here the point is only that the facade surfaces the refusal rather
+        // than claiming success.
+        //
+        // The native backend has no such limit: the record is written with the whole path in it and the
+        // payload moves to a short destination, so the same path is simply recycled there. That is the
+        // whole difference between the two backends, and it is asserted here rather than left to the
+        // native suite alone, so that a regression on either side is caught on both.
+        var result = await FileRecycler.MoveToRecycleBinAsync([file], TestBackend.Options, cancellationToken: context.CancellationToken);
+
+        if (TestBackend.IsNative)
+        {
+            Check.True(result.Succeeded, "the native backend recycles a path the Shell refuses");
+            Check.Equal(0, result.PermanentlyDeletedPaths.Count, "and never removes it for good on the way");
+            Check.False(File.Exists(file), "so the file is in the Recycle Bin rather than left where it was");
+            Check.Equal(1, result.RecycledPaths.Count, "and is named as recycled");
+
+            workspace.Dispose();
+            return;
+        }
+
+        // Where the volume issues 8.3 names, this path is recycled rather than refused, and the assertions
+        // below would be about the other outcome. Skipping is the honest result on such a volume, and it is
+        // what the sibling long-path cases already do. The check sits after the native branch because the
+        // native backend has no length limit for 8.3 names to shorten.
         if (ShortPathResolver.TryResolveShort(file) is not null)
         {
             workspace.Dispose();
             Check.Skip("this volume issues 8.3 names, so a long path is recycled rather than refused");
         }
-
-        // Past the Shell's recycling limit a file is removed permanently while the operation still
-        // reports success, so the path must be refused with the file intact. LongPathSuite covers
-        // the Shell-facing side of this; here the point is only that the facade surfaces the refusal
-        // rather than claiming success.
-        var result = await FileRecycler.MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken);
 
         Check.False(result.Succeeded, "a path past the Shell limit is refused rather than silently deleted");
         Check.Equal(RecycleFailureStage.LongPathNotRecyclable, result.FirstFailure!.Stage, "the refusal names the long-path limitation");

@@ -491,32 +491,43 @@ internal static class NativeBinSuite
     }
 
     /// <summary>
-    /// The drive is classified by asking it, and the answer decides how many threads read its bin. Nothing
-    /// here knows what any particular machine has: the assertion is that the answer came from the driver
-    /// and that a positive answer names a positive kind, which is the only part that can be witnessed
-    /// without knowing which volume is under test.
+    /// The drive is classified by asking it, and the answer decides how many threads read its bin.
     /// </summary>
+    /// <remarks>
+    /// Nothing here knows what any particular machine has, and the case does not assume an answer is
+    /// available: a flash drive's driver never implemented the seek-penalty property, and <c>Unknown</c> is
+    /// the correct answer for it rather than a failure. What is asserted is the mapping — every kind of
+    /// answer reaches the right degree, and an absent answer reaches the safe one — because that is the part
+    /// that holds on every volume.
+    /// </remarks>
     private static Task ADriveIsClassifiedFromItsOwnSeekPenaltyAnswer(TestContext context)
     {
-        var kind = VolumeSeekPenalty.Classify(ScratchWorkspace.VolumeRoot);
-
-        Check.True(kind != VolumeStorageKind.Unknown,
-            $"the driver answered whether this volume seeks ({ScratchWorkspace.VolumeRoot}); an unknown answer would silently force the slowest path");
+        var root = ScratchWorkspace.VolumeRoot;
+        var kind = VolumeSeekPenalty.Classify(root);
 
         Check.True(
-            kind == VolumeStorageKind.SolidState || kind == VolumeStorageKind.Mechanical,
-            $"and the answer names one of the two kinds rather than something else ({kind})");
+            kind is VolumeStorageKind.Unknown or VolumeStorageKind.Mechanical or VolumeStorageKind.SolidState,
+            $"the classifier answers with one of its three kinds rather than something else ({kind})");
 
         var expected = kind == VolumeStorageKind.SolidState
             ? Math.Max(1, Environment.ProcessorCount)
             : 1;
 
-        Check.Equal(expected, VolumeSeekPenalty.DegreeOfParallelism(ScratchWorkspace.VolumeRoot),
+        Check.Equal(
+            expected,
+            VolumeSeekPenalty.DegreeOfParallelism(root),
             kind == VolumeStorageKind.SolidState
                 ? "a solid-state volume is read on every core"
-                : "a mechanical volume is read on one thread, because concurrent requests make the head seek between them");
+                : "anything else is read on one thread, because concurrent requests make a mechanical head seek between them and a driver that never answered may be either");
 
-        Check.Equal(kind, VolumeSeekPenalty.Classify(ScratchWorkspace.VolumeRoot), "and the answer is the same when asked twice");
+        Check.Equal(kind, VolumeSeekPenalty.Classify(root), "and the answer is the same when asked twice, because the hardware does not change under a run");
+
+        // A share is answered without asking anything: \\.\ resolves against this machine, so there is no
+        // volume device to ask, and a network's cost is latency rather than a seek.
+        Check.Equal(
+            VolumeStorageKind.Unknown,
+            VolumeSeekPenalty.Classify(@"\\server\share\"),
+            "a share is unknown, and is not asked a question whose device path would name the local machine");
 
         return Task.CompletedTask;
     }
