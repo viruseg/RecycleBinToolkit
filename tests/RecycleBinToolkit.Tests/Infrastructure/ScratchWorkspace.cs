@@ -44,11 +44,12 @@ internal sealed class ScratchWorkspace : IDisposable
     private static int _sequence;
 
     /// <summary>
-    /// The volume root this run works on, with a trailing separator. Every case that asks a question of the
-    /// Shell asks it about this string rather than about a drive letter written into the source, which is
-    /// what lets the whole suite run on a volume the caller named.
+    /// The parent of this run's own claim, with a trailing separator — which is the volume root
+    /// <c>--scratch</c> named, because that claim is the one taken outside the run's directory. Every case
+    /// that asks a question of the Shell asks it about this string rather than about a drive letter
+    /// written into the source, which is what lets the whole suite run on a volume the caller named.
     /// </summary>
-    public static string VolumeRoot => _runRoot?.Volume ?? throw new InvalidOperationException(
+    public static string VolumeRoot => _runRoot?.Parent ?? throw new InvalidOperationException(
         $"{nameof(Configure)} has not run, so no volume has been named. Pass --scratch <root> on the command line.");
 
     /// <summary>
@@ -103,10 +104,10 @@ internal sealed class ScratchWorkspace : IDisposable
     {
         if (_runRoot is not null)
         {
-            if (!string.Equals(_runRoot.Volume, volumeRoot, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(_runRoot.Parent, volumeRoot, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(
-                    $"This run already works on {_runRoot.Volume}, and --scratch now names {volumeRoot}. One process is one run on one volume.");
+                    $"This run already works on {_runRoot.Parent}, and --scratch now names {volumeRoot}. One process is one run on one volume.");
             }
 
             return;

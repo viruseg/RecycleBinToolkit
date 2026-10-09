@@ -76,7 +76,7 @@ internal static class ScratchSuite
         {
             Check.True(Directory.Exists(claimed.FullPath), $"the claimed directory exists: {claimed.FullPath}");
             Check.Equal(Trimmed(ParentOf(claimed.FullPath)), Trimmed(parent), "and it is a direct child of the parent that was named");
-            Check.Equal(parent, claimed.Volume, "which the claim also remembers as the parent it works under");
+            Check.Equal(parent, claimed.Parent, "which the claim also remembers as the parent it works under");
         }
         finally
         {
@@ -181,7 +181,7 @@ internal static class ScratchSuite
         try
         {
             var failure = Check.Throws<InvalidOperationException>(
-                () => ScratchDirectory.Claim(taken.Volume, () => name),
+                () => ScratchDirectory.Claim(taken.Parent, () => name),
                 "a name that is never free is a failure, not an endless loop");
 
             Check.True(failure.Message.Contains(name, StringComparison.Ordinal), $"and it names the name that was taken ({failure.Message})");

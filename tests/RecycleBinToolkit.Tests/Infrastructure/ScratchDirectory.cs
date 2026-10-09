@@ -33,7 +33,7 @@ internal sealed class ScratchDirectory
     private ScratchDirectory(string path, string parent)
     {
         FullPath = path;
-        Volume = parent;
+        Parent = parent;
     }
 
     /// <summary>
@@ -46,10 +46,11 @@ internal sealed class ScratchDirectory
     /// inside it, so it is what a message about a failed removal has to name.
     /// </summary>
     /// <remarks>
-    /// A volume root for the run's own directory, and an ordinary directory inside it for every other
-    /// claim. The name is the older one; what it holds is now simply the parent.
+    /// A claim takes a parent this run already owns. For the run's own directory that parent is the
+    /// volume root the caller named, because <see cref="ClaimRunRoot"/> is the one claim taken outside the
+    /// run; for every other claim it is an ordinary directory inside that run's directory.
     /// </remarks>
-    public string Volume { get; }
+    public string Parent { get; }
 
     /// <summary>
     /// The full path of the run's own directory, or <see langword="null"/> before
@@ -87,7 +88,7 @@ internal sealed class ScratchDirectory
         if (_runRoot is not null)
         {
             throw new InvalidOperationException(
-                $"This process already works on {_runRoot.Volume}, in {_runRoot.FullPath}, and {root} was named as a second run root. " +
+                $"This process already works on {_runRoot.Parent}, in {_runRoot.FullPath}, and {root} was named as a second run root. " +
                 "One process is one run: a second claim would create a directory beside the one every case writes under, " +
                 "and nothing would be there to remove it.");
         }
