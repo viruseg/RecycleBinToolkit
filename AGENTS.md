@@ -61,11 +61,11 @@ The harness has two disjoint groups. `--all` and `--filter <substring>` select t
 names only load cases fails with a message naming them and telling the reader to pass `--load`, so the
 flag cannot be worked around by accident.
 
-There are 157 registered cases and four load cases, so `--all` runs 153 of them. The rest is what the
+There are 158 registered cases and four load cases, so `--all` runs 154 of them. The rest is what the
 volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the cases that
 recycle one and runs the cases that are about a volume the Shell reports no bin for. Measured on both
-kinds of volume, 143 pass and 10 skip where there is a bin and 110 pass and 43 skip where there is none,
-with nothing failing either way; a share is a third kind and measured 108 pass and 45 skip. `--all` prints
+kinds of volume, 144 pass and 10 skip where there is a bin and 111 pass and 43 skip where there is none,
+with nothing failing either way; a share is a third kind and measured 109 pass and 45 skip. `--all` prints
 the counts, so a count in a document that disagrees with them is the document being wrong.
 
 ## What the tests may touch

@@ -27,6 +27,7 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(AnAbsurdRetryBudgetDoesNotOverflowTheDeadline), AnAbsurdRetryBudgetDoesNotOverflowTheDeadline),
         new TestCase("ContractSuite." + nameof(ItemOutcomeNamesTheStageItFailedAt), ItemOutcomeNamesTheStageItFailedAt),
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsOnlyValidWhereItIs), ExtendedPrefixIsOnlyValidWhereItIs),
+        new TestCase("ContractSuite." + nameof(ExtendedPathAgreesWithPathForIoWhereBothApply), ExtendedPathAgreesWithPathForIoWhereBothApply),
         new TestCase("ContractSuite." + nameof(VolumeRootIsAlwaysARootWithASeparator), VolumeRootIsAlwaysARootWithASeparator),
         new TestCase("ContractSuite." + nameof(ATargetCostsNoAllocationOfItsOwn), ATargetCostsNoAllocationOfItsOwn),
         new TestCase("ContractSuite." + nameof(ContentsTotalIsDerivedNotDeclared), ContentsTotalIsDerivedNotDeclared),
@@ -499,6 +500,64 @@ internal static class ContractSuite
 
         var device = @"\\.\PhysicalDrive0" + new string('d', 300);
         Check.Equal(device, LongPathStager.PathForIo(device), "a device path is not a filesystem path and takes no prefix");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// <see cref="ExtendedPath.For"/> restates the rule <c>PathForIo</c> above owns, because that method is
+    /// internal to the library and a case that needs the prefix on a short path cannot reach it. Two statements
+    /// of one rule are only safe while they agree, and nothing else in the tree compares them: if the library's
+    /// rule changed and the helper did not, every case using the helper would keep passing against a path
+    /// shape the library no longer accepts.
+    /// </summary>
+    /// <remarks>
+    /// The comparison is bounded to the shapes where both apply — past the Shell's limit — because below it
+    /// they are meant to differ, and that difference is the reason the helper exists at all. Stating it here
+    /// is what tells a reader that <see cref="ExtendedPath"/> is not a mistaken duplicate of
+    /// <c>PathForIo</c>.
+    /// </remarks>
+    private static Task ExtendedPathAgreesWithPathForIoWhereBothApply(TestContext context)
+    {
+        var longDrive = @"W:\" + new string('d', 300) + @"\report.bin";
+        Check.Equal(
+            LongPathStager.PathForIo(longDrive),
+            ExtendedPath.For(longDrive),
+            "a long drive path is spelled the same by both, since both put the plain prefix in front of it");
+
+        var longUnc = @"\\server\share" + new string('d', 300) + @"\report.bin";
+        Check.Equal(
+            @"\\?\UNC\server\share" + new string('d', 300) + @"\report.bin",
+            ExtendedPath.For(longUnc),
+            "a long share takes \\?\\UNC\\ from the helper too, since \\?\\ in front of another backslash is not a UNC path at all");
+        Check.Equal(
+            LongPathStager.PathForIo(longUnc),
+            ExtendedPath.For(longUnc),
+            "which is the spelling the library gives it, so the two agree on the shape that used to diverge");
+
+        var alreadyPrefixed = @"\\?\" + longDrive;
+        Check.Equal(
+            alreadyPrefixed,
+            ExtendedPath.For(alreadyPrefixed),
+            "a path the caller already prefixed is handed back by the helper as it is, so it cannot end up with two prefixes");
+        Check.Equal(
+            LongPathStager.PathForIo(alreadyPrefixed),
+            ExtendedPath.For(alreadyPrefixed),
+            "and the library leaves it alone too, so the two agree on an already-extended path");
+
+        var shortDrive = @"W:\work\report.bin";
+        Check.Equal(
+            shortDrive,
+            LongPathStager.PathForIo(shortDrive),
+            "below the Shell's limit the library hands the path straight back");
+        Check.Equal(
+            @"\\?\" + shortDrive,
+            ExtendedPath.For(shortDrive),
+            "while the helper prefixes it anyway, which is the case that needed the helper written");
+        Check.NotEqual(
+            LongPathStager.PathForIo(shortDrive),
+            ExtendedPath.For(shortDrive),
+            "so the two are deliberately not interchangeable there, and only there");
 
         return Task.CompletedTask;
     }

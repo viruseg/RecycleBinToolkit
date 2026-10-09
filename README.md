@@ -894,10 +894,10 @@ non-zero when a case fails.
 clear for that drive; a volume with no such key is answered `Indeterminate` or `NoRecycleBinOnVolume` —
 both refused by the default `NoRecycleBinAction.Throw`. The run asks the library once which kind of
 volume it was given, and each case that needs the other kind skips rather than fails, so naming a
-removable drive with no `$RECYCLE.BIN` runs the 110 that need nothing from a bin and skips the 43 that
+removable drive with no `$RECYCLE.BIN` runs the 111 that need nothing from a bin and skips the 43 that
 recycle one.
 
-The suite is a console application with no external packages: 157 cases covering batch and single-path
+The suite is a console application with no external packages: 158 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies,
 volumes with no Recycle Bin, and a ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing,
@@ -908,13 +908,13 @@ volume; those are removed, and reported if they cannot be. On a volume with no R
 recycle there skip rather than fail — forty-three of them — and the ten that are about such a volume run
 instead of skipping.
 
-**Of the 157 cases, `--all` runs 153.** Four are load cases that run only on request: the ten-cycle stress
+**Of the 158 cases, `--all` runs 154.** Four are load cases that run only on request: the ten-cycle stress
 run, and the three cases that each move the whole 94-file fixture set through the Shell in one call.
 `--all` and `--filter` never run them — `--load` runs those four cases and nothing else. Nothing is
 covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
 and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
-The remainder is the volume's decision rather than a flag's: 143 pass and 10 skip where there is a bin,
-110 pass and 43 skip where there is none, 108 pass and 45 skip on a network share, and nothing fails on any
+The remainder is the volume's decision rather than a flag's: 144 pass and 10 skip where there is a bin,
+111 pass and 43 skip where there is none, 109 pass and 45 skip on a network share, and nothing fails on any
 of them.
 
 **A share has to survive your command line.** `--scratch "\\server\share\"` is right in PowerShell and in
