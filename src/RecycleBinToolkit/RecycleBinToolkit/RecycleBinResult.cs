@@ -170,13 +170,12 @@ public sealed class RecycleBinResult
     /// caller's data at a path the caller never chose, so a result carrying one is not a success even
     /// though nothing was recorded as a failure against any path. The directories holding it are named in
     /// <see cref="LeftoverStagingDirectories"/>, and a caller who reads this property as the whole answer
-    /// needs to read those too.
+    /// needs to read those too — which is why this one says so rather than answering <see langword="true"/>.
     /// <para>
-    /// The library's own operations do not currently produce that shape — an item left behind is one that
-    /// failed, and is recorded as such — so this clause is a property of the type rather than of a path
-    /// anyone has taken. It is stated because the constructors are public: a result carrying a leftover
-    /// and no failures is constructible, and a property that read <see langword="true"/> for it would be
-    /// wrong about a state the type allows.
+    /// The empty-failures case is reachable, and not only through an item left behind: a staging directory
+    /// that could not be removed is reported as leftover whether or not anything is still in it, and two
+    /// immediate retries are all it gets. An operation where every path was recycled can therefore report
+    /// one leftover and no failures.
     /// </para>
     /// </remarks>
     public bool Succeeded => Failures.Count == 0 && LeftoverStagingDirectories.Count == 0;

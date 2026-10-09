@@ -72,12 +72,18 @@ internal static class RecycleBinThrowHelper
     /// out of, and naming it is the whole answer. Every one is named, because a batch spanning volumes
     /// stages per volume and a leftover on one does not make a leftover on another go away.
     /// </remarks>
+/// <remarks>
+    /// Wording is deliberately agnostic about whether the directory still holds anything, because the
+    /// library cannot tell the caller: a staging directory that could not be removed is reported as
+    /// leftover whether or not the move back took, and both look identical from here. Naming the
+    /// directory and saying nothing was deleted is true either way.
+    /// </remarks>
     [DoesNotReturn]
     internal static void ThrowItemNotPutBack(IReadOnlyList<string> leftoverStagingDirectories) =>
         throw new InvalidOperationException(
-            $"The item was moved to a short path to reach the Recycle Bin and could be neither recycled nor " +
-            $"moved back, so it is at {string.Join(" and ", leftoverStagingDirectories.Select(d => $"'{d}'"))} " +
-            "rather than where it was left. Nothing was deleted. Move it out of that directory.");
+            $"A staging directory was left on the volume: {string.Join(" and ", leftoverStagingDirectories.Select(d => $"'{d}'"))}. " +
+            "Nothing was deleted. It either holds an item that could not be moved back to where it was, or it is empty " +
+            "and could not be removed; look inside it before moving on.");
 }
 
 /// <summary>
