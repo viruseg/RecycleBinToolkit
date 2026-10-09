@@ -71,8 +71,19 @@ internal static class FacadeSuite
         var file = Path.Combine(ScratchWorkspace.Root, name);
         File.WriteAllBytes(file, new byte[4096]);
 
+        // Addressed by the path the volume spells, not by the leaf: a device path is volume-relative, so
+        // the run's own directory has to be part of it or this names a file at the volume root that was
+        // never written. Deriving it rather than spelling it keeps the two the same path by construction.
+        var relative = Path.GetRelativePath(volumeRoot, file);
+        var addressed = $@"\\?\Volume{guid}\{relative}";
+
+        Check.True(
+            addressed.StartsWith(@"\\?\Volume{", StringComparison.OrdinalIgnoreCase)
+            && addressed.EndsWith(relative, StringComparison.OrdinalIgnoreCase),
+            $"the device path is its own prefix followed by the volume-relative path, so both name one file (got {addressed})");
+
         var result = await FileRecycler
-            .MoveToRecycleBinAsync([$@"\\?\Volume{guid}\{name}"], cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync([addressed], cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.False(result.Succeeded, $"a path nothing above the library can read is not recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
