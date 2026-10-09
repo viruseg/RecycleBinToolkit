@@ -92,7 +92,9 @@ internal sealed class ScratchWorkspace : IDisposable
     /// <remarks>
     /// Called by the runner before a single case runs, so every case and every message about a path agrees
     /// on where the run works. Calling it twice with different roots would be two runs sharing one process,
-    /// and the second would quietly write beside the first's tree.
+    /// and the second would quietly write beside the first's tree — which is what
+    /// <see cref="ScratchDirectory.ClaimRunRoot"/> refuses underneath, and why the guard here is kept: it
+    /// says which root disagreed before the claim is asked at all.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// A run root has already been claimed, and it is a different volume than the one named now.
@@ -110,7 +112,7 @@ internal sealed class ScratchWorkspace : IDisposable
             return;
         }
 
-        _runRoot = ScratchDirectory.Claim(volumeRoot);
+        _runRoot = ScratchDirectory.ClaimRunRoot(volumeRoot);
     }
 
     /// <summary>
