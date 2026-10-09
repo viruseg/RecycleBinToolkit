@@ -53,6 +53,8 @@ internal static class EmptySuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("entries in the volume's Recycle Bin to count");
+
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
         var files = workspace.CreateRandomFiles(2, 4096);
 
@@ -132,6 +134,8 @@ internal static class EmptySuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("an entry in the bin for a forward-slash root to empty");
+
         var file = workspace.CreateRandomFile(4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
         var forwardSlash = volumeRoot.Replace('\\', '/');
@@ -174,6 +178,8 @@ internal static class EmptySuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("an entry in the bin for a bare drive letter to empty");
 
         var file = workspace.CreateRandomFile(4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
@@ -222,6 +228,8 @@ internal static class EmptySuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("an entry in the bin for a prefixed root to empty");
+
         var file = workspace.CreateRandomFile(4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
         var prefixed = @"\\?\" + volumeRoot;
@@ -261,6 +269,8 @@ internal static class EmptySuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a real entry on the volume for a silent widening to destroy");
 
         var file = workspace.CreateRandomFile(4096);
 
@@ -361,6 +371,8 @@ internal static class EmptySuite
 
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("an entry in the bin to read back after the empty");
+
         var files = workspace.CreateRandomFiles(1, fileSize);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
@@ -400,6 +412,8 @@ internal static class EmptySuite
 
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries in the bin for the counts to be taken from");
+
         var files = workspace.CreateRandomFiles(fileCount, fileSize);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
@@ -428,6 +442,8 @@ internal static class EmptySuite
 
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("an entry in the bin for the first empty to find");
+
         var files = workspace.CreateRandomFiles(1, fileSize);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 

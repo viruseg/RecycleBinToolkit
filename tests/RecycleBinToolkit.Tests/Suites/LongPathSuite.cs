@@ -123,6 +123,9 @@ internal static class LongPathSuite
     /// </remarks>
     private static Task DeletePermanentlyRemovesALongDirectoryToo(TestContext context)
     {
+        // Ahead of the long-directory root, which is the first thing this case creates.
+        ScratchWorkspace.RequireRecycling("the permanent-delete policy for a long directory");
+
         var root = ScratchWorkspace.RecreateLongDirectoryRoot();
 
         // Nested rather than one long component: a directory name cannot exceed 255 characters, so a
@@ -344,6 +347,8 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("a long path that reaches the direct removal");
+
         try
         {
             var extendedPath = BuildLongPath('k').ExtendedPath;
@@ -393,6 +398,8 @@ internal static class LongPathSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("the permanent-delete policy for a long path");
 
         try
         {
@@ -461,6 +468,8 @@ internal static class LongPathSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a staging directory that had something staged into it");
 
         try
         {
@@ -570,6 +579,8 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the staged payload to land in");
+
         try
         {
             var (plainPath, extendedPath) = BuildLongPath();
@@ -652,6 +663,8 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("a long path refused for its length rather than by the volume");
+
         try
         {
             var (plainPath, extendedPath) = BuildLongPath();
@@ -721,6 +734,8 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("the permanent-delete policy for a batch of long paths");
+
         try
         {
             var paths = new List<string>(pathCount);
@@ -775,6 +790,8 @@ internal static class LongPathSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for a reported success to have put the bytes in");
 
         try
         {
@@ -837,6 +854,8 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("a readable bin size, which is what separates a reported success from a silent deletion");
+
         try
         {
             var (plainPath, extendedPath) = BuildLongPath();
@@ -878,6 +897,8 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("a long path refused for its length rather than by the volume");
+
         try
         {
             var (plainPath, extendedPath) = BuildLongPath();
@@ -916,6 +937,8 @@ internal static class LongPathSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("the permanent-delete policy for a long path");
+
         try
         {
             var (plainPath, extendedPath) = BuildLongPath();
@@ -952,6 +975,8 @@ internal static class LongPathSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for an under-threshold path to land in");
 
         try
         {

@@ -34,6 +34,8 @@ internal static class ListerSuite
 
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("an entry in the bin for the Shell to have recorded");
+
         var files = workspace.CreateRandomFiles(1, fileSize);
 
         var recycled = await FileRecycler
@@ -63,6 +65,8 @@ internal static class ListerSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a $R file inside the bin for the listing to point at");
+
         var files = workspace.CreateRandomFiles(1, 4096);
 
         var recycled = await FileRecycler
@@ -93,6 +97,8 @@ internal static class ListerSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("a directory entry in the bin for the listing to report");
+
         var directory = Path.Combine(ScratchWorkspace.Root, "recycled-directory");
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, "inside.txt"), "content that travels with the directory");
@@ -120,6 +126,8 @@ internal static class ListerSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("an entry from that volume for the filter to keep");
+
         var files = workspace.CreateRandomFiles(1, 4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
@@ -161,6 +169,8 @@ internal static class ListerSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("an entry recorded under one spelling of the root for the other to keep");
+
         var files = workspace.CreateRandomFiles(1, 4096);
 
         var recycled = await FileRecycler
@@ -215,6 +225,8 @@ internal static class ListerSuite
 
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("every file of the batch really reaching the bin to be listed");
+
         var files = workspace.CreateRandomFiles(fileCount, fileSize);
 
         var recycled = await FileRecycler
