@@ -91,6 +91,17 @@ public sealed class RecycleBinOptions
     public NoRecycleBinAction NoRecycleBinAction { get; init; } = NoRecycleBinAction.Throw;
 
     /// <summary>
+    /// How this operation reaches the Recycle Bin. The default is <see cref="RecycleBinBackend.WinApi"/>,
+    /// which is what every call did before the property existed.
+    /// </summary>
+    /// <remarks>
+    /// The default is 0 and stays there. A caller who has never heard of
+    /// <see cref="RecycleBinBackend.Native"/> gets the Shell path, on any Windows build this library
+    /// supports, which is the only combination that is safe to hand to someone who did not choose.
+    /// </remarks>
+    public RecycleBinBackend Backend { get; init; } = RecycleBinBackend.WinApi;
+
+    /// <summary>
     /// Longest path the Shell can be asked to recycle, in characters. Measured on this machine: a
     /// 251-character path recycles, a 261-character path is removed permanently while the operation
     /// still reports success.
@@ -113,7 +124,8 @@ public sealed class RecycleBinOptions
         ThrowOnError = ThrowOnError,
         LongPathFailureAction = LongPathFailureAction,
         NoRecycleBinAction = NoRecycleBinAction,
-        MaxShellPathLength = Math.Max(1, MaxShellPathLength)
+        MaxShellPathLength = Math.Max(1, MaxShellPathLength),
+        Backend = Backend
     };
 
     /// <summary>

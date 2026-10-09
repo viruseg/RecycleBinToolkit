@@ -13,7 +13,8 @@ namespace RecycleBinToolkit;
 /// A path whose volume cannot recycle it is settled before the Shell is asked, so it is never
 /// removed for good while the operation reports it as recycled. What happens to it instead is
 /// <see cref="RecycleBinOptions.NoRecycleBinAction"/>: left where it is, handed over, or removed by
-/// this library and named in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
+/// this library and named in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>. That gate runs
+/// before a backend is chosen, so it holds the same way on either one.
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
@@ -167,8 +168,9 @@ public static class FileRecycler
             return RecycleBinResult.Create([], permanentlyDeleted, gateFailures, TimeSpan.Zero);
         }
 
-        var result = await RecycleBinWorker
-            .SubmitAsync(targets, effective, cancellationToken)
+        var result = await RecycleBinBackends
+            .For(effective)
+            .RecycleAsync(targets, effective, cancellationToken)
             .ConfigureAwait(false);
 
         if (gateFailures.Count == 0 && permanentlyDeleted.Count == 0)

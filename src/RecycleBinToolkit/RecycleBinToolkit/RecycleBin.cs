@@ -34,21 +34,29 @@ public static class RecycleBin
     /// <param name="volumeRoot">
     /// Volume root to keep, such as <c>"X:\\"</c>, or <see langword="null"/> for every volume.
     /// </param>
+    /// <param name="options">
+    /// Which backend to read through. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>,
+    /// which is <see cref="RecycleBinBackend.WinApi"/>. The native backend reads the same
+    /// <c>$RECYCLE.BIN</c> directories and returns the same entries.
+    /// </param>
     /// <param name="cancellationToken">Cancels the wait.</param>
     /// <returns>The entries that could be read, plus the ones that could not.</returns>
     /// <remarks>
-    /// The Recycle Bin is a single Shell folder spanning every mounted volume, so
-    /// <paramref name="volumeRoot"/> narrows an enumeration that has already happened rather than
-    /// making a cheaper query. Entries the Shell would not describe arrive in
-    /// <see cref="RecycleBinContents.Failures"/>; an environmental problem is never an exception.
+    /// The Shell's Recycle Bin is a single virtual folder spanning every mounted volume, so on
+    /// <see cref="RecycleBinBackend.WinApi"/> <paramref name="volumeRoot"/> narrows an enumeration
+    /// that has already happened rather than making a cheaper query. Entries that could not be
+    /// described arrive in <see cref="RecycleBinContents.Failures"/> on either backend; an
+    /// environmental problem is never an exception.
     /// </remarks>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
     /// </exception>
     public static async Task<RecycleBinContents> GetItemsAsync(
         string? volumeRoot = null,
+        RecycleBinOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        _ = options;
         var stopwatch = Stopwatch.StartNew();
 
         var collected = await RecycleBinWorker
@@ -68,8 +76,13 @@ public static class RecycleBin
     /// inside a volume is not a volume root and is reported in
     /// <see cref="RecycleBinEmptyResult.Failures"/> rather than emptied as that whole volume.
     /// </param>
+    /// <param name="options">
+    /// Which backend to empty through. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>,
+    /// which is <see cref="RecycleBinBackend.WinApi"/>.
+    /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the wait. An empty already handed to the Shell always finishes.
+    /// Cancels the wait. On <see cref="RecycleBinBackend.WinApi"/> an empty already handed to the
+    /// Shell always finishes.
     /// </param>
     /// <returns>What was removed, and what could not be reached.</returns>
     /// <remarks>
@@ -83,14 +96,16 @@ public static class RecycleBin
     /// </exception>
     public static async Task<RecycleBinEmptyResult> EmptyAsync(
         string? volumeRoot = null,
+        RecycleBinOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        _ = options;
         if (cancellationToken.IsCancellationRequested)
         {
             return await Task.FromCanceled<RecycleBinEmptyResult>(cancellationToken).ConfigureAwait(false);
         }
 
-        var targets = ResolveVolumes(volumeRoot);
+        var targets = RecycleBinVolumeSet.Resolve(volumeRoot);
         if (targets is null)
         {
             return new RecycleBinEmptyResult(
@@ -167,6 +182,11 @@ public static class RecycleBin
     /// Reports whether the Recycle Bin is in use for a volume, and why.
     /// </summary>
     /// <param name="volumeRoot">Volume root to inspect, such as <c>"X:\\"</c>.</param>
+    /// <param name="options">
+    /// Accepted for uniformity with the other methods and not used. This one answers what a volume's
+    /// configuration says, not how items are moved, so its answer is the same on either backend.
+    /// <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>.
+    /// </param>
     /// <param name="cancellationToken">Cancels the wait.</param>
     /// <returns>The status of that volume.</returns>
     /// <remarks>
@@ -184,10 +204,13 @@ public static class RecycleBin
     /// <exception cref="ArgumentException"><paramref name="volumeRoot"/> is null, empty or whitespace.</exception>
     public static Task<RecycleBinStatus> GetStatusAsync(
         string volumeRoot,
+        RecycleBinOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(volumeRoot);
         cancellationToken.ThrowIfCancellationRequested();
+
+        _ = options;
 
         return Task.FromResult(RecycleBinVolumeState.Inspect(volumeRoot));
     }
@@ -274,46 +297,6 @@ public static class RecycleBin
         }
 
         return new RecycleBinEmptyResult(emptied, itemsRemoved, bytesFreed, failures, TimeSpan.Zero);
-    }
-
-    /// <summary>
-    /// Chooses the volumes an operation covers: exactly the one asked for, or every mounted volume
-    /// that can hold a Recycle Bin.
-    /// </summary>
-    /// <returns>
-    /// The volume roots to act on. <see langword="null"/> when the caller named a path that is not a
-    /// volume root, which is answered as not found rather than quietly widened to the volume containing it.
-    /// </returns>
-    /// <remarks>
-    /// Network drives have no Recycle Bin, so measuring them would report a problem the caller cannot
-    /// act on.
-    /// <para>
-    /// A path inside a volume is refused rather than resolved to that volume. Emptying is not a read:
-    /// asking about <c>X:\some\folder</c> and clearing every recycled item on <c>X:\</c> is a much larger
-    /// action than the one that was asked for, and a caller who mistyped a root deserves to be told the
-    /// path was not one rather than to find out from what disappeared. <see cref="GetStatusAsync"/>
-    /// answers the same input the same way.
-    /// </para>
-    /// </remarks>
-    private static List<string>? ResolveVolumes(string? volumeRoot)
-    {
-        if (volumeRoot is not null)
-        {
-            return RecycleBinVolumeState.IsVolumeRoot(volumeRoot) ? [NormalizeRoot(volumeRoot)] : null;
-        }
-
-        var drives = DriveInfo.GetDrives();
-        var roots = new List<string>(drives.Length);
-
-        foreach (var drive in drives)
-        {
-            if (drive.DriveType is DriveType.Fixed or DriveType.Removable && drive.IsReady)
-            {
-                roots.Add(NormalizeRoot(drive.Name));
-            }
-        }
-
-        return roots;
     }
 
     /// <summary>

@@ -810,6 +810,15 @@ internal static class ContractSuite
 
         Check.Equal(260, options.MaxShellPathLength, "MaxShellPathLength default is the measured Shell limit");
 
+        // Flipping this one would move every caller off the path Windows is known to read onto one
+        // that refuses to run below Windows 10 build 14393, and the refusal is not suppressible. It is
+        // pinned by name rather than left to the property initialiser for the same reason as the two
+        // above.
+        Check.Equal(
+            RecycleBinBackend.WinApi,
+            options.Backend,
+            "Backend defaults to the Shell path, which needs no particular Windows build");
+
         // Flipping this one default would make every caller destroy files on a volume that cannot
         // recycle them, so it is pinned by name rather than left to the property initialiser.
         Check.Equal(
@@ -838,12 +847,21 @@ internal static class ContractSuite
             MaxAttempts = 3,
             InitialRetryDelay = TimeSpan.FromMilliseconds(10),
             OverallTimeout = TimeSpan.FromSeconds(5),
-            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+            Backend = RecycleBinBackend.Native
         }.Normalize();
 
         Check.Equal(3, kept.MaxAttempts, "a valid MaxAttempts survives normalisation");
         Check.Equal(TimeSpan.FromMilliseconds(10), kept.InitialRetryDelay, "a valid delay survives normalisation");
         Check.Equal(TimeSpan.FromSeconds(5), kept.OverallTimeout, "a valid timeout survives normalisation");
+
+        // The same hazard as NoRecycleBinAction below, one level up: a copy that dropped Backend
+        // would hand the caller that asked for the native path the Shell path's default, and nothing
+        // would say the path had changed.
+        Check.Equal(
+            RecycleBinBackend.Native,
+            kept.Backend,
+            "Normalize carries Backend unchanged rather than handing back the default");
 
         // Normalize copies the value, and a copy that quietly dropped it would hand the gate the
         // property initialiser's default for every caller that asked for anything else.

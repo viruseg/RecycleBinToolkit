@@ -1,0 +1,42 @@
+namespace RecycleBinToolkit;
+
+/// <summary>
+/// How an operation reaches the Recycle Bin.
+/// </summary>
+/// <remarks>
+/// Two ways to do the same thing, and the caller picks per call rather than per library:
+/// <see cref="WinApi"/> is the Shell path this library was built around, and <see cref="Native"/>
+/// writes the Recycle Bin's own files directly. Neither is a fallback for the other, and the choice
+/// is never made silently — a default that changed under a caller would change what their data
+/// goes through without their asking.
+/// </remarks>
+public enum RecycleBinBackend
+{
+    /// <summary>
+    /// The Shell: <c>IFileOperation</c> to recycle, the Recycle Bin virtual folder to read,
+    /// <c>SHEmptyRecycleBin</c> to empty, on a process-wide single-threaded apartment worker.
+    /// </summary>
+    /// <remarks>
+    /// What a caller gets that the native path does not have: per-item Shell error codes, and the
+    /// Shell's own view of where an item went. What it costs: every call is a COM round trip
+    /// serialised behind one thread, which is why <c>SHQueryRecycleBin</c> on a bin of ninety
+    /// thousand entries was measured at about eleven seconds. Requires no particular Windows build.
+    /// </remarks>
+    WinApi = 0,
+
+    /// <summary>
+    /// The Recycle Bin's own files: <c>&lt;volume&gt;$RECYCLE.BIN\&lt;SID&gt;\$I</c> and the
+    /// <c>$R</c> payload beside it, written and read with plain file I/O. No STA thread and no COM.
+    /// </summary>
+    /// <remarks>
+    /// What a caller gets that the Shell path does not have: no STA thread at all, work that
+    /// scales across cores on a solid-state volume, and no <c>MAX_PATH</c> limit — the path inside
+    /// the bin is short whatever the original was, so nothing is staged and nothing is refused for
+    /// length. What it costs: only the current user's bin on the named volumes is visible, and the
+    /// write path needs <see cref="OperatingSystem"/> 10 build 14393 or later, because that is the
+    /// first build whose own Shell reads the version 2 index records this backend writes. That
+    /// requirement is refused with a <see cref="PlatformNotSupportedException"/> and
+    /// <see cref="RecycleBinOptions.ThrowOnError"/> does not suppress it.
+    /// </remarks>
+    Native = 1,
+}

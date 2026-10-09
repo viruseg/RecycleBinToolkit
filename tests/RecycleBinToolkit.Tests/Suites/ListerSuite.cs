@@ -137,7 +137,7 @@ internal static class ListerSuite
         Check.True(recycled.Succeeded, "the file was recycled");
 
         var all = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
-        var filtered = await RecycleBin.GetItemsAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+        var filtered = await RecycleBin.GetItemsAsync(volumeRoot, null, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(
             all.Items.Any(i => IsSamePath(i, files[0])),
@@ -188,7 +188,7 @@ internal static class ListerSuite
 
         Check.True(Directory.Exists(differentlyWritten), $"\"{differentlyWritten}\" names the same volume as \"{asTheShellWroteIt}\", so a filter against it is asking about a volume and not about nothing");
 
-        var filtered = await RecycleBin.GetItemsAsync(differentlyWritten, context.CancellationToken).ConfigureAwait(false);
+        var filtered = await RecycleBin.GetItemsAsync(differentlyWritten, null, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(
             filtered.Items.Any(i => IsSamePath(i, files[0])),
@@ -207,7 +207,7 @@ internal static class ListerSuite
         var letter = AbsentVolume.Letter();
         AbsentVolume.RequireAbsent(letter, "listing a volume that is not there");
 
-        var contents = await RecycleBin.GetItemsAsync(AbsentVolume.RootOf(letter), context.CancellationToken).ConfigureAwait(false);
+        var contents = await RecycleBin.GetItemsAsync(AbsentVolume.RootOf(letter), null, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(contents.Items.Count == 0, "nothing is reported for a volume that is not mounted");
         Check.Equal(0, contents.Failures.Count, $"a filter for an absent volume is not an enumeration failure (got {contents.Failures.Count})");
@@ -235,7 +235,7 @@ internal static class ListerSuite
         Check.True(recycled.Succeeded, "the batch was recycled");
 
         var contents = await RecycleBin.GetItemsAsync(
-            Path.GetPathRoot(ScratchWorkspace.Root),
+            Path.GetPathRoot(ScratchWorkspace.Root), null,
             context.CancellationToken).ConfigureAwait(false);
 
         foreach (var file in files)

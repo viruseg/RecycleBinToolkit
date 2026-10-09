@@ -371,7 +371,7 @@ internal static class ShellSuite
 
         var oracleBefore = RecycleBinVolume.Measure(volumeRoot);
         var probeBefore = RecycleBinProbe.Measure(volumeRoot);
-        var listingBefore = await RecycleBin.GetItemsAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+        var listingBefore = await RecycleBin.GetItemsAsync(volumeRoot, null, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(oracleBefore.Ok, $"the independent Shell counter reads the volume (got 0x{oracleBefore.HResult:X8})");
         Check.True(probeBefore.Items >= 0, $"the library reads the volume too (got {probeBefore.Items})");
@@ -389,7 +389,7 @@ internal static class ShellSuite
 
         var oracleAfter = RecycleBinVolume.Measure(volumeRoot);
         var probeAfter = RecycleBinProbe.Measure(volumeRoot);
-        var listingAfter = await RecycleBin.GetItemsAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+        var listingAfter = await RecycleBin.GetItemsAsync(volumeRoot, null, context.CancellationToken).ConfigureAwait(false);
 
         Console.WriteLine(
             $"        counter {oracleBefore.Items} -> {oracleAfter.Items}, size {oracleBefore.Bytes} -> {oracleAfter.Bytes}; " +
