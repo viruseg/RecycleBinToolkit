@@ -1,3 +1,5 @@
+using RecycleBinToolkit.Tests.Host;
+
 namespace RecycleBinToolkit.Tests.Infrastructure;
 
 /// <summary>
@@ -8,17 +10,19 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 /// directory of this run's own inside that volume. Nothing in the source names a path, so the suite cannot be
 /// pointed twice at the same directory and cannot delete a directory it did not create.
 /// <para>
-/// Almost every case recycles a path on <see cref="Root"/>'s volume, and that only works because the volume
-/// reads as recycling. Windows records that per volume, under
-/// <c>BitBucket\Volume\{GUID}\NukeOnDelete=0</c>; a volume with no such key is answered by asking the
-/// Shell instead, and the answer it gives — <see cref="RecycleBinAvailabilityReason.Indeterminate"/> or
-/// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/> — is one the gate refuses.
-/// <see cref="Recreate"/> asserts the requirement rather than leaving the next machine's run to fail a
-/// hundred cases at once.
+/// Almost every case recycles a path on <see cref="Root"/>'s volume, and which of them can do so is a
+/// property of the machine rather than of this file: <see cref="Reason"/> asks the library once what the
+/// named volume is, and a case that needs a volume of one kind is expected to read that answer rather than
+/// manufacture one. Nothing here refuses a volume the caller named, so a run on a flash drive, a share, or a
+/// machine whose policy turns the bin off starts instead of dying before the first case reports;
+/// <see cref="RequireNonRecycling"/> is how a case says it did not run here. What the answer means on any
+/// such volume is spelled out on <see cref="Reason"/>.
 /// </remarks>
 internal sealed class ScratchWorkspace : IDisposable
 {
     private static ScratchDirectory? _runRoot;
+
+    private static RecycleBinAvailabilityReason? _reason;
 
     private const int MaxDeleteAttempts = 12;
 
@@ -51,6 +55,61 @@ internal sealed class ScratchWorkspace : IDisposable
     /// </summary>
     public static string VolumeRoot => _runRoot?.Parent ?? throw new InvalidOperationException(
         $"{nameof(Configure)} has not run, so no volume has been named. Pass --scratch <root> on the command line.");
+
+    /// <summary>
+    /// What the library reports about <see cref="VolumeRoot"/>: whether that volume uses a Recycle Bin and,
+    /// when it does not, why not. Asked once per run, so every case and every message names the same thing.
+    /// </summary>
+    /// <remarks>
+    /// The answer is the machine's, and it is read rather than assumed. A case that needs a volume of one
+    /// kind reads this and skips or runs on it; nothing here decides what a volume is by looking at its
+    /// path. Windows records recycling per volume under
+    /// <c>BitBucket\Volume\{GUID}\NukeOnDelete=0</c>, which is what
+    /// <see cref="RecycleBinAvailabilityReason.Enabled"/> rests on; a volume with no such key is answered by
+    /// asking the Shell whether it has a bin at all, and the reasons that come back from that are
+    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> or
+    /// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/> rather than enabled. So a run on a
+    /// flash drive, a share, or a machine whose policy turns the bin off is a run that works, and a case
+    /// that cannot make its claim there is expected to say so through
+    /// <see cref="RequireNonRecycling"/> rather than fail on it.
+    /// <para>
+    /// Cached for the life of the claim because the answer does not change under a run and the probe is a
+    /// Shell round trip on a path the case count does not justify repeating. Both ends clear it, and both
+    /// have to: <see cref="ReleaseRunRoot"/> drops the run root this answer was read about, and
+    /// <see cref="Configure"/> drops it on the way to claiming a new one, so a cached value never outlives
+    /// the volume it describes. A stale value cannot survive a second <see cref="Configure"/> in any case —
+    /// that call reaches <see cref="ScratchDirectory.ClaimRunRoot"/>, which keeps its own root for the life
+    /// of the process and refuses the second claim, so there is one volume per process either way.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException"><see cref="Configure"/> has not run.</exception>
+    public static RecycleBinAvailabilityReason Reason => _reason ??= RecycleBinVolumeState.Inspect(VolumeRoot).Reason;
+
+    /// <summary>
+    /// Ends the calling case as not run when <see cref="Reason"/> is
+    /// <see cref="RecycleBinAvailabilityReason.Enabled"/>.
+    /// </summary>
+    /// <param name="because">
+    /// What the case needed from the volume, in the reader's words. Carried into the skip line, because that
+    /// line is the only record left of a case that produced no coverage.
+    /// </param>
+    /// <remarks>
+    /// There is deliberately no counterpart that refuses a volume which recycles. Any volume the caller names
+    /// is usable, and a case that insisted on one would reintroduce the gate this replaced — a machine that
+    /// cannot answer the question would fail before any case ran, instead of the cases that need a bin-less
+    /// volume reporting themselves as unrun.
+    /// </remarks>
+    /// <exception cref="CheckSkippedException">
+    /// The volume does use a Recycle Bin. The message names the volume and <paramref name="because"/> and
+    /// reads as a fact about this machine, not as a fault in it.
+    /// </exception>
+    public static void RequireNonRecycling(string because)
+    {
+        if (Reason == RecycleBinAvailabilityReason.Enabled)
+        {
+            Check.Skip($"{VolumeRoot} has a Recycle Bin, so this machine is not the one {because} needs");
+        }
+    }
 
     /// <summary>
     /// The directory this run claimed, with a trailing separator. Printed by the runner so a reader can see
@@ -96,6 +155,11 @@ internal sealed class ScratchWorkspace : IDisposable
     /// and the second would quietly write beside the first's tree — which is what
     /// <see cref="ScratchDirectory.ClaimRunRoot"/> refuses underneath, and why the guard here is kept: it
     /// says which root disagreed before the claim is asked at all.
+    /// <para>
+    /// Claiming also clears the cached <see cref="Reason"/>. Naming the same volume again is one run, so
+    /// that path keeps the answer already read for it; a claim is the only moment a new volume can come in,
+    /// and it is where an answer about the old one has to go.
+    /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// A run root has already been claimed, and it is a different volume than the one named now.
@@ -114,6 +178,7 @@ internal sealed class ScratchWorkspace : IDisposable
         }
 
         _runRoot = ScratchDirectory.ClaimRunRoot(volumeRoot);
+        _reason = null;
     }
 
     /// <summary>
@@ -122,12 +187,18 @@ internal sealed class ScratchWorkspace : IDisposable
     /// <remarks>
     /// The whole tree rather than each part of it, so a run that failed half way through leaves nothing in
     /// the volume root and the next run claims a fresh name rather than inheriting this one's leftovers.
+    /// <para>
+    /// The cached <see cref="Reason"/> goes with the run root it was read about, and it goes before the
+    /// directory is removed: a reason that outlived its volume would be the one answer in this class that
+    /// nothing on the machine could contradict.
+    /// </para>
     /// </remarks>
     public static void ReleaseRunRoot()
     {
         var runRoot = _runRoot;
 
         _runRoot = null;
+        _reason = null;
 
         runRoot?.Remove();
     }
@@ -175,49 +246,24 @@ internal sealed class ScratchWorkspace : IDisposable
     /// <summary>
     /// Deletes any leftover contents and recreates an empty scratch root.
     /// </summary>
-    /// <exception cref="InvalidOperationException">
-    /// The scratch root's volume does not read as recycling. Recycling anything there depends on it, so
-    /// every case would fail for one missing registry key.
+    /// <remarks>
+    /// Any volume the caller named is prepared, whatever <see cref="Reason"/> says about it. A volume that
+    /// cannot recycle is not a broken machine, so a case that cannot make its claim there reports itself as
+    /// unrun through <see cref="RequireNonRecycling"/> rather than the run dying here before a single case
+    /// has said anything.
+    /// </remarks>
+    /// <exception cref="IOException">
+    /// The scratch root could not be created, or could not be emptied because something still holds a file in it.
     /// </exception>
     public void Recreate()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-
-        RequireRecyclableVolume();
 
         DeleteTree();
 
         if (!Directory.CreateDirectory(Root).Exists)
         {
             throw new IOException($"Could not create scratch root {Root}");
-        }
-    }
-
-    /// <summary>
-    /// Fails unless <see cref="Root"/>'s volume is one the library will hand to the Shell.
-    /// </summary>
-    /// <remarks>
-    /// The gate refuses a path whose volume is not <see cref="RecycleBinAvailabilityReason.Enabled"/>, and
-    /// the default <see cref="NoRecycleBinAction"/> refuses too, so a volume without its per-volume key
-    /// would turn most of the suite red at once with failures that name the Recycle Bin rather than the
-    /// missing key. Read before anything is deleted, so a machine that cannot run the suite loses nothing
-    /// first.
-    /// </remarks>
-    private static void RequireRecyclableVolume()
-    {
-        // Inspect answers about a volume root, and the scratch root is a directory inside one. Handing
-        // it the directory would be answered VolumeNotFound, which says nothing about recycling.
-        var volumeRoot = Path.GetPathRoot(Root)!;
-        var reason = RecycleBinVolumeState.Inspect(volumeRoot).Reason;
-
-        if (reason != RecycleBinAvailabilityReason.Enabled)
-        {
-            throw new InvalidOperationException(
-                $"The scratch volume {volumeRoot} reads as {reason}, so nothing the suite recycles " +
-                "there can be handed to the Shell. This suite needs the volume's Recycle Bin setting recorded " +
-                @"under HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete=0, " +
-                "which the Recycle Bin properties dialog writes when 'Don't move files to the Recycle Bin' is " +
-                "clear for that drive.");
         }
     }
 

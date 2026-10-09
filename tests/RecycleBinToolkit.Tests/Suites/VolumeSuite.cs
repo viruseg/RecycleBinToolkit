@@ -17,6 +17,7 @@ internal static class VolumeSuite
     [
         new TestCase("VolumeSuite." + nameof(RecycleBinQueryReadsTrackedItems), RecycleBinQueryReadsTrackedItems),
         new TestCase("VolumeSuite." + nameof(RecycleBinQueryReportsFailureForMissingVolume), RecycleBinQueryReportsFailureForMissingVolume),
+        new TestCase("VolumeSuite." + nameof(TheScratchVolumeReasonIsWhatTheLibraryReports), TheScratchVolumeReasonIsWhatTheLibraryReports),
         new TestCase("VolumeSuite." + nameof(AVolumeWithoutARecycleBinIsRefused), AVolumeWithoutARecycleBinIsRefused, TestKind.Manual),
         new TestCase(
             "VolumeSuite." + nameof(AVolumeWithoutARecycleBinCanBeDeletedOnRequest),
@@ -80,6 +81,27 @@ internal static class VolumeSuite
 
         Check.Equal(-1L, RecycleBinProbe.QueryItemCount(AbsentVolume.RootOf(letter)), "querying an absent volume reports failure");
         Check.Equal(-1L, RecycleBinProbe.QueryItemCount(AbsentVolume.RootOf(letter)), "failure sentinel is stable across calls");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The run asks the library once what the volume it was given is, and a case that needs a volume of
+    /// one kind is meant to read that answer rather than manufacture one. If the answer came from anything
+    /// but the machine, those cases would agree with each other for the wrong reason.
+    /// </summary>
+    /// <remarks>
+    /// The cached answer is compared against a fresh inspection rather than against a constant, because
+    /// what a volume reads as is a property of the machine the run happens to be on: the case has to hold
+    /// on a volume Windows has never configured and on one it has, and a constant would only ever pin one
+    /// of them.
+    /// </remarks>
+    private static Task TheScratchVolumeReasonIsWhatTheLibraryReports(TestContext context)
+    {
+        var asked = RecycleBinVolumeState.Inspect(ScratchWorkspace.VolumeRoot);
+
+        Check.Equal(asked.Reason, ScratchWorkspace.Reason, "the run's answer is the library's own answer about the volume it was given");
+        Check.Equal(asked.VolumeRoot, ScratchWorkspace.VolumeRoot, "and about that volume");
 
         return Task.CompletedTask;
     }
