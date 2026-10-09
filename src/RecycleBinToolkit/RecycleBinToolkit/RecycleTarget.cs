@@ -86,6 +86,12 @@ internal readonly struct RecycleTarget
     /// <c>X:\Volume{guid}\file</c> under the process's current directory, and that is a path this library
     /// handles like any other.
     /// </para>
+    /// <para>
+    /// Only the backslash device prefix is recognised here. The forward-slash spelling
+    /// <c>//?/Volume{guid}\file</c> is the same path to Windows — <c>Path.GetFullPath</c> rewrites it
+    /// into this form — so a caller who typed it is answered by the check against the normalised path,
+    /// which is why there are two of them.
+    /// </para>
     /// </remarks>
     internal static bool IsVolumeGuidPath(string path) =>
         path.StartsWith(ExtendedPrefix, StringComparison.Ordinal) &&

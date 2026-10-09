@@ -34,7 +34,46 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(PathsThatResolveToOneShellItemRecycleOnce), PathsThatResolveToOneShellItemRecycleOnce),
         new TestCase("ContractSuite." + nameof(EveryReasonAndActionPairIsPinned), EveryReasonAndActionPairIsPinned),
         new TestCase("ContractSuite." + nameof(TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured), TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured),
+        new TestCase("ContractSuite." + nameof(OnlyTheVolumeGuidDeviceFormCountsAsOne), OnlyTheVolumeGuidDeviceFormCountsAsOne),
     ];
+
+    /// <summary>
+    /// The one path shape nothing above this library can read, told apart from the paths that merely
+    /// contain its text.
+    /// </summary>
+    /// <remarks>
+    /// Anchored to the device prefix, because <c>Volume{</c> is also a legal directory name: a relative
+    /// <c>Volume{guid}\file</c> resolves under the process's current directory to an ordinary path, and
+    /// refusing that would be narrowing the accepted input without saying so. The forward-slash device
+    /// spelling is checked against the normalised path rather than here — <c>Path.GetFullPath</c> rewrites
+    /// it into the backslash form, which is what makes one call site need both checks.
+    /// </remarks>
+    private static Task OnlyTheVolumeGuidDeviceFormCountsAsOne(TestContext context)
+    {
+        Check.True(
+            RecycleTarget.IsVolumeGuidPath(@"\\?\Volume{0be31b11-9126-4277-afd6-019ff4a1ee40}\file.bin"),
+            "the device form is the only spelling such a volume has, so it is refused");
+
+        Check.True(
+            RecycleTarget.IsVolumeGuidPath(@"\\?\VOLUME{0BE31B11-9126-4277-AFD6-019FF4A1EE40}\file.bin"),
+            "and the spelling of its own name does not decide it");
+
+        Check.False(
+            RecycleTarget.IsVolumeGuidPath(@"\\?\UNC\server\share\Volume{0be31b11}\file.bin"),
+            "a share is not a volume, however its directories are named");
+
+        Check.False(RecycleTarget.IsVolumeGuidPath(@"\\server\share\file.bin"), "nor is a UNC path");
+
+        Check.False(RecycleTarget.IsVolumeGuidPath(@"X:\Volume{0be31b11-9126-4277-afd6-019ff4a1ee40}\file.bin"), "nor a directory on a volume that happens to be named that");
+
+        Check.False(
+            RecycleTarget.IsVolumeGuidPath(@"Volume{0be31b11-9126-4277-afd6-019ff4a1ee40}\file.bin"),
+            "nor a relative path, which resolves under the current directory to an ordinary one");
+
+        Check.False(RecycleTarget.IsVolumeGuidPath(@"X:\work\report.bin"), "and an ordinary path is unaffected");
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// An item the Shell would not take, moved aside to a short path, that could neither be recycled nor

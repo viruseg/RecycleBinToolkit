@@ -451,15 +451,6 @@ public static class FileRecycler
             return new RecycleFailure(rawPath ?? string.Empty, 0, 0, RecycleFailureStage.PathValidation);
         }
 
-        // Nothing can be asked about this path, so nothing is. Refused before a probe, before the volume is
-        // inspected and before the Shell is reached, because every one of those answers about something
-        // else: the Shell cannot parse the form, and the volume inspection would read a path with no drive
-        // letter and report on it as though it were a network share.
-        if (RecycleTarget.IsVolumeGuidPath(rawPath))
-        {
-            return new RecycleFailure(rawPath, 0, 0, RecycleFailureStage.VolumeGuidPathNotAddressable);
-        }
-
         string fullPath;
         try
         {
@@ -468,6 +459,15 @@ public static class FileRecycler
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException)
         {
             return new RecycleFailure(rawPath, ex.HResult, 0, RecycleFailureStage.PathValidation);
+        }
+
+        // Checked on the normalised path as well as on what the caller typed. Windows reads "//?/" as the
+        // device prefix, so Path.GetFullPath turns that spelling into the backslash form -- and a check
+        // made only on the caller's spelling would let it through, to be handed to a Shell that refuses it
+        // and retried for every attempt the caller asked for.
+        if (RecycleTarget.IsVolumeGuidPath(rawPath) || RecycleTarget.IsVolumeGuidPath(fullPath))
+        {
+            return new RecycleFailure(rawPath, 0, 0, RecycleFailureStage.VolumeGuidPathNotAddressable);
         }
 
         if (!Exists(fullPath))
