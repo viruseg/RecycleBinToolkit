@@ -56,11 +56,12 @@ public static class RecycleBin
         RecycleBinOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        _ = options;
+        var effective = options ?? RecycleBinOptions.Default;
         var stopwatch = Stopwatch.StartNew();
 
-        var collected = await RecycleBinWorker
-            .RunAsync(Collect, cancellationToken)
+        var collected = await RecycleBinBackends
+            .For(effective)
+            .ListAsync(RecycleBinVolumeSet.Resolve(volumeRoot) ?? [], cancellationToken)
             .ConfigureAwait(false);
 
         var items = Filter(collected.Items, volumeRoot);
@@ -213,18 +214,6 @@ public static class RecycleBin
         _ = options;
 
         return Task.FromResult(RecycleBinVolumeState.Inspect(volumeRoot));
-    }
-
-    private static RecycleBinContents Collect()
-    {
-        var items = new List<RecycleBinItem>();
-        var failures = new List<RecycleFailure>();
-
-        RecycleBinLister.TryEnumerate(items, failures);
-
-        // The elapsed time is measured by the caller, around the wait for this worker, so that it covers
-        // what the caller waited rather than how long this part of it took.
-        return new RecycleBinContents(items, failures, TimeSpan.Zero);
     }
 
     /// <summary>

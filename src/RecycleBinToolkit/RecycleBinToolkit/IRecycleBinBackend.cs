@@ -26,4 +26,12 @@ internal interface IRecycleBinBackend
         IReadOnlyList<RecycleTarget> targets,
         RecycleBinOptions options,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads what is in the Recycle Bins of the named volumes.
+    /// </summary>
+    /// <param name="volumeRoots">Volume roots to read, each normalised with a trailing separator.</param>
+    /// <param name="cancellationToken">Cancels the enumeration and the reading.</param>
+    /// <returns>The entries that could be described, plus one failure per entry that could not be.</returns>
+    Task<RecycleBinContents> ListAsync(IReadOnlyList<string> volumeRoots, CancellationToken cancellationToken);
 }

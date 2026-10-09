@@ -7,14 +7,9 @@ namespace RecycleBinToolkit;
 /// </summary>
 /// <remarks>
 /// This is where the Shell path lives so that it is the only thing that reaches
-/// <see cref="RecycleBinWorker"/>. The body is the one <see cref="FileRecycler"/> used to call, moved
-/// without change — the worker, the retry rounds, the per-item diagnostics and every comment explaining
-/// why they are the way they are.
-/// <para>
-/// Reading and emptying reach the Shell here too, and arrive with the operations that implement them
-/// on the native backend. Until then they stay on <see cref="RecycleBin"/>, where they have always
-/// been, rather than moving twice.
-/// </para>
+/// <see cref="RecycleBinWorker"/>. The bodies are the ones <see cref="RecycleBin"/> carried, moved without
+/// change — the worker, the retry rounds, the per-item diagnostics and every comment explaining why they
+/// are the way they are.
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal sealed class ShellRecycleBinBackend : IRecycleBinBackend
@@ -43,4 +38,37 @@ internal sealed class ShellRecycleBinBackend : IRecycleBinBackend
         RecycleBinOptions options,
         CancellationToken cancellationToken) =>
         RecycleBinWorker.SubmitAsync(targets, options.Normalize(), cancellationToken);
+
+    /// <summary>
+    /// Reads the whole Recycle Bin through the Shell's virtual folder, on the worker thread.
+    /// </summary>
+    /// <param name="volumeRoots">
+    /// The volumes the operation covers. The Shell's folder aggregates every mounted volume regardless, so
+    /// this narrows an enumeration that has already happened rather than making a cheaper query; the
+    /// filtering happens in <see cref="RecycleBin"/>.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the wait.</param>
+    /// <returns>The entries that could be read, plus the ones that could not.</returns>
+    public Task<RecycleBinContents> ListAsync(IReadOnlyList<string> volumeRoots, CancellationToken cancellationToken) =>
+        RecycleBinWorker.RunAsync(Collect, cancellationToken);
+
+    /// <summary>
+    /// Enumerates the Recycle Bin on the worker thread, where the Shell apartment already is.
+    /// </summary>
+    /// <remarks>
+    /// The elapsed time is not measured here. This runs on the Shell worker, so a stopwatch started here
+    /// would report the Shell's share of the work and omit how long the caller waited for the worker to be
+    /// free — which for a library that queues every operation behind one thread is most of what a caller
+    /// experiences. <see cref="RecycleBin.GetItemsAsync"/> and <see cref="RecycleBin.EmptyAsync"/> measure
+    /// around the wait instead, the same way, so both results mean the same thing.
+    /// </remarks>
+    private static RecycleBinContents Collect()
+    {
+        var items = new List<RecycleBinItem>();
+        var failures = new List<RecycleFailure>();
+
+        RecycleBinLister.TryEnumerate(items, failures);
+
+        return new RecycleBinContents(items, failures, TimeSpan.Zero);
+    }
 }

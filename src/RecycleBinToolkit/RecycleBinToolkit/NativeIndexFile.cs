@@ -45,6 +45,12 @@ internal static class NativeIndexFile
     /// <summary>Bytes of a version 1 record: its three fields, then a fixed 520-byte path field.</summary>
     private const int LegacyLength = 544;
 
+    /// <summary>
+    /// Bytes before a version 1 path: three 64-bit fields and no character count. Two bytes shorter than
+    /// <see cref="HeaderLength"/>, because the count is exactly what version 2 added.
+    /// </summary>
+    private const int LegacyHeaderLength = 24;
+
     /// <summary>Bytes of a version 1 path field: 260 UTF-16 characters.</summary>
     private const int LegacyPathLength = 520;
 
@@ -109,9 +115,29 @@ internal static class NativeIndexFile
     /// heap at all for the records themselves.
     /// </para>
     /// </remarks>
-    internal static bool TryRead(string indexPath, out NativeIndexRecord record)
+    internal static bool TryRead(string indexPath, out NativeIndexRecord record) =>
+        TryRead(indexPath, out record, out _);
+
+    /// <summary>
+    /// Reads a record, saying why it could not be read when the reason is the filesystem's.
+    /// </summary>
+    /// <param name="indexPath">Path of an <c>$I</c> record.</param>
+    /// <param name="record">Receives what the record says.</param>
+    /// <param name="hResult">
+    /// Receives the code the filesystem raised, or <c>0</c> when the record was readable or simply was not
+    /// a record at all.
+    /// </param>
+    /// <returns><see langword="true"/> when the record was readable and understood.</returns>
+    /// <remarks>
+    /// The distinction is the caller's to make and not this one's. A record that is malformed says nothing
+    /// about the bin — it is not an entry, and reporting it as one a caller could not read would be noise. A
+    /// record that could not be <em>opened</em> is an entry somebody else is holding, and the caller listing
+    /// a bin needs to hear that one is missing from what they got.
+    /// </remarks>
+    internal static bool TryRead(string indexPath, out NativeIndexRecord record, out int hResult)
     {
         record = default;
+        hResult = 0;
 
         try
         {
@@ -164,7 +190,7 @@ internal static class NativeIndexFile
             }
 
             record = new NativeIndexRecord(
-                Encoding.Unicode.GetString(buffer.Slice(HeaderLength, LegacyPathLength)).TrimEnd('\0'),
+                Encoding.Unicode.GetString(buffer.Slice(LegacyHeaderLength, LegacyPathLength)).TrimEnd('\0'),
                 size,
                 deleted);
 
@@ -172,8 +198,9 @@ internal static class NativeIndexFile
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            // Purged between the enumeration and this read, or unreadable for a reason that is not this
-            // library's to fix. Either way the caller learns the entry could not be described.
+            // Purged between the enumeration and this read, or held open by something else. Either way the
+            // caller is told, and told with the code the filesystem gave.
+            hResult = ex.HResult;
             return false;
         }
     }
