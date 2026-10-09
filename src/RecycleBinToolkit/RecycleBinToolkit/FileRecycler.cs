@@ -47,7 +47,8 @@ public static class FileRecycler
     /// <see cref="LongPathFailureAction.Throw"/>. The file is left in place.
     /// </exception>
     /// <exception cref="IOException">
-    /// The Shell refused the delete, or the volume holding the path cannot recycle it and
+    /// The Shell refused the delete, the Shell faulted, or a staging directory was left on the volume.
+    /// Also the volume holding the path cannot recycle it and
     /// <see cref="RecycleBinOptions.NoRecycleBinAction"/> is <see cref="NoRecycleBinAction.Throw"/>, or
     /// that action is <see cref="NoRecycleBinAction.DeletePermanently"/> and the file system refused
     /// the removal — and <see cref="RecycleBinOptions.ThrowOnError"/> is on. The file is left in place
@@ -61,11 +62,10 @@ public static class FileRecycler
     /// letter or mount point instead.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// A staging directory was left on the volume and <see cref="RecycleBinOptions.ThrowOnError"/> is on:
-    /// it either holds an item that could not be moved back to where it was, or it is empty and could not
-    /// be removed. Nothing was deleted. Reachable only under
-    /// <see cref="LongPathFailureAction.ShortenPathAndRecycle"/>. The same condition with throwing off is
-    /// <see cref="RecycleBinResult.LeftoverStagingDirectories"/>.
+    /// Either a staging directory was left on the volume, which <see cref="RecycleBinOptions.ThrowOnError"/>
+    /// turns into a raise rather than <see cref="RecycleBinResult.LeftoverStagingDirectories"/>, or the
+    /// Shell worker could not be brought up at all, which nothing caller-side can affect and which carries
+    /// the underlying failure inside it.
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
@@ -125,9 +125,13 @@ public static class FileRecycler
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
     /// </exception>
     /// <exception cref="IOException">
-    /// The Shell faulted, the worker could not be brought up, or a staging directory was left on a volume
-    /// while the batch was being retried. Nothing was deleted; the original failure is carried inside.
+    /// The Shell refused the delete, the Shell faulted, or a staging directory was left on a volume while
+    /// the batch was being retried. Nothing was deleted; the original failure is carried inside.
     /// Per-item problems are still data, not exceptions.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The Shell worker could not be brought up, which nothing caller-side can affect. The underlying
+    /// failure is carried inside.
     /// </exception>
     public static async Task<RecycleBinResult> MoveToRecycleBinAsync(
         IReadOnlyList<string?> filePaths,

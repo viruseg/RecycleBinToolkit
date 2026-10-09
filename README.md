@@ -188,7 +188,9 @@ under an explicit policy.
 | `ArgumentException` | `filePath` is null, empty or whitespace and `ThrowOnError` is on |
 | `FileNotFoundException` | `filePath` does not exist and `ThrowOnError` is on |
 | `PathTooLongException` | The path cannot be recycled, no short name is available, and `LongPathFailureAction` is `Throw` |
-| `IOException` | The Shell refused the delete, or the volume cannot recycle the path and `NoRecycleBinAction` is `Throw`, or that action is `DeletePermanently` and the file system refused the removal — and `ThrowOnError` is on. The file is left in place in every one of those cases. `HResult` carries the Shell's or the file system's own code, or `0` where the volume was refused without the Shell being asked |
+| `IOException` | The Shell refused the delete, the Shell faulted, or a staging directory was left on the volume; or the volume cannot recycle the path and `NoRecycleBinAction` is `Throw`, or that action is `DeletePermanently` and the file system refused the removal — and `ThrowOnError` is on. The file is left in place in every one of those cases. `HResult` carries the Shell's or the file system's own code, or `0` where the volume was refused without the Shell being asked |
+| `NotSupportedException` | The path names its volume by GUID and `ThrowOnError` is on. Nothing was attempted; address the same location by drive letter instead |
+| `InvalidOperationException` | A staging directory was left on the volume and `ThrowOnError` is on, or the Shell worker could not be brought up at all |
 | `OperationCanceledException` | `cancellationToken` was cancelled before the work started |
 
 With `ThrowOnError` off, nothing is thrown: a bad path returns `false`.
@@ -209,8 +211,8 @@ Recycles a batch. This overload **never throws** for a per-item failure.
 **Returns** a `RecycleBinResult` describing every item.
 
 **Exceptions** `ArgumentNullException` when `filePaths` is null, `OperationCanceledException` when the
-token is cancelled, and `IOException` when the Shell faulted or the worker could not be brought up.
-Per-item problems are data, not exceptions.
+token is cancelled, `IOException` when the Shell faulted, and `InvalidOperationException` when the
+worker could not be brought up. Per-item problems are data, not exceptions.
 
 ---
 
