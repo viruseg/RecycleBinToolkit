@@ -208,8 +208,9 @@ Recycles a batch. This overload **never throws** for a per-item failure.
 
 **Returns** a `RecycleBinResult` describing every item.
 
-**Exceptions** `ArgumentNullException` when `filePaths` is null, and `OperationCanceledException`
-when the token is cancelled. Per-item problems are data, not exceptions.
+**Exceptions** `ArgumentNullException` when `filePaths` is null, `OperationCanceledException` when the
+token is cancelled, and `IOException` when the Shell faulted or the worker could not be brought up.
+Per-item problems are data, not exceptions.
 
 ---
 
@@ -885,10 +886,12 @@ recycling, per-item failure reporting, selective retry against a self-inflicted 
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies, a
 ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardware only, behind
 `--manual` — volumes with no Recycle Bin. Listing, emptying and status checking are covered by their own
-suites. The default run writes only inside the directory it claimed under `--scratch`; `--manual` writes
-wherever you tell it to.
+suites. The default run writes only inside the directory it claimed under `--scratch`, plus the
+`$RCW-…` staging directories the library creates on the volume root — a staging path has to be short,
+and the volume root is the shortest place on the right volume; those are removed, and reported if they
+cannot be. `--manual` writes wherever you tell it to.
 
-**The 151 cases divide into three groups, and `--all` runs 144 of them.** Four are load cases that run only
+**The 152 cases divide into three groups, and `--all` runs 145 of them.** Four are load cases that run only
 on request: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
 through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
 nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —

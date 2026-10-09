@@ -55,14 +55,20 @@ public static class FileRecycler
     /// system's own code, or <c>0</c> where the volume was refused without asking the Shell.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The path names its volume by GUID, which the Shell will not parse and this library cannot measure.
-    /// Nothing was attempted and the file is where it was left. A path in that form has no other spelling,
-    /// so address the same location by drive letter or mount point instead.
+    /// The path names its volume by GUID, which the Shell will not parse and this library cannot measure,
+    /// and <see cref="RecycleBinOptions.ThrowOnError"/> is on. Nothing was attempted and the file is
+    /// where it was left. A path in that form has no other spelling, so address the same location by drive
+    /// letter or mount point instead.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// The item was moved aside to reach the Shell and could be neither recycled nor moved back, so it is
-    /// in a staging directory rather than where it was left. Nothing was deleted. Reachable only under
-    /// <see cref="LongPathFailureAction.ShortenPathAndRecycle"/>.
+    /// A staging directory was left on the volume and <see cref="RecycleBinOptions.ThrowOnError"/> is on:
+    /// it either holds an item that could not be moved back to where it was, or it is empty and could not
+    /// be removed. Nothing was deleted. Reachable only under
+    /// <see cref="LongPathFailureAction.ShortenPathAndRecycle"/>. The same condition with throwing off is
+    /// <see cref="RecycleBinResult.LeftoverStagingDirectories"/>.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before the work started.
     /// </exception>
     public static async Task<bool> MoveToRecycleBinAsync(
         string? filePath,
@@ -115,7 +121,14 @@ public static class FileRecycler
     /// cannot recycle it arrives there at stage <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/>,
     /// and the paths on every other volume in the batch are still recycled.
     /// </returns>
-    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before the work started.
+    /// </exception>
+    /// <exception cref="IOException">
+    /// The Shell faulted, the worker could not be brought up, or a staging directory was left on a volume
+    /// while the batch was being retried. Nothing was deleted; the original failure is carried inside.
+    /// Per-item problems are still data, not exceptions.
+    /// </exception>
     public static async Task<RecycleBinResult> MoveToRecycleBinAsync(
         IReadOnlyList<string?> filePaths,
         RecycleBinOptions? options = null,
