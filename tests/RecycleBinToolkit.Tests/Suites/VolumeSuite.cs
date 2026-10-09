@@ -75,8 +75,11 @@ internal static class VolumeSuite
     {
         // Guards the -1 sentinel: without it a failed query would be indistinguishable from an
         // empty bin, and every receipt assertion downstream would silently pass.
-        Check.Equal(-1L, RecycleBinProbe.QueryItemCount("Z:\\"), "querying an absent volume reports failure");
-        Check.Equal(-1L, RecycleBinProbe.QueryItemCount("Z:\\"), "failure sentinel is stable across calls");
+        var letter = AbsentVolume.Letter();
+        AbsentVolume.RequireAbsent(letter, "querying a volume that is not there");
+
+        Check.Equal(-1L, RecycleBinProbe.QueryItemCount(AbsentVolume.RootOf(letter)), "querying an absent volume reports failure");
+        Check.Equal(-1L, RecycleBinProbe.QueryItemCount(AbsentVolume.RootOf(letter)), "failure sentinel is stable across calls");
 
         return Task.CompletedTask;
     }

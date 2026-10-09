@@ -48,6 +48,7 @@ internal static class ScratchSuite
         new TestCase("ScratchSuite." + nameof(ADriveLetterIsNotAVolumeRoot), ADriveLetterIsNotAVolumeRoot),
         new TestCase("ScratchSuite." + nameof(AShareIsWrittenWithBackslashes), AShareIsWrittenWithBackslashes),
         new TestCase("ScratchSuite." + nameof(RequireRefusesALetterNothingIsMountedOn), RequireRefusesALetterNothingIsMountedOn),
+        new TestCase("ScratchSuite." + nameof(AnUnmountedLetterIsFoundRatherThanWrittenDown), AnUnmountedLetterIsFoundRatherThanWrittenDown),
     ];
 
     /// <summary>
@@ -407,7 +408,7 @@ internal static class ScratchSuite
     /// </summary>
     private static Task ADriveLetterIsNotAVolumeRoot(TestContext context)
     {
-        var letter = SubstitutedVolume.AbsentVolumeLetter;
+        var letter = AbsentVolume.Letter();
 
         Check.Throws<ArgumentException>(
             () => VolumeRoot.Normalize($"{letter}:"),
@@ -437,14 +438,40 @@ internal static class ScratchSuite
     /// <summary>A letter nothing is mounted on names no volume, and claiming under it has to say so.</summary>
     private static Task RequireRefusesALetterNothingIsMountedOn(TestContext context)
     {
-        var letter = SubstitutedVolume.AbsentVolumeLetter;
-        var root = $"{letter}:{Path.DirectorySeparatorChar}";
+        var letter = AbsentVolume.Letter();
+        var root = AbsentVolume.RootOf(letter);
 
         var failure = Check.Throws<InvalidOperationException>(
             () => VolumeRoot.Require(root, "--scratch"),
             "a root the machine does not have is not somewhere to write");
 
         Check.True(failure.Message.Contains(root, StringComparison.Ordinal), $"and it names the root that was refused ({failure.Message})");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The letter is asked of the machine rather than written down, so a machine that has the
+    /// written-down letter mounted cannot be handed a stranger's volume to empty.
+    /// </summary>
+    /// <remarks>
+    /// Neither assertion can tell a looked-up letter from a written-down one — <c>'Z'</c> comes out of
+    /// the lookup whenever <c>Z:</c> is genuinely free, and that is the lookup working rather than the
+    /// source deciding. What is checkable is the property it guarantees, and both halves of it are
+    /// checked here: a letter that <see cref="DriveInfo"/> does not report and whose root does not
+    /// resolve.
+    /// </remarks>
+    private static Task AnUnmountedLetterIsFoundRatherThanWrittenDown(TestContext context)
+    {
+        var letter = AbsentVolume.Letter();
+
+        Check.False(
+            DriveInfo.GetDrives().Any(drive => char.ToUpperInvariant(drive.Name[0]) == letter),
+            $"the letter {letter}: is not among the drives this machine reports");
+
+        Check.False(
+            Directory.Exists(AbsentVolume.RootOf(letter)),
+            $"and {AbsentVolume.RootOf(letter)} does not resolve, which is the second thing the lookup checks before handing a letter out");
 
         return Task.CompletedTask;
     }

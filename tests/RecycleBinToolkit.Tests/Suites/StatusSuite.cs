@@ -309,7 +309,10 @@ internal static class StatusSuite
     /// </summary>
     private static async Task StatusReportsAnAbsentVolumeAsNotFound(TestContext context)
     {
-        var status = await RecycleBin.GetStatusAsync("Z:\\", context.CancellationToken).ConfigureAwait(false);
+        var letter = AbsentVolume.Letter();
+        AbsentVolume.RequireAbsent(letter, "asking about a volume that is not there");
+
+        var status = await RecycleBin.GetStatusAsync(AbsentVolume.RootOf(letter), context.CancellationToken).ConfigureAwait(false);
 
         Check.False(status.IsEnabled, "a volume that is not mounted is not an enabled Recycle Bin");
         Check.Equal(RecycleBinAvailabilityReason.VolumeNotFound, status.Reason, "the reason is that the volume does not exist");

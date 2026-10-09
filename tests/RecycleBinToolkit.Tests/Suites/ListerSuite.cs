@@ -194,7 +194,10 @@ internal static class ListerSuite
     /// </summary>
     private static async Task MissingVolumeIsReportedNotThrown(TestContext context)
     {
-        var contents = await RecycleBin.GetItemsAsync("Z:\\", context.CancellationToken).ConfigureAwait(false);
+        var letter = AbsentVolume.Letter();
+        AbsentVolume.RequireAbsent(letter, "listing a volume that is not there");
+
+        var contents = await RecycleBin.GetItemsAsync(AbsentVolume.RootOf(letter), context.CancellationToken).ConfigureAwait(false);
 
         Check.True(contents.Items.Count == 0, "nothing is reported for a volume that is not mounted");
         Check.Equal(0, contents.Failures.Count, $"a filter for an absent volume is not an enumeration failure (got {contents.Failures.Count})");

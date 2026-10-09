@@ -461,7 +461,9 @@ internal static class EmptySuite
     /// </summary>
     private static async Task EmptyOnAnAbsentVolumeIsReportedNotThrown(TestContext context)
     {
-        var emptied = await RecycleBin.EmptyAsync("Z:\\", context.CancellationToken).ConfigureAwait(false);
+        var letter = AbsentVolume.Letter();
+        AbsentVolume.RequireAbsent(letter, "emptying a volume that is not there");
+        var emptied = await RecycleBin.EmptyAsync(AbsentVolume.RootOf(letter), context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, emptied.ItemsRemoved, "an absent volume removes nothing");
         Check.Equal(0, emptied.BytesFreed, "an absent volume frees nothing");
