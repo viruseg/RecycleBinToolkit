@@ -4,9 +4,10 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 /// Reading a volume root off a command line, and refusing anything that is not one.
 /// </summary>
 /// <remarks>
-/// The argument is read the same way whatever it is spelled like, and what the volume behind it is then
-/// asked to do is not decided here: a run needs a volume that recycles, and that question belongs to the
-/// cases rather than to the reading of a path.
+/// The argument is read the same way whatever it is spelled like, and what the volume behind it is
+/// asked to do is not decided here: any volume root the caller names is usable, and whether a given
+/// case can say anything about the volume it was given is that case's question, answered by reading
+/// the library's own answer rather than by this method.
 /// </remarks>
 internal static class VolumeRoot
 {

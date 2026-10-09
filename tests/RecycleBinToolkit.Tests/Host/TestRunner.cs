@@ -110,7 +110,6 @@ internal sealed class TestRunner
 
         foreach (var testCase in selected)
         {
-            var name = testCase.Name;
             var stopwatch = Stopwatch.StartNew();
             try
             {
@@ -118,7 +117,7 @@ internal sealed class TestRunner
                 await testCase.Body(new TestContext(cts.Token)).ConfigureAwait(false);
                 stopwatch.Stop();
                 passed++;
-                Console.WriteLine($"  PASS  {name} ({stopwatch.ElapsedMilliseconds} ms)");
+                Console.WriteLine($"  PASS  {testCase.Name} ({stopwatch.ElapsedMilliseconds} ms)");
             }
             catch (CheckSkippedException skip)
             {
@@ -127,14 +126,14 @@ internal sealed class TestRunner
                 // deferral lines exist to prevent, applied to a case rather than to a group.
                 stopwatch.Stop();
                 skipped++;
-                Console.WriteLine($"  SKIP  {name}");
+                Console.WriteLine($"  SKIP  {testCase.Name}");
                 Console.WriteLine($"        {skip.Message}");
             }
             catch (Exception ex)
             {
                 stopwatch.Stop();
-                (failures ??= []).Add(name);
-                Console.WriteLine($"  FAIL  {name} ({stopwatch.ElapsedMilliseconds} ms)");
+                (failures ??= []).Add(testCase.Name);
+                Console.WriteLine($"  FAIL  {testCase.Name} ({stopwatch.ElapsedMilliseconds} ms)");
                 Console.WriteLine($"        {ex.GetType().Name}: {ex.Message}");
 
                 if (ex is not CheckFailedException)

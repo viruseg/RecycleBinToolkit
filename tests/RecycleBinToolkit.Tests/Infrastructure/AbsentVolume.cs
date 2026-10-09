@@ -24,10 +24,11 @@ internal static class AbsentVolume
     /// can still resolve to a directory — and a letter that resolves is a real volume, which is exactly
     /// what a case asking about an absent one must not be handed.
     /// <para>
-    /// Scanning downwards from <c>'Z'</c> rather than upwards from <c>'A'</c> keeps the answer away from
-    /// the fixed volumes the caller named through <c>--scratch</c>, and the direction is what guarantees
-    /// it rather than the letters: a name generated under a run root cannot collide with a mounted volume,
-    /// so no letter is taken here for a reason the caller could not have predicted.
+    /// The scan runs downwards from <c>'Z'</c> rather than upwards from <c>'A'</c> so the letters it reaches
+    /// first are the ones a machine is least likely to have mounted, and so a letter this harness claims —
+    /// nothing here takes one, but a caller reading these remarks might — cannot collide with the fixed
+    /// volumes <c>--scratch</c> names. The direction is a convenience; what actually keeps a real volume
+    /// out of the answer is the resolution check above, which refuses any letter that resolves.
     /// </para>
     /// </remarks>
     /// <returns>
