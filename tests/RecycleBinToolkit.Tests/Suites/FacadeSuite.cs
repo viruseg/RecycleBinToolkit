@@ -393,11 +393,21 @@ internal static class FacadeSuite
     /// that one unusable path leaves the rest of the batch alone, and the healthy path is on the volume
     /// that really is there and really does recycle.
     /// </para>
+    /// <para>
+    /// Which means the case needs a volume that recycles, and says so rather than running on one that does
+    /// not: there, both halves are refused by the same gate and the contrast this case is about never
+    /// appears.
+    /// </para>
     /// </remarks>
     private static async Task OneBadVolumeDoesNotSinkTheBatch(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+
+        // The healthy half of this batch is a file on the run's own volume, so it only recycles where that
+        // volume recycles. On a volume that does not, both halves are refused by the same gate and there is
+        // nothing left to contrast — which is the whole claim here.
+        ScratchWorkspace.RequireRecycling("the batch needs one path that recycles and one that does not");
 
         var letter = AbsentVolume.Letter();
         var healthy = workspace.CreateRandomFiles(1, 4096)[0];
