@@ -77,10 +77,18 @@ internal static class FacadeSuite
         var relative = Path.GetRelativePath(volumeRoot, file);
         var addressed = $@"\\?\Volume{guid}\{relative}";
 
+        // Asserted against the filesystem rather than against the two locals it was built from: the
+        // previous version compared the addressed path with the string it was concatenated from, which
+        // holds for any guid and any relative path -- including the volume-root one that named a file
+        // that was never written. This asks the only question that has an answer to be wrong about.
         Check.True(
-            addressed.StartsWith(@"\\?\Volume{", StringComparison.OrdinalIgnoreCase)
-            && addressed.EndsWith(relative, StringComparison.OrdinalIgnoreCase),
-            $"the device path is its own prefix followed by the volume-relative path, so both name one file (got {addressed})");
+            File.Exists(addressed),
+            $"the device path names the file that was written, so refusing it is refusing a real item (got {addressed})");
+
+        Check.Equal(
+            new FileInfo(file).Length,
+            new FileInfo(addressed).Length,
+            "and it is that file, not another one of the same name");
 
         var result = await FileRecycler
             .MoveToRecycleBinAsync([addressed], cancellationToken: context.CancellationToken)
