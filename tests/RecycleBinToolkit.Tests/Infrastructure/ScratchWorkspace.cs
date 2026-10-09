@@ -110,10 +110,10 @@ internal sealed class ScratchWorkspace : IDisposable
     /// line is the only record left of a case that produced no coverage.
     /// </param>
     /// <remarks>
-    /// There is deliberately no counterpart that refuses a volume which recycles. Any volume the caller names
-    /// is usable, and a case that insisted on one would reintroduce the gate this replaced — a machine that
-    /// cannot answer the question would fail before any case ran, instead of the cases that need a bin-less
-    /// volume reporting themselves as unrun.
+    /// Its counterpart is <see cref="RequireRecycling"/>. A run on a volume with no Recycle Bin is a run that
+    /// works: the cases about a bin-less volume run and the cases about recycling say they did not. Neither
+    /// guard refuses the volume — they refuse the case, and only when the volume cannot answer what the case
+    /// asked. The volume itself is always usable; which cases can say anything about it is what varies.
     /// </remarks>
     /// <exception cref="CheckSkippedException">
     /// The volume does use a Recycle Bin. The message names the volume and <paramref name="because"/> and
@@ -124,6 +124,34 @@ internal sealed class ScratchWorkspace : IDisposable
         if (Reason == RecycleBinAvailabilityReason.Enabled)
         {
             Check.Skip($"{VolumeRoot} has a Recycle Bin, so this machine is not the one {because} needs");
+        }
+    }
+
+    /// <summary>
+    /// Ends the calling case as not run unless <see cref="Reason"/> is
+    /// <see cref="RecycleBinAvailabilityReason.Enabled"/>.
+    /// </summary>
+    /// <param name="because">
+    /// What the case needed from the volume, in the reader's words. Carried into the skip line, because that
+    /// line is the only record left of a case that produced no coverage.
+    /// </param>
+    /// <remarks>
+    /// A case that recycles a file and reads the bin back cannot produce its answer on a volume with no bin:
+    /// the file is refused before it reaches the Shell, and the counter has nothing to count. Without this
+    /// guard such a case goes red on a flash drive or a share, and a run of forty identical failures buries
+    /// the cases that did prove something. A skip is the honest reading there — the volume could not answer
+    /// the question, so the case did not run — and it leaves the run's exit code describing coverage that
+    /// exists rather than a wall of red.
+    /// </remarks>
+    /// <exception cref="CheckSkippedException">
+    /// The volume does not use a Recycle Bin. The message names the volume, <paramref name="because"/> and the
+    /// reason the library gave, and reads as a fact about this machine.
+    /// </exception>
+    public static void RequireRecycling(string because)
+    {
+        if (Reason != RecycleBinAvailabilityReason.Enabled)
+        {
+            Check.Skip($"{VolumeRoot} has no Recycle Bin ({Reason}), so this machine is not the one {because} needs");
         }
     }
 
