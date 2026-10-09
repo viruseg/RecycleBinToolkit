@@ -86,22 +86,38 @@ internal static class VolumeSuite
     }
 
     /// <summary>
-    /// The run asks the library once what the volume it was given is, and a case that needs a volume of
-    /// one kind is meant to read that answer rather than manufacture one. If the answer came from anything
-    /// but the machine, those cases would agree with each other for the wrong reason.
+    /// The answer a run carries about its volume is still the library's answer about that volume, however
+    /// long ago it was read.
     /// </summary>
     /// <remarks>
-    /// The cached answer is compared against a fresh inspection rather than against a constant, because
-    /// what a volume reads as is a property of the machine the run happens to be on: the case has to hold
-    /// on a volume Windows has never configured and on one it has, and a constant would only ever pin one
-    /// of them.
+    /// What this rules out is drift: the cached value and a fresh inspection agree, so every case that
+    /// reads <see cref="ScratchWorkspace.Reason"/> and every message naming the reason are talking about one
+    /// state of the machine rather than about a mixture of readings taken at different times.
+    /// <para>
+    /// What it cannot rule out is where the value came from. A rule keyed on the path — enabled because a
+    /// case wanted it to be, <c>DriveType.Removable</c> answered one way and everything else the other —
+    /// would agree with the library on every volume the two answers happen to match, which on a healthy
+    /// machine is all of them. Origin shows where they disagree, on a volume with no Recycle Bin: there
+    /// the gate has to be reading the machine, or every case behind
+    /// <see cref="ScratchWorkspace.RequireNonRecycling"/> skips on a volume that does recycle and the run
+    /// reports no coverage without saying why.
+    /// </para>
+    /// <para>
+    /// The volume is pinned through <see cref="ScratchWorkspace.Root"/> rather than through the string handed
+    /// to the inspection, because that string is the caller's own spelling while
+    /// <see cref="RecycleBinVolumeState.Inspect"/> answers with the volume as the library spells it — and
+    /// <c>--scratch \\?\E:\</c> is a spelling this suite accepts. Both sides go through the same reduction
+    /// here, so an extended-length root compares equal instead of redding over a prefix that says nothing
+    /// about the volume.
+    /// </para>
     /// </remarks>
     private static Task TheScratchVolumeReasonIsWhatTheLibraryReports(TestContext context)
     {
         var asked = RecycleBinVolumeState.Inspect(ScratchWorkspace.VolumeRoot);
+        var worked = RecycleBinVolumeState.NormalizeVolumeRoot(ScratchWorkspace.Root);
 
-        Check.Equal(asked.Reason, ScratchWorkspace.Reason, "the run's answer is the library's own answer about the volume it was given");
-        Check.Equal(asked.VolumeRoot, ScratchWorkspace.VolumeRoot, "and about that volume");
+        Check.Equal(asked.Reason, ScratchWorkspace.Reason, $"the run's answer still matches the library's own (got {ScratchWorkspace.Reason})");
+        Check.Equal(asked.VolumeRoot, worked, "and both are about the volume this run works on");
 
         return Task.CompletedTask;
     }

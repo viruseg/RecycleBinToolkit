@@ -61,9 +61,10 @@ internal sealed class ScratchWorkspace : IDisposable
     /// when it does not, why not. Asked once per run, so every case and every message names the same thing.
     /// </summary>
     /// <remarks>
-    /// The answer is the machine's, and it is read rather than assumed. A case that needs a volume of one
-    /// kind reads this and skips or runs on it; nothing here decides what a volume is by looking at its
-    /// path. Windows records recycling per volume under
+    /// What this is asked is the machine's own reading of the volume, through
+    /// <see cref="RecycleBinVolumeState.Inspect"/>, so a case that needs a volume of one kind reads it and
+    /// skips or runs on it rather than deciding for itself.
+    /// Windows records recycling per volume under
     /// <c>BitBucket\Volume\{GUID}\NukeOnDelete=0</c>, which is what
     /// <see cref="RecycleBinAvailabilityReason.Enabled"/> rests on; a volume with no such key is answered by
     /// asking the Shell whether it has a bin at all, and the reasons that come back from that are
@@ -73,13 +74,28 @@ internal sealed class ScratchWorkspace : IDisposable
     /// that cannot make its claim there is expected to say so through
     /// <see cref="RequireNonRecycling"/> rather than fail on it.
     /// <para>
+    /// That a rule about the path could not produce the same answers is witnessed where the two answers
+    /// differ, on a volume with no Recycle Bin — the bin-less run, not this one. What a run on a healthy
+    /// volume can witness is that the cached value still agrees with the library, which is what
+    /// <c>VolumeSuite.TheScratchVolumeReasonIsWhatTheLibraryReports</c> asserts and all it asserts.
+    /// </para>
+    /// <para>
     /// Cached for the life of the claim because the answer does not change under a run and the probe is a
-    /// Shell round trip on a path the case count does not justify repeating. Both ends clear it, and both
-    /// have to: <see cref="ReleaseRunRoot"/> drops the run root this answer was read about, and
-    /// <see cref="Configure"/> drops it on the way to claiming a new one, so a cached value never outlives
-    /// the volume it describes. A stale value cannot survive a second <see cref="Configure"/> in any case —
-    /// that call reaches <see cref="ScratchDirectory.ClaimRunRoot"/>, which keeps its own root for the life
-    /// of the process and refuses the second claim, so there is one volume per process either way.
+    /// Shell round trip on a path the case count does not justify repeating. What keeps the cache from
+    /// answering about a volume the run has left is not the clearing but an invariant: this value is
+    /// written in one place, that place reads <see cref="VolumeRoot"/>, and <see cref="VolumeRoot"/> throws
+    /// while no run root is held — so a cached answer exists only while a run root does, and no path here
+    /// releases one without releasing the other. <see cref="Configure"/> and
+    /// <see cref="ReleaseRunRoot"/> clear it anyway, as insurance rather than as the argument: the guard is
+    /// one line, and the refactor that would give a reason to drop it is the one that makes the invariant
+    /// worth having written down.
+    /// </para>
+    /// <para>
+    /// A second <see cref="Configure"/> cannot bring in a different volume either way. It returns or throws
+    /// for every state in which a run root is already held, and the only call that reaches
+    /// <see cref="ScratchDirectory.ClaimRunRoot"/> is one made with none — where that class keeps a root of
+    /// its own for the life of the process and refuses a second claim. One volume per process, and with it
+    /// one answer.
     /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException"><see cref="Configure"/> has not run.</exception>
@@ -157,8 +173,11 @@ internal sealed class ScratchWorkspace : IDisposable
     /// says which root disagreed before the claim is asked at all.
     /// <para>
     /// Claiming also clears the cached <see cref="Reason"/>. Naming the same volume again is one run, so
-    /// that path keeps the answer already read for it; a claim is the only moment a new volume can come in,
-    /// and it is where an answer about the old one has to go.
+    /// that path keeps the answer already read for it, and on the path that does claim there is nothing to
+    /// clear — no run root held means no answer could have been read, because reading one needs
+    /// <see cref="VolumeRoot"/>. The line is there so that stays true of this method rather than of a
+    /// property of every caller, and a refactor that gave <see cref="Reason"/> a source other than the
+    /// machine would otherwise leave a stale value behind it.
     /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">
@@ -188,9 +207,10 @@ internal sealed class ScratchWorkspace : IDisposable
     /// The whole tree rather than each part of it, so a run that failed half way through leaves nothing in
     /// the volume root and the next run claims a fresh name rather than inheriting this one's leftovers.
     /// <para>
-    /// The cached <see cref="Reason"/> goes with the run root it was read about, and it goes before the
-    /// directory is removed: a reason that outlived its volume would be the one answer in this class that
-    /// nothing on the machine could contradict.
+    /// The cached <see cref="Reason"/> is dropped here alongside the run root it was read about, though
+    /// dropping the run root alone would already make it unreadable. The line stays for the same reason it
+    /// stays in <see cref="Configure"/>: a value the machine could no longer contradict should not be sitting
+    /// in a field waiting for the run root to come back.
     /// </para>
     /// </remarks>
     public static void ReleaseRunRoot()
