@@ -881,19 +881,21 @@ files and removes directories, so the volume is yours to pick and not the runner
 
 Inside the root the run creates `D:\{guid}` and works in `scratch` and `long` beneath it, then removes the
 whole tree when it finishes. Nothing is derived from the repository, so no test writes inside the working
-copy, and no test names a volume, a share or a drive letter in its source — the volume comes from
-`--scratch` and from there down.
+copy, and no test acts on a path that did not come from `--scratch` — the volume comes from the flag and
+from there down. A drive letter or a share written into a case is data for a path predicate: it decides
+what a string means and touches nothing, so `NormalizeVolumeRoot(@"W:\")` and a share-root spelling are
+both ordinary assertions rather than something a case acts on.
 
 `--filter` matches any part of a case name, and every case is named `<Suite>.<Case>`. It exits
 non-zero when a case fails.
 
-`--scratch` accepts any volume. Most cases need one Windows records as recycling, which it writes under
+`--scratch` accepts any volume. Some cases need one Windows records as recycling, which it writes under
 `HKCU\...\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete=0` when "Don't move files to the Recycle Bin" is
 clear for that drive; a volume with no such key is answered `Indeterminate` or `NoRecycleBinOnVolume` —
 both refused by the default `NoRecycleBinAction.Throw`. The run asks the library once which kind of
 volume it was given, and each case that needs the other kind skips rather than fails, so naming a
-removable drive with no `$RECYCLE.BIN` runs the cases that are about such a volume and skips the ones
-that recycle there.
+removable drive with no `$RECYCLE.BIN` runs the 113 that need nothing from a bin and skips the 40 that
+recycle one.
 
 The suite is a console application with no external packages: 157 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,

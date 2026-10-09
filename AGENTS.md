@@ -16,7 +16,9 @@ dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --load
 
 Build the test project after any change to `tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs` —
 see the rule below. The suites change machine state: they write into a directory they create inside the
-volume `--scratch` names, and they empty the Recycle Bin. Nothing else.
+volume `--scratch` names, and they empty the Recycle Bin. Two things leave that directory and neither is a
+test's doing — the `$RCW-…` staging directories the library creates on the volume root, and the empty
+itself. The section below is the whole rule.
 
 ## --scratch, and asking which volume
 
@@ -68,11 +70,13 @@ them is the document being wrong.
 
 ## What the tests may touch
 
-No file a test creates is ever outside the working directory `--scratch` names. A test never names a
-volume, a share or a drive letter in its source: `--scratch` names the volume, the run claims
-`D:\{guid}` inside it, and every case writes beneath that. `ScratchDirectory.Claim(parent)` refuses any
-parent that is not under the claimed root, and it refuses after resolving the path, so `..` cannot escape
-and a forward-slash spelling is taken rather than turned away.
+No file a test creates is ever outside the working directory `--scratch` names. No test acts on a path it
+did not derive from there: `--scratch` names the volume, the run claims `D:\{guid}` inside it, and every
+case writes beneath that. A drive letter or a share written into a case is data for a path predicate —
+`NormalizeVolumeRoot(@"W:\")` decides what a string means and touches nothing — and no case creates,
+recycles, empties or deletes anything on such a path. `ScratchDirectory.Claim(parent)` refuses any parent
+that is not under the claimed root, and it refuses after resolving the path, so `..` cannot escape and a
+forward-slash spelling is taken rather than turned away.
 
 Where a case needs a volume that is not there, it asks the operating system for a letter nothing is
 mounted on — `AbsentVolume.Letter()` — and re-checks that it is still absent immediately before the call.
