@@ -33,8 +33,9 @@ internal static class SubstitutedVolume
     /// </summary>
     /// <remarks>
     /// Scanning down from <c>Z</c> rather than up from <c>D</c> keeps the mapping out of the way of the
-    /// fixed drives these suites assume: <c>ScratchWorkspace.Root</c> is on <c>X:\</c>, and several cases
-    /// hard-code it.
+    /// fixed drives the caller named, which is whichever volume root <c>--scratch</c> carries and is not
+    /// written into this source. A leaked mapping is handled by the scan skipping a letter that is now
+    /// mounted, so a leak costs the pool one letter rather than breaking a later case.
     /// </remarks>
     internal static char FirstUnusedDriveLetter()
     {
@@ -153,8 +154,9 @@ internal static class SubstitutedVolume
         // The token bounds the two stream reads, and nothing else. Reading them to the end says the
         // pipes closed, which a child whose work is still going does not do -- so this wait needs its own
         // bound, or a subst that closed its output and then lingered would hold the runner past the
-        // budget it sets. Eight cases run this from a finally, so an unbounded wait here is a hang on
-        // the failure path as much as on the passing one.
+        // budget it sets. Every caller that wants a mapping removed runs it from a finally, and that is
+        // most of the run's cases -- FacadeSuite for each refused volume, StatusSuite, ScratchSuite -- so
+        // an unbounded wait here is a hang on the failure path as much as on the passing one.
         if (!process.WaitForExit(ExitTimeout))
         {
             process.Kill(entireProcessTree: true);

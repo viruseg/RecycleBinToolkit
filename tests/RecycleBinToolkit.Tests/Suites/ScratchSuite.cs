@@ -7,7 +7,7 @@ namespace RecycleBinToolkit.Tests.Suites;
 /// What the suite writes to, and how it comes to own it.
 /// </summary>
 /// <remarks>
-/// Every case in this repository writes files and deletes directories, and nothing is ever written
+/// Every case in this repository writes files and deletes directories, and this one writes nothing
 /// outside the directory the run claimed under the volume root <c>--scratch</c> named. That rule and the
 /// half of this file that tests the claim mechanism are in tension: a claim is by definition a direct
 /// child of a volume root, so proving that one is made means making one in the root.
@@ -16,6 +16,10 @@ namespace RecycleBinToolkit.Tests.Suites;
 /// and a substituted drive is a volume root to everything above it — <c>Path.GetPathRoot</c> answers it
 /// and nothing rejects it — while everything written through it lands inside the directory the run already
 /// owns. So the ten cases below that claim work through a substituted root and write nothing beside it.
+/// <para>
+/// The one other thing that appears in a volume root belongs to the library rather than to any case:
+/// <c>LongPathStager</c> creates its <c>$RCW-</c> directories there, because a staging path has to be
+/// short and the volume root is the shortest place on the right volume.
 /// </para>
 /// <para>
 /// A name written into the source is not something a case may take ownership of either.

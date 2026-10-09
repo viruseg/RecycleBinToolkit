@@ -64,8 +64,8 @@ internal sealed class TestRunner
         {
             Console.Error.WriteLine(
                 "--filter takes the substring a test name must contain, such as --filter LongPathSuite or -f Empty. " +
-                "A flag after it is read as a missing substring rather than as one, and no substring at all means " +
-                "no narrowing rather than an error -- so the run you asked for is the run that happens.");
+                "A flag after it is read as a missing substring rather than as one, and so is a --filter with " +
+                "nothing after it at all -- a narrowing flag that quietly does not narrow is a run nobody asked for.");
             Console.Error.WriteLine($"        {filterProblem}");
             return 2;
         }

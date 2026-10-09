@@ -551,8 +551,8 @@ internal static class LongPathSuite
     /// </summary>
     /// <remarks>
     /// Deliberately able to fail. An unreadable root is not the same answer as a root with nothing in it,
-    /// and reporting the first as the second makes every caller pass for the wrong reason: the two cases
-    /// that assert a count of zero would pass on a volume they never managed to look at, and the two that
+    /// and reporting the first as the second makes every caller pass for the wrong reason: the case that
+    /// asserts a count of zero would pass on a volume it never managed to look at, and the two that
     /// compare a count before and after would compare two zeroes.
     /// </remarks>
     private static int CountStagingDirectories() =>
