@@ -330,7 +330,8 @@ internal static class FacadeSuite
 
     /// <summary>
     /// <see cref="NoRecycleBinAction.AllowIndeterminate"/> is what lets a caller hand the Shell a path on
-    /// a volume whose answer was not <see cref="RecycleBinAvailabilityReason.Enabled"/>.
+    /// a volume whose answer was neither <see cref="RecycleBinAvailabilityReason.Enabled"/> nor one of the
+    /// confirmed refusals.
     /// </summary>
     /// <remarks>
     /// This is the only case here that watches a file leave the disk, and deliberately so: the option
@@ -342,13 +343,42 @@ internal static class FacadeSuite
     /// volume <c>--scratch</c> named and the case is a skip on a volume that recycles, where the option
     /// would be a no-op and would prove nothing.
     /// </para>
+    /// <para>
+    /// The gate is written out rather than delegated to <see cref="ScratchWorkspace.RequireNonRecycling"/>,
+    /// because that guard admits one reason too many for this claim.
+    /// <see cref="RecycleBinVolumePolicy.RefusesRecycle"/> refuses
+    /// <see cref="RecycleBinAvailabilityReason.UnsupportedVolumeType"/>,
+    /// <see cref="RecycleBinAvailabilityReason.DisabledByPolicy"/> and
+    /// <see cref="RecycleBinAvailabilityReason.DisabledByUserPreference"/> under every action but
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/> — the option buys no reach there, because those
+    /// three are the library's own decision that there is no bin to hand a file to, not a doubt about one.
+    /// <see cref="RecycleBinAvailabilityReason.UnsupportedVolumeType"/> is what a share reads as, and a
+    /// share is a <c>--scratch</c> root both documents accept, so under the coarser guard this case would
+    /// go red on exactly the volumes the harness promises it can be run against, over an assertion about a
+    /// handover that policy had already refused.
+    /// <see cref="ContractSuite.EveryReasonAndActionPairIsPinned"/> already pins that refusal on every
+    /// machine without one, which is what makes narrowing the honest choice rather than a quiet loss: what
+    /// would have been asserted here is asserted there, and what remains here is the claim in this case's
+    /// name.
+    /// </para>
+    /// <para>
+    /// The guard itself is unchanged: nine other cases mean "not Enabled" by
+    /// <see cref="ScratchWorkspace.RequireNonRecycling"/> and assert a refused path, which is the correct
+    /// reading on all three confirmed reasons; narrowing it would have taken their coverage with it.
+    /// </para>
     /// </remarks>
     private static async Task NoRecycleBinOptionDecidesWhetherTheShellIsAsked(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
+        if (ScratchWorkspace.Reason is not (RecycleBinAvailabilityReason.NoRecycleBinOnVolume
+            or RecycleBinAvailabilityReason.Indeterminate))
+        {
+            Check.Skip(
+                $"{ScratchWorkspace.VolumeRoot} reads as {ScratchWorkspace.Reason}. "
+                + "This case needs a volume whose answer is a doubt rather than a refusal");
+        }
 
         var file = Path.Combine(ScratchWorkspace.Root, $"allowed-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
@@ -799,6 +829,7 @@ internal static class FacadeSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a batch of generated files to arrive in a Recycle Bin");
         var files = workspace.CreateFixtureSet();
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 

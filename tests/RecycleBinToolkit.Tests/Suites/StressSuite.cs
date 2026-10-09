@@ -32,6 +32,8 @@ namespace RecycleBinToolkit.Tests.Suites;
 
         using var workspace = new ScratchWorkspace();
 
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the ten cycles to leave entries behind");
+
         // One pair of readings around the whole run rather than a pair per cycle. The Shell walks the
         // bin's metadata to answer, so a probe costs about a tenth of a second per thousand files
         // already in it: twenty probes meant the run length was set by how full the caller's bin was
@@ -87,6 +89,8 @@ namespace RecycleBinToolkit.Tests.Suites;
 
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the byte total to be measured");
 
         var files = workspace.CreateRandomFiles(fileCount, fileSize);
         var (countBefore, sizeBefore) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline bytes");

@@ -37,6 +37,7 @@ internal static class WorkflowSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the whole touched batch to be counted into");
 
         var all = workspace.CreateFixtureSet();
         var random = new Random(20261006);
