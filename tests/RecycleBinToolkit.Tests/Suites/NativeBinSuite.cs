@@ -31,6 +31,11 @@ internal static class NativeBinSuite
 
     private static readonly RecycleBinOptions Native = new() { Backend = RecycleBinBackend.Native };
 
+    /// <summary>
+    /// The path most callers take, named here because two of the cases below exist to compare against it.
+    /// </summary>
+    private static readonly RecycleBinOptions Shell = new() { Backend = RecycleBinBackend.WinApi };
+
     internal static IReadOnlyList<TestCase> Cases =>
     [
         new TestCase("NativeBinSuite." + nameof(NativeRecycleRemovesTheFileAndRecordsIt), NativeRecycleRemovesTheFileAndRecordsIt),
@@ -55,6 +60,10 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeEmptyOfAVolumeWithNothingInItReportsNothing), NativeEmptyOfAVolumeWithNothingInItReportsNothing),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyKeepsTheBinDirectoriesThemselves), NativeEmptyKeepsTheBinDirectoriesThemselves),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyHonoursCancellationBetweenEntries), NativeEmptyHonoursCancellationBetweenEntries),
+        new TestCase("NativeBinSuite." + nameof(NativeListingSeesAnEntryTheShellRecorded), NativeListingSeesAnEntryTheShellRecorded),
+        new TestCase("NativeBinSuite." + nameof(TheShellListingSeesAnEntryTheNativePathRecorded), TheShellListingSeesAnEntryTheNativePathRecorded),
+        new TestCase("NativeBinSuite." + nameof(ARecycledItemRestoresFromItsRecordedPath), ARecycledItemRestoresFromItsRecordedPath),
+        new TestCase("NativeBinSuite." + nameof(TheShellWritesAVersionTwoIndexRecordOnThisMachine), TheShellWritesAVersionTwoIndexRecordOnThisMachine),
     ];
 
     /// <summary>
@@ -632,6 +641,111 @@ internal static class NativeBinSuite
             "an empty whose token is already cancelled raises rather than proceeding");
 
         Check.True(true, "and the bin is untouched, because the refusal comes before any work");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// What the Shell wrote is something this backend reads. One format, two ways of getting at it — and if
+    /// this ever stopped holding, the native backend would be writing a private format into a directory the
+    /// Shell also uses, which is how a user's Restore button quietly stops working.
+    /// </summary>
+    private static async Task NativeListingSeesAnEntryTheShellRecorded(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the Shell to record into and this backend to read back");
+
+        var path = CreateFile("from-the-shell.bin");
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Shell, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the Shell recycles it (first failure: {Describe(recycled.FirstFailure)})");
+
+        var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken), path);
+
+        Check.Equal(path, item.OriginalPath, "the native listing names the path the Shell recorded it from");
+        Check.True(File.Exists(item.RecycledPath), $"and points at a payload that is really there ({item.RecycledPath})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The other direction, and the one a user would notice: an item this backend recycled has to appear in
+    /// the Explorer's own Recycle Bin, with the right name, the right date and the right size.
+    /// </summary>
+    private static async Task TheShellListingSeesAnEntryTheNativePathRecorded(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for this backend to record into and the Shell to read back");
+
+        var path = CreateFile("from-the-native-path.bin");
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"this backend recycles it (first failure: {Describe(recycled.FirstFailure)})");
+
+        var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Shell, context.CancellationToken), path);
+
+        Check.Equal(path, item.OriginalPath, "the Shell listing names the path this backend recorded it from");
+        Check.Equal(Content.Length, item.Size, "with the size the record carried");
+        Check.False(item.IsDirectory, "and reports it as the file it is");
+        Check.True(File.Exists(item.RecycledPath), $"pointing at the payload ({item.RecycledPath})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The claim behind all of it: an item this backend recycled can be put back where it came from, byte
+    /// for byte, by following the record it wrote. That is what the Explorer's Restore does, and it is the
+    /// reason the record is written in Windows' own format rather than one this library reads.
+    /// </summary>
+    private static async Task ARecycledItemRestoresFromItsRecordedPath(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for an item to be restored out of");
+
+        var path = CreateDeepFile(PastMaxPath);
+        var original = await File.ReadAllBytesAsync(path, context.CancellationToken).ConfigureAwait(false);
+
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"a long path recycles (first failure: {Describe(recycled.FirstFailure)})");
+
+        // Restoring means exactly what Explorer's Restore means: move the payload back to the path the
+        // record names. Nothing here knows the format — it reads the record and obeys it.
+        var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken), path);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(item.OriginalPath)!);
+        File.Move(item.RecycledPath, item.OriginalPath);
+
+        Check.True(File.Exists(path), "the payload is back where it was deleted from");
+
+        var restored = await File.ReadAllBytesAsync(path, context.CancellationToken).ConfigureAwait(false);
+        Check.True(original.AsSpan().SequenceEqual(restored),
+            "with every byte of it, on a path longer than the Shell can recycle");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The half of the version gate this machine can actually witness. The gate refuses the native write
+    /// below Windows 10 build 14393 because that is the first Shell that reads a version 2 record, and
+    /// nothing can make a Windows machine report an older build. What can be checked is the other half: that
+    /// the Shell running here does write version 2, so this machine satisfies the boundary and the gate lets
+    /// the write through.
+    /// </summary>
+    private static async Task TheShellWritesAVersionTwoIndexRecordOnThisMachine(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the Shell to record into");
+
+        var path = CreateFile("shell-version.bin");
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Shell, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the Shell recycles it (first failure: {Describe(recycled.FirstFailure)})");
+
+        Check.Equal(
+            NativeIndexFile.Version,
+            NativeIndexFile.ReadVersion(RecordOf(path)),
+            $"the Shell on this machine writes version {NativeIndexFile.Version} records, which is the version the native gate requires");
 
         workspace.Dispose();
     }
