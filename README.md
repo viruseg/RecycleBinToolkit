@@ -893,7 +893,7 @@ such key is answered `Indeterminate` or `NoRecycleBinOnVolume` — both refused 
 `NoRecycleBinAction.Throw`. The suite checks this before it deletes anything and names the key rather
 than failing a hundred cases at once.
 
-The suite is a console application with no external packages: 139 cases covering batch and single-path
+The suite is a console application with no external packages: 152 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
 concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies, a
 ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardware only, behind
