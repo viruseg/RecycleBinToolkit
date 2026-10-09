@@ -205,13 +205,15 @@ public sealed class RecycleBinResult
     public TimeSpan Elapsed { get; }
 
     /// <summary>
-    /// A directory left on the volume because it still holds an item that could neither be recycled
-    /// nor moved back to its original location. It is never deleted in that state, so the data stays
-    /// recoverable; the caller has to move the item out of it.
+    /// A staging directory the operation left on a volume. Nothing is ever deleted to tidy one up, so
+    /// anything in it is still recoverable where it is.
     /// </summary>
     /// <remarks>
-    /// Only reachable with <see cref="LongPathFailureAction.ShortenPathAndRecycle"/>, and only when
-    /// both the recycle and the move back failed.
+    /// Reachable only with <see cref="LongPathFailureAction.ShortenPathAndRecycle"/>, and for either of
+    /// two reasons: an item that could neither be recycled nor moved back is still inside, or the
+    /// directory is empty and could not be removed. The library cannot tell a caller which — it reports a
+    /// directory that would not delete the same way whether or not anything is still in it — so look
+    /// inside before assuming your data is there, and do not assume it is not.
     /// <para>
     /// The first entry of <see cref="LeftoverStagingDirectories"/>, or <see langword="null"/> when there
     /// are none. Kept as its own property because a leftover on one volume does not make a leftover on
@@ -224,13 +226,16 @@ public sealed class RecycleBinResult
         : null;
 
     /// <summary>
-    /// Every directory left on a volume because it still holds an item the operation could neither
-    /// recycle nor move back, in the order they were created. Empty when nothing was left behind.
+    /// Every staging directory the operation left on a volume, in the order they were created. Empty when
+    /// nothing was left behind.
     /// </summary>
     /// <remarks>
-    /// Each entry holds the caller's own data: nothing is deleted to tidy up, so an item here has to be
-    /// moved out by the caller rather than recovered from somewhere else. A batch that spans volumes
-    /// stages per volume, so more than one can be left behind at once and all of them are named.
+    /// Each entry may still hold an item of the caller's that could be neither recycled nor moved back,
+    /// and nothing is deleted to tidy up: whatever is in one is there, not lost. It may equally be empty,
+    /// the directory having merely refused to go — two immediate retries is all a removal gets, and this
+    /// repository's own cleanup uses twelve at 250 ms for the same reason. The two are reported alike.
+    /// A batch that spans volumes stages per volume, so more than one can be left behind at once and all
+    /// of them are named.
     /// </remarks>
     public IReadOnlyList<string> LeftoverStagingDirectories { get; }
 

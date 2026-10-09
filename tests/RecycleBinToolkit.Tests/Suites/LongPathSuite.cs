@@ -796,7 +796,7 @@ internal static class LongPathSuite
                 Check.True(actual.AsSpan().SequenceEqual(expected), "the file reads back with the content that was written");
             }
 
-            var (before, sizeBefore) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline before the long-path batch");
+            var (_, sizeBefore) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline before the long-path batch");
 
             var result = await FileRecycler.MoveToRecycleBinAsync([extendedPath], cancellationToken: context.CancellationToken);
 

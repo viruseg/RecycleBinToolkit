@@ -342,8 +342,8 @@ The outcome of a batch. Immutable.
 | `PermanentlyDeletedPaths` | `IReadOnlyList<string>` | Paths removed permanently instead of recycled, because you opted in. Empty unless that happened. |
 | `Failures` | `IReadOnlyList<RecycleFailure>` | Paths that were not handled. Empty when `Succeeded`. An unsuccessful result can still have none — see below. |
 | `Elapsed` | `TimeSpan` | Wall-clock time the caller waited, including any queueing behind other Shell work. |
-| `LeftoverStagingDirectory` | `string?` | The first staging directory that still holds an item, or `null`. See [Limitations](#limitations). |
-| `LeftoverStagingDirectories` | `IReadOnlyList<string>` | Every staging directory still holding an item. A batch spanning volumes can leave more than one, and each holds your data. Empty when nothing was left. |
+| `LeftoverStagingDirectory` | `string?` | The first staging directory the operation left, or `null`. See [Limitations](#limitations). |
+| `LeftoverStagingDirectories` | `IReadOnlyList<string>` | Every staging directory the operation left, in the order created. A batch spanning volumes can leave more than one. Empty when nothing was left. An entry either still holds an item of yours or is empty and could not be removed — the two are reported alike, so look inside rather than assuming. |
 | `FirstFailure` | `RecycleFailure?` | The first recorded failure, or `null`. |
 | `Create(...)` | `static RecycleBinResult` | Constructs a result. Useful in tests, rarely in application code. |
 

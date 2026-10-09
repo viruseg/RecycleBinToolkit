@@ -64,7 +64,6 @@ internal static class FacadeSuite
         {
             workspace.Dispose();
             Check.Skip($"{volumeRoot} has no volume GUID to address a path by, which a substituted drive is one example of");
-            return;
         }
 
         var name = $"addressed-by-guid-{Environment.ProcessId}.bin";

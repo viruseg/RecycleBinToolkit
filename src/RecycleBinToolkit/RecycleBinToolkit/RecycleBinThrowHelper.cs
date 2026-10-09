@@ -63,20 +63,19 @@ internal static class RecycleBinThrowHelper
             inner);
 
     /// <summary>
-    /// Reports that the caller's own data is sitting in a staging directory, where it was moved to reach
-    /// the Shell and could not be moved back.
+    /// Reports a staging directory the operation left on a volume.
     /// </summary>
     /// <remarks>
     /// A different failure from every other one here: nothing was refused, and no path failed, so there is
-    /// no code to carry and no path to name. What there is is a directory the caller has to move the item
-    /// out of, and naming it is the whole answer. Every one is named, because a batch spanning volumes
-    /// stages per volume and a leftover on one does not make a leftover on another go away.
-    /// </remarks>
-/// <remarks>
-    /// Wording is deliberately agnostic about whether the directory still holds anything, because the
-    /// library cannot tell the caller: a staging directory that could not be removed is reported as
-    /// leftover whether or not the move back took, and both look identical from here. Naming the
-    /// directory and saying nothing was deleted is true either way.
+    /// no code to carry and no path to name. What there is is a directory, and naming it is the whole
+    /// answer. Every one is named, because a batch spanning volumes stages per volume and a leftover on
+    /// one does not make a leftover on another go away.
+    /// <para>
+    /// The wording is deliberately agnostic about whether the directory still holds anything, because
+    /// the library cannot tell the caller: one that could not be removed is reported as leftover whether
+    /// or not the move back took, and both look identical from here. Naming the directory and saying
+    /// nothing was deleted is true either way.
+    /// </para>
     /// </remarks>
     [DoesNotReturn]
     internal static void ThrowItemNotPutBack(IReadOnlyList<string> leftoverStagingDirectories) =>
@@ -91,27 +90,30 @@ internal static class RecycleBinThrowHelper
 /// could not be moved back from.
 /// </summary>
 /// <remarks>
-/// <b>A cancelled caller does not see this.</b> Cancelling ends the wait rather than the work, and the
-/// wait ends with an <see cref="OperationCanceledException"/> raised by the caller's own token — the
-/// worker goes on regardless, and its outcome is read by nobody. That is the documented contract of
+/// <b>A cancelled caller usually does not see this.</b> Cancelling ends the wait rather than the work,
+/// and the wait ends with an <see cref="OperationCanceledException"/> raised by the caller's own token —
+/// the worker goes on regardless, and its outcome is read by nobody. That is the documented contract of
 /// cancellation, and it means a batch cancelled after staging can strand an item without the caller
-/// being able to learn where from anything it is handed. This type surfaces for the failures that do
-/// reach the caller: a Shell fault escaping the rounds, an unrecreatable operation object, or the
-/// single-path overload with <see cref="RecycleBinOptions.ThrowOnError"/> on. Cancelled or not, a
-/// directory named <c>$RCW-</c> on the volume root is worth looking for.
+/// being able to learn where from anything it is handed. The two race rather than one always winning,
+/// so a cancellation arriving at the same moment as the failure can surface this instead. Where it does
+/// surface, it is for the failures that reach the caller: a Shell fault escaping the rounds, an
+/// unrecreatable operation object, or the single-path overload with
+/// <see cref="RecycleBinOptions.ThrowOnError"/> on. Cancelled or not, a directory named <c>$RCW-</c> on
+/// the volume root is worth looking for.
 /// </remarks>
 internal sealed class RecycleBinItemLeftBehindException : IOException
 {
     internal RecycleBinItemLeftBehindException(IReadOnlyList<string> leftoverStagingDirectories, Exception inner)
         : base(
-            $"The operation failed with an item left in a staging directory: {string.Join(" and ", leftoverStagingDirectories.Select(d => $"'{d}'"))}. " +
-            "Nothing was deleted -- the item is there, at a short path rather than where it was left -- and it has to be moved out by hand.",
+            $"The operation failed with a staging directory left on the volume: {string.Join(" and ", leftoverStagingDirectories.Select(d => $"'{d}'"))}. " +
+            "Nothing was deleted. One of these still holds an item of yours at a short path rather than where it was, " +
+            "or it is empty and could not be removed; look inside before moving on.",
             inner)
     {
         LeftoverStagingDirectories = leftoverStagingDirectories;
     }
 
-    /// <summary>The directories still holding an item, in the order they were created.</summary>
+    /// <summary>The directories left on the volume, in the order they were created.</summary>
     public IReadOnlyList<string> LeftoverStagingDirectories { get; }
 }
 
