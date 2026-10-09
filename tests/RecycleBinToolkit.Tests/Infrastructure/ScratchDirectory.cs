@@ -102,12 +102,14 @@ internal sealed class ScratchDirectory
     /// Claims a directory of the suite's own directly under <paramref name="parent"/>.
     /// </summary>
     /// <param name="parent">
-    /// A directory inside the run's own directory. The volume root itself is refused, because a claim taken
-    /// there would be created beside everything this run works in and removed without it.
+    /// A directory inside the run's own directory, spelled as a fully qualified path. The volume root
+    /// itself is refused, because a claim taken there would be created beside everything this run works in
+    /// and removed without it.
     /// </param>
     /// <returns>The claimed directory.</returns>
     /// <exception cref="ArgumentException">
-    /// <paramref name="parent"/> is null, empty, or not inside the run's own directory. Nothing is created.
+    /// <paramref name="parent"/> is null, empty, not fully qualified, or unreadable as a path; or it is not
+    /// inside the run's own directory once <c>..</c> segments are resolved. Nothing is created.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The run's own directory has not been claimed, so there is nothing for the claim to sit inside.
@@ -121,7 +123,9 @@ internal sealed class ScratchDirectory
     /// Claims a directory under <paramref name="parent"/>, taking each candidate name from
     /// <paramref name="nameFor"/>.
     /// </summary>
-    /// <param name="parent">A directory inside the run's own directory. See <see cref="Claim(string)"/>.</param>
+    /// <param name="parent">
+    /// A fully qualified directory inside the run's own directory. See <see cref="Claim(string)"/>.
+    /// </param>
     /// <param name="nameFor">
     /// Produces the next name to try. Called again only for a name that is already taken, so the number of
     /// calls is the number of collisions plus one.
@@ -132,7 +136,8 @@ internal sealed class ScratchDirectory
     /// which is the same reason it is untestable without being handed the names directly.
     /// </remarks>
     /// <exception cref="ArgumentException">
-    /// <paramref name="parent"/> is null, empty, or not inside the run's own directory. Nothing is created.
+    /// <paramref name="parent"/> is null, empty, not fully qualified, or unreadable as a path; or it is not
+    /// inside the run's own directory once <c>..</c> segments are resolved. Nothing is created.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The run's own directory has not been claimed, so there is nothing for the claim to sit inside.
@@ -256,26 +261,37 @@ internal sealed class ScratchDirectory
     }
 
     /// <summary>
-    /// The parent a claim may sit under, which is the one it was handed or a refusal naming it.
+    /// The parent a claim may sit under in its full form, which is the one it was handed spelled out or a
+    /// refusal naming it.
     /// </summary>
     /// <remarks>
+    /// The comparison is over resolved paths, not over the text a caller passed. <c>..</c> would otherwise
+    /// pass a prefix test and still leave the run's directory — <c>E:\{guid}\..\elsewhere</c> begins with
+    /// <c>E:\{guid}\</c> and resolves to <c>E:\elsewhere</c> — and a correct parent written with forward
+    /// slashes would be refused, because <c>E:/{guid}/</c> and <c>E:\{guid}\</c> are the same directory
+    /// spelled two ways. The normalized form is what is returned, so the directory created is the one that
+    /// was checked rather than a re-parse of the text.
+    /// <para>
     /// A claim with no run's own directory to sit inside is a state this suite cannot be put into: the
     /// runner claims the run root before it selects a single case, so by the time any code here runs the
     /// boundary exists. The guard is here rather than assumed because a refactor that moved this check
     /// behind <see cref="ClaimRunRoot"/>, or let a case name the run root itself, would reopen the route
     /// out of the working directory silently — and a null reference would not say what had gone wrong.
+    /// </para>
     /// <para>
-    /// Nothing asserts this branch, and that is deliberate. Reaching it from a case needs either a seam
-    /// that hands over the run root — which is precisely what the two cases above exist to forbid — or a
-    /// private static cleared by reflection, which would leave the process in a state no later case could
-    /// rely on. A case that cannot run would print <c>SKIP</c> on every run and teach the reader to
-    /// ignore the one line that carries that meaning, so the guard is left to state its own reachability
-    /// here instead.
+    /// Nothing asserts that branch, and that is deliberate. Reaching it from a case needs either a seam
+    /// that hands over the run root — which is precisely what the two refusals in
+    /// <c>ScratchSuite.ClaimRefusesAParentOutsideTheRunRoot</c> and
+    /// <c>ScratchSuite.ClaimRunRootRefusesASecondRunInOneProcess</c> exist to forbid — or a private static
+    /// cleared by reflection, which would leave the process in a state no later case could rely on. A case
+    /// that cannot run would print <c>SKIP</c> on every run and teach the reader to ignore the one line
+    /// that carries that meaning, so the guard is left to state its own reachability here instead.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentException">
-    /// <paramref name="parent"/> is null or empty, or is not inside the run's own directory. Checked before
-    /// anything is created, so a refusal leaves the volume exactly as it was.
+    /// <paramref name="parent"/> is null, empty, not fully qualified, or unreadable as a path; or it is not
+    /// inside the run's own directory once resolved. Every one of these is checked before anything is
+    /// created, so a refusal leaves the volume exactly as it was.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// No run's own directory has been claimed, so there is no boundary to measure the parent against and
@@ -288,20 +304,50 @@ internal sealed class ScratchDirectory
             throw new ArgumentException("A parent is required, and nothing was given.", nameof(parent));
         }
 
+        // Refused before it is resolved, because resolving it would answer with the process's current
+        // directory. That is the same ambient state VolumeRoot.Normalize refuses for a bare drive letter,
+        // and a parent that resolves against it is not one this run owns.
+        if (!Path.IsPathFullyQualified(parent))
+        {
+            throw new ArgumentException(
+                $"{Quote(parent)} is not a fully qualified path, so nothing was created under it. " +
+                "A relative parent names no directory until it is resolved, and resolution would use whatever " +
+                "current directory this process happens to have rather than the directory the caller meant.",
+                nameof(parent));
+        }
+
         var runRoot = _runRoot ?? throw new InvalidOperationException(
             $"{nameof(ScratchDirectory)} has no run's own directory to sit inside: {nameof(ClaimRunRoot)} has not claimed one, " +
             "so there is nothing to create a directory under that this run also owns.");
 
-        if (!parent.StartsWith(BoundedBySeparator(runRoot.FullPath), StringComparison.OrdinalIgnoreCase))
+        string full;
+
+        try
+        {
+            full = Path.GetFullPath(parent);
+        }
+        catch (Exception ex)
+        {
+            // Deliberately broad, and deliberately a refusal. Nothing has been created at this point, so the
+            // worst a catch this wide can do is turn a crash into a rejection; the alternative is letting an
+            // exception nobody anticipated escape from a check whose whole job is to fail closed. A path
+            // this cannot read is not a path this run may write under.
+            throw new ArgumentException(
+                $"{Quote(parent)} could not be read as a path, so nothing was created under it and no claim was taken. {ex.Message}",
+                nameof(parent),
+                ex);
+        }
+
+        if (!full.StartsWith(BoundedBySeparator(runRoot.FullPath), StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException(
-                $"{Quote(parent)} is not inside the run's own directory {runRoot.FullPath}, so nothing was created there. " +
+                $"{Quote(full)} is not inside the run's own directory {runRoot.FullPath}, so nothing was created there. " +
                 "A claim is taken under a directory this run already owns; the volume root is the one place a claim may be created, " +
                 $"and {nameof(ClaimRunRoot)} has already made it.",
                 nameof(parent));
         }
 
-        return parent;
+        return full;
     }
 
     /// <summary>

@@ -47,6 +47,8 @@ internal static class ScratchSuite
         new TestCase("ScratchSuite." + nameof(RemoveIsSafeWhenTheDirectoryIsAlreadyGone), RemoveIsSafeWhenTheDirectoryIsAlreadyGone),
         new TestCase("ScratchSuite." + nameof(ClaimRefusesAParentOutsideTheRunRoot), ClaimRefusesAParentOutsideTheRunRoot),
         new TestCase("ScratchSuite." + nameof(ClaimRefusesAParentThatOnlyLooksLikeItIsInsideTheRunRoot), ClaimRefusesAParentThatOnlyLooksLikeItIsInsideTheRunRoot),
+        new TestCase("ScratchSuite." + nameof(ClaimRefusesAParentThatOnlyLooksLikeItIsInsideUntilItIsResolved), ClaimRefusesAParentThatOnlyLooksLikeItIsInsideUntilItIsResolved),
+        new TestCase("ScratchSuite." + nameof(ClaimRefusesAnEmptyParent), ClaimRefusesAnEmptyParent),
         new TestCase("ScratchSuite." + nameof(ClaimRunRootRefusesASecondRunInOneProcess), ClaimRunRootRefusesASecondRunInOneProcess),
         new TestCase("ScratchSuite." + nameof(AVolumeRootIsItsOwnNormalizedSpelling), AVolumeRootIsItsOwnNormalizedSpelling),
         new TestCase("ScratchSuite." + nameof(ADirectoryUnderAVolumeRootIsNotAVolumeRoot), ADirectoryUnderAVolumeRootIsNotAVolumeRoot),
@@ -93,11 +95,11 @@ internal static class ScratchSuite
     /// </summary>
     private static Task ClaimNeverReusesADirectoryThatAlreadyExists(TestContext context)
     {
-        var volumeRoot = ScratchWorkspace.Root;
+        var parent = ScratchWorkspace.Root;
 
         // Taken, because this run claimed it first, and holding a file makes it worth taking rather
         // than merely present.
-        var bystander = ScratchDirectory.Claim(volumeRoot);
+        var bystander = ScratchDirectory.Claim(parent);
         var notOurs = Path.Combine(bystander.FullPath, "not-ours.txt");
         File.WriteAllText(notOurs, "written by this test");
 
@@ -111,14 +113,14 @@ internal static class ScratchSuite
 
         try
         {
-            claimed = ScratchDirectory.Claim(volumeRoot, () => offered.Dequeue());
+            claimed = ScratchDirectory.Claim(parent, () => offered.Dequeue());
 
             Check.Equal(
                 0,
                 offered.Count,
                 "the taken name was offered and the free name was taken in turn, rather than the taken one offered again");
             Check.Equal(
-                Normalize(Path.Combine(volumeRoot, free)),
+                Normalize(Path.Combine(parent, free)),
                 Normalize(claimed.FullPath),
                 "a name that was already taken is not adopted, and the next one is what the claim takes");
             Check.True(File.Exists(notOurs), "and the directory that was there keeps its file");
@@ -138,8 +140,8 @@ internal static class ScratchSuite
     /// </summary>
     private static Task ClaimRegeneratesUntilItFindsAFreeName(TestContext context)
     {
-        var volumeRoot = ScratchWorkspace.Root;
-        var taken = new[] { ScratchDirectory.Claim(volumeRoot), ScratchDirectory.Claim(volumeRoot) };
+        var parent = ScratchWorkspace.Root;
+        var taken = new[] { ScratchDirectory.Claim(parent), ScratchDirectory.Claim(parent) };
 
         var free = Guid.NewGuid().ToString("N");
         var offered = new Queue<string>([.. taken.Select(NameOf), free]);
@@ -148,10 +150,10 @@ internal static class ScratchSuite
 
         try
         {
-            claimed = ScratchDirectory.Claim(volumeRoot, () => offered.Dequeue());
+            claimed = ScratchDirectory.Claim(parent, () => offered.Dequeue());
 
             Check.Equal(
-                Normalize(Path.Combine(volumeRoot, free)),
+                Normalize(Path.Combine(parent, free)),
                 Normalize(claimed.FullPath),
                 "the claim settles for the first name that was free, not the last one offered");
             Check.Equal(0, offered.Count, "and it stops asking once it has one");
@@ -223,13 +225,13 @@ internal static class ScratchSuite
     /// <summary>Two claims are two directories, so a second case cannot land in the first one's tree.</summary>
     private static Task TwoClaimsAreTwoDirectories(TestContext context)
     {
-        var volumeRoot = ScratchWorkspace.Root;
-        var first = ScratchDirectory.Claim(volumeRoot);
-        var second = ScratchDirectory.Claim(volumeRoot);
+        var parent = ScratchWorkspace.Root;
+        var first = ScratchDirectory.Claim(parent);
+        var second = ScratchDirectory.Claim(parent);
 
         try
         {
-            Check.NotEqual(Normalize(first.FullPath), Normalize(second.FullPath), "two claims of the same root are two directories");
+            Check.NotEqual(Normalize(first.FullPath), Normalize(second.FullPath), "two claims of the same parent are two directories");
         }
         finally
         {
@@ -266,15 +268,15 @@ internal static class ScratchSuite
     /// </summary>
     private static Task RemoveDeletesTheClaimedDirectoryAndNothingElse(TestContext context)
     {
-        var volumeRoot = ScratchWorkspace.Root;
+        var parent = ScratchWorkspace.Root;
 
         // A sibling, and a claim like any other: the point is that the path beside the claim survives,
         // and a bystander this run does not own would not be a thing the suite is allowed to make.
-        var bystander = ScratchDirectory.Claim(volumeRoot);
+        var bystander = ScratchDirectory.Claim(parent);
         var notOurs = Path.Combine(bystander.FullPath, "not-ours.txt");
         File.WriteAllText(notOurs, "written by this test");
 
-        var claimed = ScratchDirectory.Claim(volumeRoot);
+        var claimed = ScratchDirectory.Claim(parent);
 
         try
         {
@@ -361,6 +363,73 @@ internal static class ScratchSuite
             failure.Message.Contains(sibling, StringComparison.OrdinalIgnoreCase),
             $"and it names the parent it refused ({failure.Message})");
         Check.False(Directory.Exists(sibling), "and nothing was created beside the run's directory");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A prefix match over text is not containment over paths. <c>..</c> segments resolve, so a parent that
+    /// begins with the run root's name can leave it entirely — and a claim taken there is created outside the
+    /// working directory, which is the one thing the run's directory exists to prevent.
+    /// </summary>
+    /// <remarks>
+    /// The parent is built from a string, because no caller produces one: every claim this suite makes takes
+    /// <see cref="ScratchWorkspace.Root"/> or another claim's parent, and both are already resolved. The
+    /// case is here because the case above is a precedent for building a parent by hand, and the next author
+    /// to do that is the next person to hand <see cref="ScratchDirectory"/> a traversal.
+    /// <para>
+    /// The name it climbs to carries this run's own name, so a leftover could not make it fail and only this
+    /// run could have created it — the same reasoning <see cref="ScratchDirectory"/> applies to the names it
+    /// takes for itself.
+    /// </para>
+    /// </remarks>
+    private static Task ClaimRefusesAParentThatOnlyLooksLikeItIsInsideUntilItIsResolved(TestContext context)
+    {
+        var runRoot = ScratchDirectory.RunRootPath;
+        Check.NotNull(runRoot, "the runner has configured the run's directory before a single case runs");
+
+        var separator = Path.DirectorySeparatorChar;
+        var runRootName = Path.GetFileName(runRoot!.TrimEnd(separator, Path.AltDirectorySeparatorChar));
+        var besideTheRun = runRootName + "-climbed-out" + separator;
+        var climbing = runRoot + ".." + separator + besideTheRun;
+
+        Check.True(
+            climbing.StartsWith(runRoot, StringComparison.OrdinalIgnoreCase),
+            $"the parent is a text prefix of the run root, which is what a comparison over text would let through ({climbing})");
+
+        var resolved = Path.GetFullPath(climbing);
+
+        Check.False(
+            resolved.StartsWith(runRoot, StringComparison.OrdinalIgnoreCase),
+            $"and resolving it lands outside the run root anyway, so the prefix is a trap rather than a coincidence ({resolved})");
+
+        var failure = Check.Throws<ArgumentException>(
+            () => ScratchDirectory.Claim(climbing),
+            "so the parent is resolved before containment is decided, not compared as text");
+
+        Check.True(
+            failure.Message.Contains(resolved, StringComparison.OrdinalIgnoreCase),
+            $"and it names the directory it would have created under, which is the resolved one ({failure.Message})");
+        Check.False(
+            Directory.Exists(Path.Combine(ScratchWorkspace.VolumeRoot, besideTheRun)),
+            $"and nothing was created in the volume root beside the run's directory ({besideTheRun})");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// An empty parent is the shape of the mistake this check exists to catch, reduced to its shortest form:
+    /// nothing was named, so nothing can be inside the run's directory.
+    /// </summary>
+    private static Task ClaimRefusesAnEmptyParent(TestContext context)
+    {
+        var failure = Check.Throws<ArgumentException>(
+            () => ScratchDirectory.Claim(string.Empty),
+            "a parent that names no directory is refused rather than resolved against the current one");
+
+        Check.True(
+            failure.Message.Contains("parent", StringComparison.OrdinalIgnoreCase),
+            $"and it says which argument was missing ({failure.Message})");
 
         return Task.CompletedTask;
     }
