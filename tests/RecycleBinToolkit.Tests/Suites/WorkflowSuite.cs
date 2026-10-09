@@ -56,6 +56,7 @@ internal static class WorkflowSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the touched files to be counted into");
 
         var chosen = workspace.CreateFixtureSet(OrdinaryFileCount);
 

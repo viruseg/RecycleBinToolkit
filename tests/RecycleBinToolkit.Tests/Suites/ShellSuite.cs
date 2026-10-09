@@ -365,6 +365,7 @@ internal static class ShellSuite
 
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for both counters and the listing to read the same volume");
         var files = workspace.CreateRandomFiles(1, fileSize);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
@@ -422,6 +423,7 @@ internal static class ShellSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the five items to land in and report a bin path for");
         var files = workspace.CreateRandomFiles(5, 4096);
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 

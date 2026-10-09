@@ -691,6 +691,7 @@ internal static class FacadeSuite
 
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for a prefixed short path's bytes to be counted in");
 
         var plain = workspace.CreateRandomFile(4096);
         var extended = ExtendedPrefix + plain;
@@ -766,6 +767,7 @@ internal static class FacadeSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the one file to land in and be counted in");
         var files = workspace.CreateRandomFiles(1, 4096);
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
@@ -849,6 +851,7 @@ internal static class FacadeSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the five real files of the batch to reach");
         var files = workspace.CreateRandomFiles(5, 4096);
         var missing = Path.Combine(ScratchWorkspace.Root, "definitely-absent.bin");
 
@@ -884,6 +887,7 @@ internal static class FacadeSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for a directory to land in as one entry");
 
         var directory = Path.Combine(ScratchWorkspace.Root, "tree", "nested");
         Directory.CreateDirectory(directory);
@@ -904,6 +908,7 @@ internal static class FacadeSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a long path refused by the Shell limit rather than by the volume gate");
 
         var deep = Path.Combine(ScratchWorkspace.Root, new string('d', 120));
         Directory.CreateDirectory(deep);
@@ -942,6 +947,7 @@ internal static class FacadeSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for 10 MB to be measured arriving in");
 
         const int size = 10 * 1024 * 1024;
         var files = workspace.CreateRandomFiles(1, size);

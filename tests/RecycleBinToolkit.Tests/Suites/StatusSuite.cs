@@ -202,6 +202,8 @@ internal static class StatusSuite
     /// </remarks>
     private static async Task TheVolumeKeyIsNamedTheWayWindowsNamesIt(TestContext context)
     {
+        ScratchWorkspace.RequireRecycling("a volume Windows has configured a bin for, so it has written the key this case reads");
+
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
         var keyName = RecycleBinVolumeState.TryGetVolumeGuidKeyName(volumeRoot);
@@ -286,6 +288,7 @@ internal static class StatusSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a volume that accepts the delete into a Recycle Bin before being asked about it");
         var files = workspace.CreateRandomFiles(1, 4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 

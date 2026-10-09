@@ -47,6 +47,8 @@ internal static class VolumeSuite
     /// </remarks>
     private static Task RecycleBinQueryReadsTrackedItems(TestContext context)
     {
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the counter to have entries to track");
+
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
         var (items, size) = RecycleBinProbe.Measure(volumeRoot);

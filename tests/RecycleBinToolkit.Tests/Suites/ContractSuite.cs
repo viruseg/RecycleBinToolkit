@@ -621,6 +621,8 @@ internal static class ContractSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the file under the absurd budget to reach");
+
         var file = workspace.CreateRandomFile(4096);
 
         var absurd = new RecycleBinOptions
