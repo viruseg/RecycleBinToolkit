@@ -26,17 +26,25 @@ public enum RecycleBinBackend
 
     /// <summary>
     /// The Recycle Bin's own files: <c>&lt;volume&gt;$RECYCLE.BIN\&lt;SID&gt;\$I</c> and the
-    /// <c>$R</c> payload beside it, written and read with plain file I/O. No STA thread and no COM.
+    /// <c>$R</c> payload beside it, written and read with plain file I/O, on the thread pool rather
+    /// than on the Shell's single-threaded apartment.
     /// </summary>
     /// <remarks>
-    /// What a caller gets that the Shell path does not have: no STA thread at all, work that
-    /// scales across cores on a solid-state volume, and no <c>MAX_PATH</c> limit — the path inside
-    /// the bin is short whatever the original was, so nothing is staged and nothing is refused for
-    /// length. What it costs: only the current user's bin on the named volumes is visible, and the
-    /// write path needs <see cref="OperatingSystem"/> 10 build 14393 or later, because that is the
-    /// first build whose own Shell reads the version 2 index records this backend writes. That
-    /// requirement is refused with a <see cref="PlatformNotSupportedException"/> and
+    /// What a caller gets that the Shell path does not have: no STA thread and no COM apartment for the
+    /// Recycle Bin work itself, reading that scales across cores on a solid-state volume, and no
+    /// <c>MAX_PATH</c> limit — the path inside the bin is short whatever the original was, so nothing is
+    /// staged and nothing is refused for length. What it costs: only the current user's bin on the named
+    /// volumes is visible, and the write path needs Windows 10 build 14393 or later, because that is the
+    /// first build whose own Shell reads the version 2 index records this backend writes. That requirement
+    /// is refused with a <see cref="PlatformNotSupportedException"/> and
     /// <see cref="RecycleBinOptions.ThrowOnError"/> does not suppress it.
+    /// <para>
+    /// "No STA thread" is about the Recycle Bin work. The volume gate that decides whether a path's volume
+    /// recycles at all runs first, on whichever backend was asked for, and reads the registry; for a
+    /// volume whose per-volume setting was never written it falls back to asking <c>SHQueryRecycleBin</c>,
+    /// which is a plain <c>shell32</c> export and needs no apartment — the same thing it does on
+    /// <see cref="WinApi"/>.
+    /// </para>
     /// </remarks>
     Native = 1,
 }

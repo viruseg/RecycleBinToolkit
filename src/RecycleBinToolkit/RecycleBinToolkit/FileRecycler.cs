@@ -30,8 +30,10 @@ public static class FileRecycler
     /// whether a failure raises or is returned as <see langword="false"/>.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the wait for the Shell. Cancelling after the work started does not stop the Shell, so
-    /// the item may still end up in the Recycle Bin.
+    /// Cancels the wait. On <see cref="RecycleBinBackend.WinApi"/> cancelling after the work started does
+    /// not stop the Shell, so the item may still end up in the Recycle Bin. On
+    /// <see cref="RecycleBinBackend.Native"/> the token is checked between paths instead, so a cancelled
+    /// batch stops part way and raises without returning a result.
     /// </param>
     /// <returns><see langword="true"/> when the path was removed from disk.</returns>
     /// <exception cref="ArgumentException">
@@ -114,7 +116,9 @@ public static class FileRecycler
     /// <see cref="RecycleBinOptions.Default"/>.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the wait between attempts. A round already handed to the Shell always finishes.
+    /// Cancels the wait between attempts. A round already handed to the Shell always finishes; the native
+    /// backend has no rounds and checks the token between paths, so a cancelled batch stops part way and
+    /// raises without returning a result.
     /// </param>
     /// <returns>
     /// The outcome of the batch. Never throws for a per-item failure; read

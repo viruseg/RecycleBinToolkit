@@ -71,11 +71,11 @@ because the flag is a caller's choice rather than a statement about which code e
 `NativeBinSuite` passes `RecycleBinBackend.Native` explicitly and therefore measures the same backend
 whatever the run was told.
 
-There are 185 registered cases, of which four are load cases, so `--all` runs 181 of them. The rest is
+There are 191 registered cases, of which four are load cases, so `--all` runs 187 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
 cases that recycle one and runs the cases that are about a volume the Shell reports no bin for.
-Measured with `--backend winapi` and again with `--backend native` on a volume with a bin: **171 pass
-and 10 skip** either way, with nothing failing. On a volume with no bin: **119 pass and 62 skip**
+Measured with `--backend winapi` and again with `--backend native` on a volume with a bin: **177 pass
+and 10 skip** either way, with nothing failing. On a volume with no bin: **119 pass and 68 skip**
 either way. A share is a third kind and is not measured here; the share figures this file used to
 carry predate the native backend. `--all` prints the counts, so a count in a document that disagrees
 with them is the document being wrong.

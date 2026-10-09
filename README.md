@@ -904,8 +904,10 @@ Stated plainly, because these are properties of Windows rather than choices.
   destination in that case, and a missing destination cannot be told apart from a successful delete
   that simply did not report one. `VerifyRecycleBinReceipt` can reject a destination *outside* the
   Recycle Bin, but it cannot prove the positive case.
-- **Cancellation stops the wait, not the work.** A round already handed to the Shell runs to
-  completion, so a cancelled call may still recycle its files.
+- **Cancellation stops the wait, not the work — on `WinApi`.** A round already handed to the Shell runs to
+  completion, so a cancelled call may still recycle its files. On `Native` the token is checked between
+  paths, so a cancelled batch stops part way and raises `OperationCanceledException` carrying no result:
+  which files went is found by reading the bin.
 - **Temporary locks are retried, not eliminated.** An indexer, preview handler or antivirus holding a
   file open is transient; the retry policy absorbs it. A lock held for the whole run fails the item,
   and only that item.

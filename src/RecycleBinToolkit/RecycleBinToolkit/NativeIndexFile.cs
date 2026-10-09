@@ -159,14 +159,20 @@ internal static class NativeIndexFile
             {
                 var characters = BinaryPrimitives.ReadInt32LittleEndian(buffer[24..]);
 
-                if (characters < 1)
+                // Guarded before anything is multiplied or sliced, but NOT against the bytes actually read: a path
+                // longer than the stack buffer is the case the rented read below exists for, and checking
+                // it against the buffer length would reject exactly that. A declaration large enough to
+                // overflow `characters * 2` is a corrupt record, and without this the wrap would produce a
+                // small length the slice after it rejects — turning a malformed file into a failure the
+                // caller is told to go looking for.
+                if (characters < 1 || characters > int.MaxValue / 2)
                 {
                     return false;
                 }
 
                 var pathBytes = characters * 2;
 
-                if (pathBytes <= read - HeaderLength)
+                if (HeaderLength + pathBytes <= read)
                 {
                     record = new NativeIndexRecord(
                         Encoding.Unicode.GetString(buffer.Slice(HeaderLength, pathBytes)).TrimEnd('\0'),

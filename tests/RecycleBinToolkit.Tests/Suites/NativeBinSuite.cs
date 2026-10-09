@@ -64,6 +64,12 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(TheShellListingSeesAnEntryTheNativePathRecorded), TheShellListingSeesAnEntryTheNativePathRecorded),
         new TestCase("NativeBinSuite." + nameof(ARecycledItemRestoresFromItsRecordedPath), ARecycledItemRestoresFromItsRecordedPath),
         new TestCase("NativeBinSuite." + nameof(TheShellWritesAVersionTwoIndexRecordOnThisMachine), TheShellWritesAVersionTwoIndexRecordOnThisMachine),
+        new TestCase("NativeBinSuite." + nameof(AnUnclampedAttemptBudgetStillRecycles), AnUnclampedAttemptBudgetStillRecycles),
+        new TestCase("NativeBinSuite." + nameof(AnAbsurdOverallTimeoutDoesNotOverflow), AnAbsurdOverallTimeoutDoesNotOverflow),
+        new TestCase("NativeBinSuite." + nameof(ARecycledEntryNeverHasItsRecordWithoutItsPayload), ARecycledEntryNeverHasItsRecordWithoutItsPayload),
+        new TestCase("NativeBinSuite." + nameof(ADeepDirectoryMovesWhole), ADeepDirectoryMovesWhole),
+        new TestCase("NativeBinSuite." + nameof(AnEmptyNamesOnlyTheVolumesItActuallyEmptied), AnEmptyNamesOnlyTheVolumesItActuallyEmptied),
+        new TestCase("NativeBinSuite." + nameof(ABinWithNothingInItIsStillNamedAsEmptied), ABinWithNothingInItIsStillNamedAsEmptied),
     ];
 
     /// <summary>
@@ -405,24 +411,33 @@ internal static class NativeBinSuite
     /// state of a fresh volume, and it is answered with an empty listing rather than an exception — a caller
     /// asking what is in the bin is asking a question that has an answer.
     /// </summary>
-    /// <remarks>
-    /// Driven through a bin directory that was never created, rather than through a volume that is not
-    /// mounted: what is under test is what the listing does when there is nothing there to list, and a
-    /// volume nobody has would be a different thing. The directory asked about sits inside the scratch root
-    /// so the case creates nothing and removes nothing.
+/// <remarks>
+    /// Driven through a volume root the run already owns, whose bin directory was never created, rather
+    /// than through a volume that is not mounted: what is under test is what the listing does when there
+    /// is nothing there to list. Passing the bin directory itself would append <c>$RECYCLE.BIN\&lt;SID&gt;</c>
+    /// to it a second time and pass for the wrong reason, so the case asserts the composition first and then
+    /// hands the lister the root it composes from.
     /// </remarks>
     private static async Task NativeListingOfAVolumeWithNoBinDirectoryIsEmpty(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var absent = Path.Combine(ScratchWorkspace.Root, "$RECYCLE.BIN", NativeBinLayout.CurrentSid);
-        Check.False(Directory.Exists(absent), $"the bin directory does not exist to begin with ({absent})");
+        var root = Path.Combine(ScratchWorkspace.Root, "volume-with-no-bin") + Path.DirectorySeparatorChar;
 
-        var contents = await Task.Run(() => NativeBinLister.TryEnumerate([absent], context.CancellationToken), context.CancellationToken).ConfigureAwait(false);
+        Check.Equal(
+            Path.Combine(root, "$RECYCLE.BIN", NativeBinLayout.CurrentSid),
+            NativeBinLayout.BinDirectory(root),
+            "the bin of a volume is that volume's own directory with the current user's SID under it");
 
-        Check.Equal(0, contents.Items.Count, "a bin directory that does not exist yields no items");
-        Check.Equal(0, contents.Failures.Count, "and no failures");
+        Check.False(Directory.Exists(NativeBinLayout.BinDirectory(root)), "and here it does not exist");
+
+        var contents = await Task
+            .Run(() => NativeBinLister.TryEnumerate([root], context.CancellationToken), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(0, contents.Items.Count, "a volume with no bin yields no items");
+        Check.Equal(0, contents.Failures.Count, "and no failures, because an empty bin is an answer rather than a problem");
 
         workspace.Dispose();
     }
@@ -522,12 +537,21 @@ internal static class NativeBinSuite
 
         Check.Equal(kind, VolumeSeekPenalty.Classify(root), "and the answer is the same when asked twice, because the hardware does not change under a run");
 
-        // A share is answered without asking anything: \\.\ resolves against this machine, so there is no
+// A share is answered without asking anything: \\.\ resolves against this machine, so there is no
         // volume device to ask, and a network's cost is latency rather than a seek.
         Check.Equal(
             VolumeStorageKind.Unknown,
             VolumeSeekPenalty.Classify(@"\\server\share\"),
             "a share is unknown, and is not asked a question whose device path would name the local machine");
+
+        // Composed but not touched. Listing a share would be a network round trip for a case that has no
+        // share to name and no business reaching one: what is checked here is that the composition produces
+        // the shape the lister would then look for, and the lister's answer for a directory that is not there
+        // is the case above.
+        Check.Equal(
+            @"\\server\share\$RECYCLE.BIN\" + NativeBinLayout.CurrentSid,
+            NativeBinLayout.BinDirectory(@"\\server\share\"),
+            "a share's bin is composed the same way a volume's is, under the share root");
 
         return Task.CompletedTask;
     }
@@ -759,6 +783,208 @@ internal static class NativeBinSuite
             $"the Shell on this machine writes version {NativeIndexFile.Version} records, which is the version the native gate requires");
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A caller-supplied options object is not obliged to have been through the clamp, and an attempt budget
+    /// of zero would otherwise run no rounds at all: the batch would report that it recycled nothing and
+    /// failed nothing, which is indistinguishable from an empty batch and is neither true.
+    /// </summary>
+    private static async Task AnUnclampedAttemptBudgetStillRecycles(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the file to reach");
+
+        var path = CreateFile("zero-attempts.bin");
+        var options = new RecycleBinOptions { Backend = RecycleBinBackend.Native, MaxAttempts = 0 };
+
+        var result = await FileRecycler.MoveToRecycleBinAsync([path], options, context.CancellationToken).ConfigureAwait(false);
+
+        Check.True(result.Succeeded, $"the file is recycled anyway, because zero attempts clamps to one (first failure: {Describe(result.FirstFailure)})");
+        Check.Equal(1, result.RecycledPaths.Count, "and is named as recycled rather than silently dropped");
+        Check.False(File.Exists(path), "so it really is in the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The clamp that keeps the retry deadline from overflowing exists because adding an elapsed time to a
+    /// budget close to <see cref="TimeSpan.MaxValue"/> throws — and it threw from an operation documented
+    /// never to throw. A caller is free to set that budget; the library has to survive it.
+    /// </summary>
+    /// <remarks>
+    /// The batch holds a locked file as well as a movable one, because the deadline is only added when a
+    /// retry is about to be scheduled. A batch that succeeds first time never reaches it, and a case that
+    /// proved nothing would pass either way.
+    /// </remarks>
+    private static async Task AnAbsurdOverallTimeoutDoesNotOverflow(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the batch to be measured against");
+
+        var locked = CreateFile("absurd-timeout-locked.bin");
+        var free = CreateFile("absurd-timeout-free.bin");
+        var options = new RecycleBinOptions
+        {
+            Backend = RecycleBinBackend.Native,
+            OverallTimeout = TimeSpan.MaxValue,
+            InitialRetryDelay = TimeSpan.Zero
+        };
+
+        RecycleBinResult result;
+
+        using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            result = await FileRecycler.MoveToRecycleBinAsync([locked, free], options, context.CancellationToken).ConfigureAwait(false);
+        }
+
+        Check.Equal(1, result.Failures.Count, "the locked file is the one that fails");
+        Check.True(result.RecycledPaths.Count == 1, $"and the movable one still went ({result.RecycledPaths.Count} recycled)");
+        Check.False(File.Exists(free), "so the operation completed rather than throwing part way through it");
+    }
+
+    /// <summary>
+    /// The invariant the whole record-first ordering exists to protect: a record never outlives its payload.
+    /// An entry with a record and no payload is a phantom a user can try and fail to restore; an entry with a
+    /// payload and no record is a file on disk that nothing lists, nothing empties and nobody finds. Every
+    /// recycle is checked against this after the fact rather than only in the code that writes the record.
+    /// </summary>
+    private static async Task ARecycledEntryNeverHasItsRecordWithoutItsPayload(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin whose entries must stay in pairs");
+
+        var files = CreateMany(4, sizeBytes: 2048);
+        var recycled = await FileRecycler.MoveToRecycleBinAsync(files, Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"every file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        foreach (var original in files)
+        {
+            var payload = NativeBinLayout.ToPayloadPath(RecordOf(original));
+
+            Check.True(File.Exists(payload) || Directory.Exists(payload),
+                $"the record of {original} has its payload beside it ({payload})");
+        }
+    }
+
+    /// <summary>
+    /// A directory is moved whole, and the deep chain is the shape that would break: the record holds the
+    /// whole path, but the payload is the directory itself and the move has to reach down every level.
+    /// </summary>
+    private static async Task ADeepDirectoryMovesWhole(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for a deep directory to be moved into");
+
+        const int depth = 6;
+        var component = "level-" + RunTag + "-" + new string('l', 40);
+
+        // Nested one level at a time, then the OUTERMOST of them is what gets recycled — so the move has to
+        // carry five more levels underneath it. Recycling the innermost instead would move one directory
+        // with one file in it, which is the shallow case the other case already covers.
+        var outer = Path.Combine(ScratchWorkspace.Root, component + "-0");
+
+        for (var level = 0; level < depth; level++)
+        {
+            var levelDirectory = Path.Combine(
+                ScratchWorkspace.Root,
+                Enumerable.Range(0, level + 1).Select(i => component + "-" + i).Aggregate(Path.Combine));
+
+            Directory.CreateDirectory(levelDirectory);
+            File.WriteAllBytes(Path.Combine(levelDirectory, $"inside-{level}.bin"), Content);
+        }
+
+        var innermost = Path.Combine(
+            ScratchWorkspace.Root,
+            Enumerable.Range(0, depth).Select(i => component + "-" + i).Aggregate(Path.Combine));
+
+        Check.True(innermost.Length > 300, $"the innermost path is genuinely deep ({innermost.Length} characters)");
+        Check.True(File.Exists(Path.Combine(innermost, $"inside-{depth - 1}.bin")), "and its file is on it before the move");
+
+        var result = await FileRecycler.MoveToRecycleBinAsync([outer], Native, context.CancellationToken).ConfigureAwait(false);
+
+        Check.True(result.Succeeded, "a deep directory is recycled as one entry");
+        Check.False(Directory.Exists(outer), "and the outermost of it is gone from disk");
+
+        var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken), outer);
+
+        Check.True(item.IsDirectory, "the listing reports it as a directory");
+        Check.True(Directory.Exists(item.RecycledPath), $"whose whole tree came with it ({item.RecycledPath})");
+
+        // Only ever the last component of anything found: the payload sits under a path this suite must not
+        // print, and a recursive enumeration of a path this deep would be as much a violation as it would be
+        // a long-path operation. What is checked is that the nesting survived the move intact.
+        var walk = item.RecycledPath;
+
+        for (var level = 0; level < depth - 1; level++)
+        {
+// Each level holds exactly two things: the file written into it, and the level below it.
+            var entries = Directory.GetFileSystemEntries(walk);
+            Check.Equal(2, entries.Length, $"level {level} holds its own file and the level below it");
+
+            Check.True(File.Exists(Path.Combine(walk, $"inside-{level}.bin")), $"and the file written into it came with the move");
+
+            var found = Path.GetFileName(entries.Single(e => (File.GetAttributes(e) & FileAttributes.Directory) != 0));
+            Check.Equal(component + "-" + (level + 1), found, $"and the directory below it is the one written at level {level + 1}");
+
+            walk = Path.Combine(walk, found);
+        }
+
+var deepestEntries = Directory.GetFileSystemEntries(walk);
+        Check.Equal(1, deepestEntries.Length, "the innermost level holds only its own file");
+        Check.Equal($"inside-{depth - 1}.bin", Path.GetFileName(deepestEntries[0]), "which is the one written there before the move");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A volume is named as emptied only when nothing on it was left behind. A bin that kept a locked entry
+    /// is not empty, and a caller reading the list is asking whether that volume is empty now.
+    /// </summary>
+    private static async Task AnEmptyNamesOnlyTheVolumesItActuallyEmptied(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin holding one entry that cannot be removed");
+
+        var stuck = CreateFile("stuck.bin");
+        var free = CreateFile("removable.bin");
+
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([stuck, free], Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "both are recycled");
+
+        // The payload is locked where it now lives, after the move. Holding it with no delete share is what
+        // makes one entry undeletable without the case having to put the file in the bin in a broken state.
+        using (new FileStream(NativeBinLayout.ToPayloadPath(RecordOf(stuck)), FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var emptied = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+            Check.True(emptied.VolumesEmptied.Count == 0,
+                $"a volume that kept something is not named as emptied (named: {string.Join(", ", emptied.VolumesEmptied)})");
+            Check.True(emptied.Failures.Count >= 1, "and the entry that stayed is named");
+        }
+    }
+
+    /// <summary>
+    /// The other side of the same rule: a volume whose bin holds nothing is empty afterwards, and saying so
+    /// is the answer to "did you empty it".
+    /// </summary>
+    private static async Task ABinWithNothingInItIsStillNamedAsEmptied(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin to empty twice");
+
+        await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+        var second = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(1, second.VolumesEmptied.Count, "a volume with nothing left in it was emptied, and is named");
+        Check.True(second.VolumesEmptied.Contains(ScratchWorkspace.VolumeRoot), $"by the root the caller named ({ScratchWorkspace.VolumeRoot})");
+        Check.Equal(0, second.Failures.Count, "with nothing to report");
     }
 
     /// <summary>

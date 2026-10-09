@@ -26,9 +26,9 @@ internal static class RecycleBinBackends
     {
         var effective = options ?? RecycleBinOptions.Default;
 
-        // Reading and emptying do not route through here yet: the native backend has neither, so a listing
-        // or an empty named for it still takes the Shell path. This switch answers for the recycle, which is
-        // the operation the native backend implements.
+        // Every operation both backends implement is routed here, which is what makes the boundary checkable
+        // by reading: only ShellRecycleBinBackend names RecycleBinWorker, and nothing else in the assembly
+        // can reach it.
         return effective.Backend == RecycleBinBackend.Native
             ? NativeRecycleBinBackend.Instance
             : ShellRecycleBinBackend.Instance;

@@ -27,7 +27,11 @@ internal static class NativeRecycleRunner
     /// Moves a batch to the Recycle Bin and reports what happened to each path.
     /// </summary>
     /// <param name="targets">Validated paths, already cleared of volumes that cannot recycle them.</param>
-    /// <param name="options">Retry and verification settings, already normalised.</param>
+    /// <param name="options">Retry and verification settings. Normalised here rather than trusted, because a
+    /// caller-supplied <see cref="RecycleBinOptions"/> is not obliged to have been through
+    /// <see cref="RecycleBinOptions.Normalize"/> and an unclamped <see cref="RecycleBinOptions.MaxAttempts"/>
+    /// of zero would otherwise run no rounds at all and report a batch that recycled nothing and failed
+    /// nothing.</param>
     /// <param name="cancellationToken">Cancels the operation between paths.</param>
     /// <returns>The outcome of the batch.</returns>
     /// <remarks>
@@ -43,6 +47,8 @@ internal static class NativeRecycleRunner
     {
         ArgumentNullException.ThrowIfNull(targets);
         ArgumentNullException.ThrowIfNull(options);
+
+        options = options.Normalize();
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -178,7 +184,13 @@ internal static class NativeRecycleRunner
 
         if (options.VerifyRecycleBinReceipt && !IsRecycled(payloadPath, target))
         {
-            TryDeleteIndex(indexPath);
+            // The record stays. The payload has already moved and this is the only place where that has
+            // happened, so the entry is real and Explorer's Restore works on it: an entry with a record is
+            // recoverable and a caller can act on it, while the same entry without one is a file on disk
+            // that nothing lists, nothing empties and nobody will ever find. Reporting the failure is still
+            // right — the caller asked where the item went and the answer was not the expected one — but the
+            // record is not deleted here, and that is the difference between a surprising outcome and a lost
+            // one.
             failure = new RecycleFailure(target.InputPath, 0, 0, RecycleFailureStage.ReceiptVerification);
             return false;
         }

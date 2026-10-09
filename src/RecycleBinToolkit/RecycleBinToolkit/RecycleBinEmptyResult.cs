@@ -39,9 +39,11 @@ public sealed record RecycleBinEmptyResult
     /// Number of entries that left the Recycle Bin.
     /// </summary>
     /// <remarks>
-    /// Measured by querying each volume before and after, never derived from the Shell's success code:
-    /// the Shell reports success whether it removed ten entries or none. Never negative — a bin that
-    /// grew while the operation ran is reported as zero rather than as a negative removal.
+    /// Measured, never taken from a success code: <see cref="RecycleBinBackend.WinApi"/> queries each
+    /// volume before and after and reports the difference, because the Shell reports success whether it
+    /// removed ten entries or none; <see cref="RecycleBinBackend.Native"/> sums the sizes already recorded
+    /// in the entries it is about to delete, which is exact. Never negative — a bin that grew while a
+    /// measured empty ran is reported as zero rather than as a negative removal.
     /// </remarks>
     public long ItemsRemoved { get; }
 
@@ -51,14 +53,21 @@ public sealed record RecycleBinEmptyResult
     public long BytesFreed { get; }
 
     /// <summary>
-    /// Volumes that could not be emptied, or whose before-and-after count could not be read. Empty
-    /// when everything asked for was emptied.
+    /// What could not be emptied. Empty when everything asked for was emptied.
+    /// <para>
+    /// What a path in this list is depends on the backend. The Shell path names the volume that could not
+    /// be emptied or could not be measured. The native path names the volume when the volume itself could not
+    /// be reached, and the individual index record when a single entry would not delete — because on that
+    /// path an entry is deleted one at a time and the caller is better served by knowing which one stayed.
+    /// </para>
     /// </summary>
     public IReadOnlyList<RecycleFailure> Failures { get; }
 
     /// <summary>
-    /// Wall-clock time the caller waited, from handing the work over to getting this result back. That
-    /// includes waiting for the Shell worker to be free, not just the empty itself.
+    /// Wall-clock time the caller waited, from handing the work over to getting this result back. On the
+    /// Shell backend that includes waiting for the worker to be free, which for a library that queues
+    /// every operation behind one thread is most of what a caller waits for; the native backend has no
+    /// queue, and the same measurement is the work plus the hop onto the thread pool.
     /// </summary>
     public TimeSpan Elapsed { get; init; }
 }

@@ -60,18 +60,21 @@ internal static class NativeBinEmptier
 
         // Two different situations hide behind one missing directory, and reporting them the same way would
         // swallow one of them: a volume nothing has ever been recycled on, and a volume that is not there
-        // at all. The first is an empty bin; the second is a caller who asked to empty something that does
-        // not exist, and silence about that reads as "it was empty".
+        // at all. The first is an empty bin, and an empty bin is emptied; the second is a caller who asked
+        // to empty something that does not exist, and silence about that reads as "it was empty".
         if (!Directory.Exists(binDirectory))
         {
             if (!Directory.Exists(volumeRoot))
             {
                 failures.Add(new RecycleFailure(volumeRoot, RecycleBinCounter.UnreadableVolume, 1, RecycleFailureStage.Enumeration));
+                return (0, 0);
             }
 
+            emptied.Add(volumeRoot);
             return (0, 0);
         }
 
+        var failuresBefore = failures.Count;
         var records = CollectRecordPaths(binDirectory);
 
         if (records.Length == 0)
@@ -91,7 +94,14 @@ internal static class NativeBinEmptier
 
         Remove(records, sizes, failures, cancellationToken);
 
-        emptied.Add(volumeRoot);
+        // A volume is named as emptied only when nothing on it was left behind, which is the rule the Shell
+        // path applies for the same reason: a caller reading VolumesEmptied is asking whether that volume
+        // is empty now, and a bin that kept a locked entry is not. The failures themselves name the entries,
+        // so nothing is lost by leaving the volume off the list.
+        if (failures.Count == failuresBefore)
+        {
+            emptied.Add(volumeRoot);
+        }
 
         var removed = 0L;
         var freed = 0L;
