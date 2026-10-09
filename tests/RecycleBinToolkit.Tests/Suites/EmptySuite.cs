@@ -25,7 +25,7 @@ internal static class EmptySuite
         new TestCase("EmptySuite." + nameof(AnExtendedLengthRootIsTheVolumeToEmpty), AnExtendedLengthRootIsTheVolumeToEmpty),
         new TestCase("EmptySuite." + nameof(AnEmptyPathIsNotAVolumeToEmpty), AnEmptyPathIsNotAVolumeToEmpty),
         new TestCase("EmptySuite." + nameof(AForwardSlashSpellingIsTheVolumeToEmpty), AForwardSlashSpellingIsTheVolumeToEmpty),
-        new TestCase("EmptySuite." + nameof(NamingOneVolumeEmptiesThatVolumeAndNoOther), NamingOneVolumeEmptiesThatVolumeAndNoOther),
+        new TestCase("EmptySuite." + nameof(NamingOneVolumeEmptiesThatVolume), NamingOneVolumeEmptiesThatVolume),
     ];
 
     /// <summary>
@@ -48,7 +48,7 @@ internal static class EmptySuite
     /// measured, after the decision moved.
     /// </para>
     /// </remarks>
-    private static async Task NamingOneVolumeEmptiesThatVolumeAndNoOther(TestContext context)
+    private static async Task NamingOneVolumeEmptiesThatVolume(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
