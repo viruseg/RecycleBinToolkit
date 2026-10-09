@@ -88,9 +88,15 @@ internal readonly struct RecycleTarget
     /// </para>
     /// <para>
     /// Only the backslash device prefix is recognised here. The forward-slash spelling
-    /// <c>//?/Volume{guid}\file</c> is the same path to Windows — <c>Path.GetFullPath</c> rewrites it
-    /// into this form — so a caller who typed it is answered by the check against the normalised path,
-    /// which is why there are two of them.
+    /// <c>//?/Volume{guid}\file</c> is the same path — <c>Path.GetFullPath</c> rewrites its separators,
+    /// which is what produces this form — so a caller who typed it is answered by the check against the
+    /// normalised path, which is why there are two of them.
+    /// </para>
+    /// <para>
+    /// The earlier claim, that a relative <c>Volume{guid}\file</c> always resolves to an ordinary path, is
+    /// true of every working directory but one: a process whose current directory is itself a device
+    /// volume-GUID path resolves it to this form, and is refused. That is defensible — such a path is
+    /// genuinely unreadable — but it is a narrowing, not a non-event.
     /// </para>
     /// </remarks>
     internal static bool IsVolumeGuidPath(string path) =>

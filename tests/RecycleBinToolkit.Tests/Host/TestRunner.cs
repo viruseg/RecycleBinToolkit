@@ -30,9 +30,10 @@ internal sealed class TestRunner
     /// </param>
     /// <param name="cases">All known cases; grouping and filtering both happen inside the runner.</param>
     /// <returns>
-    /// 0 when every selected case passed, 1 when one failed or the selection was empty, 2 when
-    /// <c>--scratch</c> was left out or was given no root, when <c>--manual</c> was given without a
-    /// root for it to name, or when <c>--filter</c> was given nothing to match.
+    /// 0 when at least one case ran and passed. 1 when one failed, when the selection was empty, or
+    /// when every selected case was skipped -- a run that produced no coverage is not a green run.
+    /// 2 when <c>--scratch</c> was left out or was given no root, when <c>--manual</c> was given without
+    /// a root for it to name, or when <c>--filter</c> was given nothing to match.
     /// </returns>
     internal static async Task<int> RunAsync(string[] args, IReadOnlyList<TestCase> cases)
     {

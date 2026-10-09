@@ -819,8 +819,9 @@ internal static class LongPathSuite
 
             // Replaced rather than tightened. The old form read `before > 0 || sizeDelta >= 0`, which
             // holds on a non-empty bin and on any outcome that is not a shrink -- so it could not fail
-            // and said nothing about readability, which is what its message claimed. Both readings now
-            // go through MeasureOrFail above, which fails the case by name if either was unreadable.
+            // and said nothing about readability, which is what its message claimed. Only the baseline
+            // goes through MeasureOrFail; the second reading does not, because a -1 there makes this very
+            // assertion fail on the size rather than on a claim the measurement cannot support.
             Check.True(
                 sizeDelta >= 0 || result.Succeeded,
                 $"the Recycle Bin did not lose bytes while the item was in it (grew by {sizeDelta})");

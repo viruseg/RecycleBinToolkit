@@ -191,6 +191,12 @@ internal static class ReadmeExamples
         }
         else
         {
+            // Two things can make this false, and only one of them is a failure.
+            foreach (var failure in result.Failures)
+            {
+                Console.Error.WriteLine($"{failure.Path} â {failure.Stage}, 0x{failure.HResult:X8}");
+            }
+
             // A count is not a location. Your data is in one of these directories, not where you left it.
             foreach (var directory in result.LeftoverStagingDirectories)
             {

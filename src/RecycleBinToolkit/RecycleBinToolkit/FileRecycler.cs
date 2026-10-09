@@ -478,10 +478,10 @@ public static class FileRecycler
             return new RecycleFailure(rawPath, ex.HResult, 0, RecycleFailureStage.PathValidation);
         }
 
-        // Checked on the normalised path as well as on what the caller typed. Windows reads "//?/" as the
-        // device prefix, so Path.GetFullPath turns that spelling into the backslash form -- and a check
-        // made only on the caller's spelling would let it through, to be handed to a Shell that refuses it
-        // and retried for every attempt the caller asked for.
+        // Checked on the normalised path as well as on what the caller typed, because
+        // Path.GetFullPath rewrites forward slashes to backslashes, which turns "//?/Volume{...}" into
+        // the device form. A check made only on the caller's spelling would let it through, to be handed
+        // to a Shell that refuses it and retried for every attempt the caller asked for.
         if (RecycleTarget.IsVolumeGuidPath(rawPath) || RecycleTarget.IsVolumeGuidPath(fullPath))
         {
             return new RecycleFailure(rawPath, 0, 0, RecycleFailureStage.VolumeGuidPathNotAddressable);
