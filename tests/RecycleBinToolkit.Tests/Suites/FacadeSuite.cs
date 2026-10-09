@@ -100,6 +100,27 @@ internal static class FacadeSuite
         Check.Equal(0, result.FirstFailure.HResult, "carrying no code, because nothing was ever asked");
         Check.True(File.Exists(file), "the file is exactly where it was left");
 
+        // The same path written with forward slashes, which Windows and Path.GetFullPath both read as the
+        // device form. Checked against the caller's own spelling this is not a volume GUID path at all, so
+        // without the second check it reaches the Shell -- which refuses it -- and is retried once per
+        // attempt the caller asked for before being reported as ShellItemCreation rather than as the
+        // spelling that caused it.
+        var slashed = addressed.Replace('\\', '/');
+
+        Check.False(RecycleTarget.IsVolumeGuidPath(slashed), "the caller's own spelling carries no backslashes at all");
+
+        var viaSlashes = await FileRecycler
+            .MoveToRecycleBinAsync([slashed], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(1, viaSlashes.Failures.Count, $"the forward-slash spelling is refused too (got {viaSlashes.FirstFailure?.Stage})");
+        Check.Equal(
+            RecycleFailureStage.VolumeGuidPathNotAddressable,
+            viaSlashes.FirstFailure!.Stage,
+            "and it is the same refusal, which only the check against the normalised path can produce");
+        Check.Equal(0, viaSlashes.FirstFailure.Attempts, "with nothing attempted on the way to it");
+        Check.True(File.Exists(file), "and the file is still there after being refused twice");
+
         workspace.Dispose();
     }
 
