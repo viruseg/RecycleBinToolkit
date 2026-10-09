@@ -69,10 +69,8 @@ internal sealed class TestRunner
             return 1;
         }
 
-        var runs = Expand(selected);
-
         Console.WriteLine($"scratch root {ScratchWorkspace.RunRoot}");
-        Console.WriteLine($"running {runs.Count} of {cases.Count} test(s)");
+        Console.WriteLine($"running {selected.Length} of {cases.Count} test(s)");
 
         DescribeDeferred(cases, kind, filter);
 
@@ -80,10 +78,10 @@ internal sealed class TestRunner
 
         // Everything below writes files and removes directories, so the run's own tree goes with it rather
         // than being left in the volume root for the next run to trip over. A run that fails still cleans
-        // up: the cases report through `runs`, not through what is left on disk.
+        // up: the cases report through `selected`, not through what is left on disk.
         try
         {
-            return await ExecuteAsync(runs).ConfigureAwait(false);
+            return await ExecuteAsync(selected).ConfigureAwait(false);
         }
         finally
         {
@@ -94,19 +92,19 @@ internal sealed class TestRunner
     /// <summary>
     /// Runs the selected cases in order and reports what they did.
     /// </summary>
-    /// <param name="runs">One entry per selected case.</param>
+    /// <param name="selected">The cases to run, in the order they were selected.</param>
     /// <returns>
     /// 0 when at least one case passed and none failed. 1 when one failed, or when every case was
     /// skipped -- a run that produced no coverage is not a green run, the same shape an empty selection
     /// already returns 1 for.
     /// </returns>
-    private static async Task<int> ExecuteAsync(List<TestCase> runs)
+    private static async Task<int> ExecuteAsync(TestCase[] selected)
     {
         var passed = 0;
         var skipped = 0;
         List<string>? failures = null;
 
-        foreach (var testCase in runs)
+        foreach (var testCase in selected)
         {
             var name = testCase.Name;
             var stopwatch = Stopwatch.StartNew();
@@ -143,7 +141,7 @@ internal sealed class TestRunner
         }
 
         Console.WriteLine();
-        var failedCount = runs.Count - passed - skipped;
+        var failedCount = selected.Length - passed - skipped;
         Console.WriteLine(Summary(passed, skipped, failedCount));
 
         if (failures is not null)
@@ -165,9 +163,6 @@ internal sealed class TestRunner
         (_, > 0, 0) => $"{passed} passed, {skipped} skipped (no failures)",
         _ => $"{passed} passed, {skipped} skipped, {failed} failed"
     };
-
-    /// <summary>The runs a selection stands for: one per case, in the order the selection came in.</summary>
-    private static List<TestCase> Expand(IReadOnlyList<TestCase> selected) => [.. selected];
 
     /// <summary>Which group the command line asks for.</summary>
     private static TestKind SelectKind(string[] args) =>

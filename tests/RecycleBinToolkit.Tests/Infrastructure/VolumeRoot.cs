@@ -4,9 +4,9 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 /// Reading a volume root off a command line, and refusing anything that is not one.
 /// </summary>
 /// <remarks>
-/// Both flags that name a path to test take the same argument and owe it the same reading. What differs is
-/// what the volume behind it is then asked to do — a scratch run needs a volume that recycles, a manual run
-/// needs one that does not — so that difference stays in the cases and never here.
+/// The argument is read the same way whatever it is spelled like, and what the volume behind it is then
+/// asked to do is not decided here: a run needs a volume that recycles, and that question belongs to the
+/// cases rather than to the reading of a path.
 /// </remarks>
 internal static class VolumeRoot
 {

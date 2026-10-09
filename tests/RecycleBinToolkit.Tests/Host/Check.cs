@@ -101,8 +101,9 @@ internal static class Check
     /// </summary>
     /// <remarks>
     /// A case that returns normally is counted as passed, so a skip written as a plain return makes a run
-    /// report coverage it did not produce -- the same failure AGENTS.md treats as a defect for the load
-    /// and manual groups, and the reason this is a separate outcome rather than a comment.
+    /// report coverage it did not produce. Counting the two outcomes apart is this repository's rule for
+    /// every group, the load group included, and the reason this is a separate outcome rather than a
+    /// comment.
     /// </remarks>
     /// <exception cref="CheckSkippedException">Always.</exception>
     internal static void Skip(string because) => throw new CheckSkippedException(because);

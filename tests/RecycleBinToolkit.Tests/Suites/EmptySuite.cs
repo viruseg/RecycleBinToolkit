@@ -124,9 +124,11 @@ internal static class EmptySuite
     /// <para>
     /// This is the guard for that duplication on a local drive. <c>\\?\W:\</c> is not: the Shell hands
     /// that spelling back as its own root, so both predicates read it as a root and
-    /// <see cref="AnExtendedLengthRootIsTheVolumeToEmpty"/> cannot tell them apart. A share root can tell
-    /// them apart, and is the later manual group's case to make, because the empty hands an accepted share
-    /// to the Shell and the default run must not reach for the network.
+    /// <see cref="AnExtendedLengthRootIsTheVolumeToEmpty"/> cannot tell them apart. A share root is the one
+    /// shape that would, because <c>Path.GetPathRoot</c> spells it in backslashes whichever way the caller
+    /// wrote it while a reduced comparison reads the two spellings as different roots. No case here makes
+    /// that comparison, and the limit is known rather than worked around: the empty hands an accepted share
+    /// to the Shell, and this suite does not reach for the network to get at one.
     /// </para>
     /// </remarks>
     private static async Task AForwardSlashSpellingIsTheVolumeToEmpty(TestContext context)
