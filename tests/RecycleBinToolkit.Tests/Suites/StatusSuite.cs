@@ -100,10 +100,30 @@ internal static class StatusSuite
     /// gained is that the reason asserted is one a caller is actually handed — a flash drive, or a share,
     /// rather than a stand-in for one.
     /// <para>
-    /// The volume is asked about twice by two routes: once for the run and cached on
-    /// <see cref="ScratchWorkspace.Reason"/>, and once here. A reason that differed between them would
-    /// mean the run's own answer no longer described its own volume, so the third assertion pins the two
-    /// together rather than pinning only what the library returns.
+    /// The gate is coarser than the claim, and the third assertion is what makes up the difference.
+    /// <see cref="ScratchWorkspace.RequireNonRecycling"/> skips on every reason but
+    /// <see cref="RecycleBinAvailabilityReason.Enabled"/>, so it lets this case run on a share
+    /// (<see cref="RecycleBinAvailabilityReason.UnsupportedVolumeType"/>) and on a volume whose own
+    /// setting turns recycling off (<see cref="RecycleBinAvailabilityReason.DisabledByUserPreference"/>)
+    /// — both of which are decided, and both of which the case is right to pass on. It also lets it run on
+    /// a volume whose type could not be read at all
+    /// (<see cref="RecycleBinAvailabilityReason.Indeterminate"/>), and there the three original
+    /// assertions all held without witnessing anything: an undecided reason is not enabled, and it matches
+    /// the run's own cached copy of itself. A reason that is not
+    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> is one the library committed to, and that
+    /// commitment is the whole difference between "this volume has no bin" and "this run does not know".
+    /// </para>
+    /// So a volume the library declines to describe goes red here rather than passing quietly, and that is
+    /// the intended reading. It is the one condition under which a case of this name has run and not
+    /// witnessed its claim, which is what a red is for. A skip would record a machine the library cannot
+    /// read as merely not applicable, while every other case gated on
+    /// <see cref="ScratchWorkspace.Reason"/> skipped beside it for the same reason without one of them
+    /// saying so.
+    /// </para>
+    /// <para>
+    /// The last assertion pins the two readings of the volume together — the run's cached
+    /// <see cref="ScratchWorkspace.Reason"/> and a fresh one here — because a disagreement would mean the
+    /// answer every other case in this run gates on no longer describes its own volume.
     /// </para>
     /// </remarks>
     private static async Task NoRecycleBinVolumeIsNamedNotIndeterminate(TestContext context)
@@ -114,6 +134,10 @@ internal static class StatusSuite
 
         Check.Equal(ScratchWorkspace.VolumeRoot, status.VolumeRoot, "the answer names the volume it was asked about");
         Check.False(status.IsEnabled, $"a volume with no Recycle Bin is not an enabled Recycle Bin (got {status.Reason})");
+        Check.NotEqual(
+            RecycleBinAvailabilityReason.Indeterminate,
+            status.Reason,
+            "a volume the Shell reports no bin for is named, rather than the volume being left undecided");
         Check.Equal(
             status.Reason,
             ScratchWorkspace.Reason,
@@ -135,10 +159,15 @@ internal static class StatusSuite
     /// nothing to clean up.
     /// <para>
     /// The first shape was reached through a <c>subst</c> mapping, which reported a drive type that
-    /// supports a bin while having no GUID to key the setting on. Nothing in this repository builds such a
-    /// volume any more, so this case no longer needs one at all: it reads a name, not a volume, and the
-    /// library's own answer for a volume like that is pinned by
-    /// <see cref="NoRecycleBinVolumeIsNamedNotIndeterminate"/> on whichever volume <c>--scratch</c> names.
+    /// supports a bin while having no GUID to key the setting on. Nothing builds such a volume any more,
+    /// and nothing asserts that shape either — this is not a claim that is covered elsewhere.
+    /// <see cref="RecycleBinRegistry.ReadNukeOnDelete"/>'s null-key-name branch is now reached by no case
+    /// in this repository, so a regression that gave a GUID-less volume any answer other than Unknown would
+    /// be caught by neither this case nor any other.
+    /// <see cref="NoRecycleBinVolumeIsNamedNotIndeterminate"/> does not reach it either: a bin-less volume
+    /// that has a GUID of its own is settled by the Shell's report rather than by a missing key name. The
+    /// gap is recorded here rather than closed, because closing it needs a volume with no GUID and nothing
+    /// in this repository makes one.
     /// </para>
     /// <para>
     /// The last assertion pins that the unknown cannot be honoured anywhere downstream of the reader.
