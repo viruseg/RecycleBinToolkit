@@ -59,28 +59,32 @@ internal sealed class TestRunner
 
         var kind = SelectKind(args);
 
-        ScratchWorkspace.Configure(scratchRoot);
-
-        var selected = Select(cases, kind, filter);
-
-        if (selected.Length == 0)
-        {
-            Console.Error.WriteLine(DescribeEmptySelection(cases, kind, filter));
-            return 1;
-        }
-
-        Console.WriteLine($"scratch root {ScratchWorkspace.RunRoot}");
-        Console.WriteLine($"running {selected.Length} of {cases.Count} test(s)");
-
-        DescribeDeferred(cases, kind, filter);
-
-        Console.WriteLine();
-
-        // Everything below writes files and removes directories, so the run's own tree goes with it rather
-        // than being left in the volume root for the next run to trip over. A run that fails still cleans
-        // up: the cases report through `selected`, not through what is left on disk.
+        // The run's own directory is claimed from here on, so everything below runs inside the try whose
+        // finally removes it — including the empty-selection return, which is an exit path like any other.
+        // A claim is created in the volume root, and one left there is a directory this suite made that
+        // nothing owns.
         try
         {
+            ScratchWorkspace.Configure(scratchRoot);
+
+            var selected = Select(cases, kind, filter);
+
+            if (selected.Length == 0)
+            {
+                Console.Error.WriteLine(DescribeEmptySelection(cases, kind, filter));
+                return 1;
+            }
+
+            Console.WriteLine($"scratch root {ScratchWorkspace.RunRoot}");
+            Console.WriteLine($"running {selected.Length} of {cases.Count} test(s)");
+
+            DescribeDeferred(cases, kind, filter);
+
+            Console.WriteLine();
+
+            // Everything below writes files and removes directories, so the run's own tree goes with it
+            // rather than being left in the volume root for the next run to trip over. A run that fails
+            // still cleans up: the cases report through `selected`, not through what is left on disk.
             return await ExecuteAsync(selected).ConfigureAwait(false);
         }
         finally
