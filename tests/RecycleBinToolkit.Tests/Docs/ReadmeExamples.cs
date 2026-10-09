@@ -110,11 +110,11 @@ internal static class ReadmeExamples
         // code the result comes back from a call.
         var result = RecycleBinResult.Create(["a"], [], [], TimeSpan.Zero);
 
-// Succeeded means gone from disk, not necessarily recycled: a file removed permanently under an
+        // Succeeded means gone from disk, not necessarily recycled: a file removed permanently under an
         // explicit policy counts as a success. Check PermanentlyDeletedPaths when that matters. It is
         // also false when an item was left in a staging directory, so check LeftoverStagingDirectories
         // too rather than trusting one property to be the whole answer.
-Console.WriteLine($"{result.Succeeded} {result.Elapsed} {result.FirstFailure is null}");
+        Console.WriteLine($"{result.Succeeded} {result.Elapsed} {result.FirstFailure is null}");
     }
 
     internal static async Task ListTheRecycleBin()
