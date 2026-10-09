@@ -269,7 +269,7 @@ internal static class EmptySuite
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is an entry on the volume for the check to be about");
 
-        var (countBefore, _) = RecycleBinProbe.Measure(ScratchWorkspace.VolumeRoot);
+        var (countBefore, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
         var result = await RecycleBin.EmptyAsync(ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
 
@@ -364,7 +364,7 @@ internal static class EmptySuite
         var files = workspace.CreateRandomFiles(1, fileSize);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        var (countBefore, _) = RecycleBinProbe.Measure(volumeRoot);
+        var (countBefore, _) = RecycleBinProbe.MeasureOrFail(volumeRoot, "the baseline count");
 
         var recycled = await FileRecycler
             .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)

@@ -581,7 +581,7 @@ internal static class LongPathSuite
                 stream.Write(new byte[payload]);
             }
 
-            var (countBefore, sizeBefore) = RecycleBinProbe.Measure(ScratchWorkspace.VolumeRoot);
+            var (countBefore, sizeBefore) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline before the staged batch");
 
             var options = new RecycleBinOptions
             {
@@ -799,7 +799,7 @@ internal static class LongPathSuite
                 Check.True(actual.AsSpan().SequenceEqual(expected), "the file reads back with the content that was written");
             }
 
-            var (before, sizeBefore) = RecycleBinProbe.Measure(ScratchWorkspace.VolumeRoot);
+            var (before, sizeBefore) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline before the long-path batch");
 
             var result = await FileRecycler.MoveToRecycleBinAsync([extendedPath], cancellationToken: context.CancellationToken);
 
@@ -820,7 +820,13 @@ internal static class LongPathSuite
                     "the refusal names the long-path limitation");
             }
 
-            Check.True(before > 0 || sizeDelta >= 0, "the Recycle Bin volume was readable throughout");
+            // Replaced rather than tightened. The old form read `before > 0 || sizeDelta >= 0`, which
+            // holds on a non-empty bin and on any outcome that is not a shrink -- so it could not fail
+            // and said nothing about readability, which is what its message claimed. Both readings now
+            // go through MeasureOrFail above, which fails the case by name if either was unreadable.
+            Check.True(
+                sizeDelta >= 0 || result.Succeeded,
+                $"the Recycle Bin did not lose bytes while the item was in it (grew by {sizeDelta})");
         }
         finally
         {
@@ -841,7 +847,7 @@ internal static class LongPathSuite
                 stream.Write(new byte[4096]);
             }
 
-            var sizeBefore = RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot);
+            var (_, sizeBefore) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline size");
             var result = await FileRecycler.MoveToRecycleBinAsync([plainPath], cancellationToken: context.CancellationToken);
 
             if (result.Succeeded)
@@ -963,7 +969,7 @@ internal static class LongPathSuite
             Check.True(plainPath.Length <= MaxPathThreshold, $"the path is under the threshold ({plainPath.Length} chars)");
 
             var options = new RecycleBinOptions { LongPathFailureAction = LongPathFailureAction.DeletePermanently };
-            var before = RecycleBinProbe.QuerySize(ScratchWorkspace.VolumeRoot);
+            var (_, before) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline size");
 
             var result = await FileRecycler.MoveToRecycleBinAsync([plainPath], options, context.CancellationToken);
 
