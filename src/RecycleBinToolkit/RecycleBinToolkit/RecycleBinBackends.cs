@@ -26,11 +26,11 @@ internal static class RecycleBinBackends
     {
         var effective = options ?? RecycleBinOptions.Default;
 
-        // Native lands here once every operation is implemented on it. Until then the option is
-        // accepted and the call takes the Shell path, because a backend that answered "not supported"
-        // for a reading or an empty would take working functionality away for no reason.
-        _ = effective.Backend;
-
-        return ShellRecycleBinBackend.Instance;
+        // Reading and emptying do not route through here yet: the native backend has neither, so a listing
+        // or an empty named for it still takes the Shell path. This switch answers for the recycle, which is
+        // the operation the native backend implements.
+        return effective.Backend == RecycleBinBackend.Native
+            ? NativeRecycleBinBackend.Instance
+            : ShellRecycleBinBackend.Instance;
     }
 }

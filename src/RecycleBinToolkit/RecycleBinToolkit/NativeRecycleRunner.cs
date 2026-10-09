@@ -1,0 +1,269 @@
+using System.Diagnostics;
+using System.Runtime.Versioning;
+
+namespace RecycleBinToolkit;
+
+/// <summary>
+/// Moves paths into <c>$RECYCLE.BIN</c> by writing the record and moving the payload, with no Shell, no
+/// apartment and no staging.
+/// </summary>
+/// <remarks>
+/// Synchronous, because everything it does blocks: a file move is a metadata operation the thread waits
+/// on. It is only ever given a thread from the pool, never a caller's and never the Shell worker's.
+/// </remarks>
+[SupportedOSPlatform("windows6.0.6000")]
+internal static class NativeRecycleRunner
+{
+    /// <summary>Longest wait that can be expressed as a <see cref="TimeSpan"/> from milliseconds.</summary>
+    private const double MaxWaitableMilliseconds = (double)int.MaxValue;
+
+    /// <summary>
+    /// How far a delay is randomised, as a fraction of itself. Stops a batch of locked files from retrying
+    /// in lockstep with every other batch on the machine.
+    /// </summary>
+    private const double MaxJitterFraction = 0.2;
+
+    /// <summary>
+    /// Moves a batch to the Recycle Bin and reports what happened to each path.
+    /// </summary>
+    /// <param name="targets">Validated paths, already cleared of volumes that cannot recycle them.</param>
+    /// <param name="options">Retry and verification settings, already normalised.</param>
+    /// <param name="cancellationToken">Cancels the operation between paths.</param>
+    /// <returns>The outcome of the batch.</returns>
+    /// <remarks>
+    /// Retries are per path rather than per batch, which is the difference between this and the Shell path.
+    /// A Shell failure is often a property of the whole operation and answering it again means answering
+    /// about every item; a move that fails is a property of one path, and retrying the others would repeat
+    /// work that already succeeded.
+    /// </remarks>
+    internal static RecycleBinResult Run(
+        IReadOnlyList<RecycleTarget> targets,
+        RecycleBinOptions options,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(targets);
+        ArgumentNullException.ThrowIfNull(options);
+
+        var stopwatch = Stopwatch.StartNew();
+
+        if (targets.Count == 0)
+        {
+            return RecycleBinResult.Create([], [], stopwatch.Elapsed);
+        }
+
+        var pending = RecycleOperationRunner.CollapseEquivalentPaths(targets);
+        var recycled = new List<string>(pending.Count);
+        var failures = new List<RecycleFailure>();
+
+        // Verdicts are carried beside the paths rather than collected per attempt, so the failure reported at
+        // the end is the one from the round that actually gave up and not a duplicate of every round's. Only
+        // the round that ends the loop matters, so the array is replaced rather than appended to.
+        var verdicts = new RecycleFailure?[pending.Count];
+
+        for (var round = 1; round <= options.MaxAttempts && pending.Count > 0; round++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var stillPending = new List<RecycleTarget>(pending.Count);
+            var stillVerdicts = new RecycleFailure?[pending.Count];
+
+            foreach (var target in pending)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (TryRecycle(target, options, out var failure))
+                {
+                    recycled.Add(target.InputPath);
+                    continue;
+                }
+
+                stillPending.Add(target);
+                stillVerdicts[stillPending.Count - 1] = new RecycleFailure(
+                    failure.Path,
+                    failure.HResult,
+                    round,
+                    failure.Stage);
+            }
+
+            pending = stillPending;
+            verdicts = stillVerdicts;
+
+            if (pending.Count == 0 || round == options.MaxAttempts)
+            {
+                break;
+            }
+
+            if (!WaitBeforeRetry(options, round, stopwatch, cancellationToken))
+            {
+                break;
+            }
+        }
+
+        foreach (var verdict in verdicts)
+        {
+            if (verdict is not null)
+            {
+                failures.Add(verdict);
+            }
+        }
+
+        return RecycleBinResult.Create(recycled, [], failures, stopwatch.Elapsed);
+    }
+
+    /// <summary>
+    /// Writes the record, moves the payload, and takes the record away again if the move did not happen.
+    /// </summary>
+    /// <remarks>
+    /// The order is the whole design. The record goes first, so a crash between the two leaves the caller's
+    /// file exactly where it was and an index with no payload — a phantom the next empty collects. The other
+    /// order leaves data that is gone and recorded nowhere, which is the one outcome a Recycle Bin exists to
+    /// prevent.
+    /// </remarks>
+    private static bool TryRecycle(RecycleTarget target, RecycleBinOptions options, out RecycleFailure failure)
+    {
+        var root = Path.GetPathRoot(target.ShellPath);
+
+        if (string.IsNullOrEmpty(root))
+        {
+            failure = new RecycleFailure(target.InputPath, 0, 0, RecycleFailureStage.PathValidation);
+            return false;
+        }
+
+        bool isDirectory;
+        string indexPath;
+        string payloadPath;
+
+        try
+        {
+            isDirectory = (File.GetAttributes(target.FullPath) & FileAttributes.Directory) != 0;
+            var size = isDirectory ? 0L : new FileInfo(target.FullPath).Length;
+
+            if (!NativeBinLayout.TryCreatePair(
+                    NativeBinLayout.EnsureBinDirectory(root),
+                    Path.GetExtension(target.ShellPath),
+                    out indexPath,
+                    out payloadPath))
+            {
+                failure = new RecycleFailure(target.InputPath, 0, 0, RecycleFailureStage.Performing);
+                return false;
+            }
+
+            NativeIndexFile.Write(indexPath, target.ShellPath, size, DateTime.UtcNow);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            failure = new RecycleFailure(target.InputPath, ex.HResult, 0, RecycleFailureStage.Performing);
+            return false;
+        }
+
+        try
+        {
+            if (isDirectory)
+            {
+                Directory.Move(target.FullPath, payloadPath);
+            }
+            else
+            {
+                File.Move(target.FullPath, payloadPath);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // The record names an item that is still where the caller left it, which the Shell would show as
+            // a phantom a user could try and fail to restore. It goes back before the failure does.
+            TryDeleteIndex(indexPath);
+            failure = new RecycleFailure(target.InputPath, ex.HResult, 0, RecycleFailureStage.Performing);
+            return false;
+        }
+
+        if (options.VerifyRecycleBinReceipt && !IsRecycled(payloadPath, target))
+        {
+            TryDeleteIndex(indexPath);
+            failure = new RecycleFailure(target.InputPath, 0, 0, RecycleFailureStage.ReceiptVerification);
+            return false;
+        }
+
+        failure = default!;
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the payload is where a recycle puts it: inside the bin on the item's own volume, and there.
+    /// </summary>
+    /// <remarks>
+    /// The move either happened or it faulted, so this is not a question about whether the operation
+    /// succeeded — it is a question about whether the move went where it was aimed, which is the one thing
+    /// this library cannot take on trust from a call that reported no error.
+    /// </remarks>
+    private static bool IsRecycled(string payloadPath, RecycleTarget target)
+    {
+        if (!RecycleBinReceipt.IsInsideRecycleBin(payloadPath, target.ShellPath))
+        {
+            return false;
+        }
+
+        return File.Exists(payloadPath) || Directory.Exists(payloadPath);
+    }
+
+    private static void TryDeleteIndex(string indexPath)
+    {
+        try
+        {
+            File.Delete(indexPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The record is left naming an item that never arrived. Nothing above this library can describe
+            // it, and the next empty on this volume collects it.
+        }
+    }
+
+    /// <summary>
+    /// Waits out the backoff for the round that just finished.
+    /// </summary>
+    /// <returns>
+    /// <see langword="false"/> when no further round may start: the overall budget is spent, or the backoff
+    /// does not fit in what is left of it.
+    /// </returns>
+    private static bool WaitBeforeRetry(
+        RecycleBinOptions options,
+        int round,
+        Stopwatch stopwatch,
+        CancellationToken cancellationToken)
+    {
+        var deadline = stopwatch.Elapsed + options.OverallTimeout;
+
+        var exponential = options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, round - 1);
+        var jittered = exponential * (1 + ((Random.Shared.NextDouble() * 2 - 1) * MaxJitterFraction));
+
+        var delay = TimeSpan.FromMilliseconds(Math.Clamp(jittered, 0, MaxWaitableMilliseconds));
+
+        var remaining = deadline - stopwatch.Elapsed;
+        if (remaining <= TimeSpan.Zero || delay >= remaining)
+        {
+            return false;
+        }
+
+        if (!cancellationToken.CanBeCanceled)
+        {
+            Thread.Sleep(delay);
+            return true;
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        try
+        {
+            return !cancellationToken.WaitHandle.WaitOne(delay);
+        }
+        catch (ObjectDisposedException)
+        {
+            // The caller disposed their token source while this batch was still queued. They have gone, so
+            // this batch has nobody left to report to either.
+            return false;
+        }
+    }
+}

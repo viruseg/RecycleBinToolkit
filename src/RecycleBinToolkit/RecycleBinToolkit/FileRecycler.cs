@@ -148,6 +148,19 @@ public static class FileRecycler
 
         var effective = options ?? RecycleBinOptions.Default;
 
+        // Before argument validation, before any filesystem question, and before the hop to the pool: the
+        // machine either can be written to natively or cannot, and that does not depend on the paths, so a
+        // caller is told before this library starts touching anything. It is not a RecycleFailure and
+        // ThrowOnError does not suppress it — nothing was attempted, so there is nothing to report as data.
+        if (effective.Backend == RecycleBinBackend.Native)
+        {
+            RecycleBinBackendGuard.RequireWriteSupport();
+
+            return await Task
+                .Run(() => MoveNatively(filePaths, effective, cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         // Validating a batch is one filesystem probe per path and, on the volume measured here, about
         // 11 ms each — so 20,000 paths is a little over three and a half minutes. Run inline that time is
         // the caller's own, because an async method runs everything before its first await on the
@@ -180,6 +193,44 @@ public static class FileRecycler
 
         // The gate's own verdicts come first, in the order the paths were supplied, because a caller
         // reading the list wants the path that never reached the Shell before the ones that did.
+        var merged = new List<RecycleFailure>(gateFailures.Count + result.Failures.Count);
+        merged.AddRange(gateFailures);
+        merged.AddRange(result.Failures);
+
+        return result
+            .WithFailures(merged)
+            .WithPermanentlyDeleted([.. permanentlyDeleted, .. result.PermanentlyDeletedPaths]);
+    }
+
+    /// <summary>
+    /// Validates a batch and moves it, on one pool thread.
+    /// </summary>
+    /// <remarks>
+    /// One trip rather than two. Validation is minutes of filesystem work on a large batch and belongs on
+    /// the pool whatever the backend is; the recycle is seconds of file moves. Running them on the same
+    /// thread costs nothing and saves a scheduling round trip, and nothing about validation is
+    /// backend-specific, so it stays in <see cref="BuildTargets"/> rather than moving into a backend.
+    /// </remarks>
+    /// <returns>The outcome, with the volume gate's own verdicts merged in.</returns>
+    private static RecycleBinResult MoveNatively(
+        IReadOnlyList<string?> filePaths,
+        RecycleBinOptions options,
+        CancellationToken cancellationToken)
+    {
+        var (targets, gateFailures, permanentlyDeleted) = BuildTargets(filePaths, options);
+
+        if (targets.Count == 0)
+        {
+            return RecycleBinResult.Create([], permanentlyDeleted, gateFailures, TimeSpan.Zero);
+        }
+
+        var result = NativeRecycleBinBackend.Recycle(targets, options, cancellationToken);
+
+        if (gateFailures.Count == 0 && permanentlyDeleted.Count == 0)
+        {
+            return result;
+        }
+
         var merged = new List<RecycleFailure>(gateFailures.Count + result.Failures.Count);
         merged.AddRange(gateFailures);
         merged.AddRange(result.Failures);
