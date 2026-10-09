@@ -12,13 +12,11 @@ dotnet build tests/RecycleBinToolkit.Tests/RecycleBinToolkit.Tests.csproj
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --all
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --filter LongPathSuite
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --load
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --manual "F:\" --manual "\\server\share\"
 ```
 
 Build the test project after any change to `tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs` —
 see the rule below. The suites change machine state: they write into a directory they create inside the
-volume `--scratch` names, and they empty the Recycle Bin. The manual group goes further and writes to —
-and deletes from — whatever path `--manual` names.
+volume `--scratch` names, and they empty the Recycle Bin. Nothing else.
 
 ## --scratch, and asking which volume
 
@@ -27,6 +25,21 @@ and deletes from — whatever path `--manual` names.
 leading backslashes. A directory inside a volume is refused, as is a bare drive letter: both resolve
 against something other than the volume they name. Without the flag the runner runs nothing and exits 2,
 because the suite writes files and deletes directories and neither is worth guessing at.
+
+**Any volume is a legal answer.** `--scratch` does not require a volume that recycles. A run on a volume
+with no Recycle Bin runs the cases that are about such a volume and skips the ones that are not, so it is
+green-or-skip and never red for want of the right kind of disk. A removable drive is a first-class choice
+here, not a fallback.
+
+**A share has to survive the command line, and the documented spelling does not everywhere.**
+`--scratch "\\server\share\"` arrives intact in PowerShell and `cmd.exe`, which treat backslashes literally.
+Anything that reads `\\` as an escape delivers `\server\share\` instead, whose `Path.GetPathRoot` is `\` —
+a path on the *current drive*, so the directory the cases create lands wherever the process happens to be.
+That has already cost this repository one. `--scratch "//server/share/"` is the spelling to use from such
+a shell: the forward-slash form reaches the runner intact, and `VolumeRoot.Normalize` converts it, because
+the library deliberately refuses it (`RecycleBinVolumeState.RootForm` only reduces backslashes) and the
+conversion belongs where the command line is read. A root that is not a volume root at all is refused by
+`VolumeRoot.Normalize`, before anything is created on it.
 
 **Ask which volume to test on. Do not pick one.** The flag has no default and the repository's own location
 is not one either. A run whose disk was chosen for it put its writes and its recursive deletes somewhere
@@ -41,56 +54,49 @@ so no test writes inside the working copy.
 
 ## Test groups
 
-The harness has three disjoint groups. `--all` and `--filter <substring>` select the regular group,
+The harness has two disjoint groups. `--all` and `--filter <substring>` select the regular group,
 `--load` selects the load group, and no argument other than `--load` runs a load case. A `--filter` that
 names only load cases fails with a message naming them and telling the reader to pass `--load`, so the
 flag cannot be worked around by accident.
 
-`--manual <root>` selects the manual group, is repeatable, and runs every manual case once per root with
-that root handed to the case through `TestContext.ManualRoot`. The paths are the caller's: nothing
-hard-codes a root, and a manual case claims a directory of its own inside the one you name — a generated
-name that was checked, because the case's cleanup is a recursive delete and a name taken from a leftover of
-an earlier run would be a directory it writes into and then removes. Only the claimed directory is removed,
-by full path. `--all` names the deferred manual cases in its count line, and a `--filter` that names only
-manual cases tells the reader to pass `--manual`, exactly as it does for load cases.
+There are 157 registered cases and four load cases, so `--all` runs 153 of them. The rest is what the
+volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the cases that
+recycle one and runs the cases that are about a volume the Shell reports no bin for. Measured on both
+kinds of volume, 143 pass and 10 skip where there is a bin and 113 pass and 40 skip where there is none,
+with nothing failing either way. `--all` prints the counts, so a count in a document that disagrees with
+them is the document being wrong.
 
-One run selects one group. `--manual <root> --load` selects the manual group and prints that it ignored
-`--load`, because a flag that vanishes quietly is the failure the deferral lines exist to prevent. A
-`--manual` with no path after it, or with a flag after it, is a usage error rather than a root: the
-argument the cases delete against is the one thing that must not be guessed.
+## What the tests may touch
 
-**A share has to survive the command line, and the documented spelling does not everywhere.**
-`--manual "\\server\share\"` arrives intact in PowerShell and `cmd.exe`, which treat backslashes literally.
-Anything that reads `\\` as an escape delivers `\server\share\` instead, whose `Path.GetPathRoot` is `\` —
-a path on the *current drive*, so the directory the cases create lands wherever the process happens to be.
-That has already cost this repository one. `--manual "//server/share/"` is the spelling to use from such a
-shell: the forward-slash form reaches the runner intact, and `VolumeRoot.Normalize` converts it, because the
-library deliberately refuses it (`RecycleBinVolumeState.RootForm` only reduces backslashes) and the
-conversion belongs where the command line is read. The same applies to `--scratch`. A root that is not a
-volume root at all is refused by `VolumeRoot.Normalize`, before anything is created on it.
+No file a test creates is ever outside the working directory `--scratch` names. A test never names a
+volume, a share or a drive letter in its source: `--scratch` names the volume, the run claims
+`D:\{guid}` inside it, and every case writes beneath that. `ScratchDirectory.Claim(parent)` refuses any
+parent that is not under the claimed root, and it refuses after resolving the path, so `..` cannot escape
+and a forward-slash spelling is taken rather than turned away.
 
-**The manual group needs real hardware, and it destroys files on the path you name.** A removable drive
-with no `$RECYCLE.BIN` and a network share are the two volumes the ordinary run cannot produce, which is
-why these cases exist at all — a `subst` mapping stands in for one on any machine, and a real volume is
-what tells you the Shell's own code on that hardware. A manual case goes **red** when the root turns out
-not to be a volume with no Recycle Bin — a healthy one, one whose Shell *does* answer a question about its
-bin, or a letter nothing is mounted on — naming the root and its `Reason`: a caller who passed a healthy
-volume asked a question these cases cannot answer, and a silent pass would read afterwards as coverage
-nobody provided.
+Where a case needs a volume that is not there, it asks the operating system for a letter nothing is
+mounted on — `AbsentVolume.Letter()` — and re-checks that it is still absent immediately before the call.
+Where a case needs a volume that has no Recycle Bin, it asks the library what the volume it was given is —
+`ScratchWorkspace.Reason` — and skips when the answer is the other kind, in the shape
+`RequireNonRecycling(because)` and `RequireRecycling(because)` hold between them. A test does not test
+what is not on the disk.
 
-**A manual case is never the only coverage of a claim either.** The rule the load group follows applies
-unchanged: an ordinary case must already assert the same thing without the hardware, and the repetition
-the hardware adds is the only thing allowed to stay behind the flag.
+Two things leave the working directory and are not the tests' doing: the `$RCW-…` staging directories
+`LongPathStager` creates in the volume root, because a staging path has to be short and the volume root is
+the shortest place on the right volume; and `EmptySuite` emptying the volume's Recycle Bin, which is the
+only way to assert that an entry really left.
 
-| Manual case | Covered without the hardware by |
-| --- | --- |
-| `VolumeSuite.AVolumeWithoutARecycleBinIsRefused` | `FacadeSuite.RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff` |
-| `VolumeSuite.AVolumeWithoutARecycleBinCanBeDeletedOnRequest` | `FacadeSuite.DeletePermanentlyRemovesTheFileAndNamesIt` |
-| `VolumeSuite.AStatusAndAnEmptyReadTheSameRootTheSameWay` | `EmptySuite.AForwardSlashSpellingIsTheVolumeToEmpty`, `EmptySuite.AnExtendedLengthRootIsTheVolumeToEmpty` |
+### A known limit
 
-The group is three cases. With four load cases that leaves 145 of the 152 registered cases in the default
-run; `--all` prints all three numbers, so a count in a document that disagrees with it is the document
-being wrong.
+`EmptySuite.cs` records that `GetStatusAsync` and `EmptyAsync` are supposed to read a *share* root the
+same way, and that no case makes that comparison any more: a local volume cannot witness it, because
+`NormalizeVolumeRoot` and `Path.GetPathRoot` already agree on a drive-letter root, and the suite does not
+reach for the network to get a share. `AForwardSlashSpellingIsTheVolumeToEmpty` is the guard on a local
+drive and `AnExtendedLengthRootIsTheVolumeToEmpty` is its sibling for the prefixed spelling; both ask for
+a bin to be there first, so both skip on a bin-less volume — which is exactly the hardware the removed share
+case existed for. That makes this a limit, not a claim with coverage behind it. Writing the case is the
+fix, and it needs a volume that is not on the disk, which is the one thing this rule exists to keep out of
+the source.
 
 ## Load tests
 

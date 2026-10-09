@@ -881,64 +881,47 @@ files and removes directories, so the volume is yours to pick and not the runner
 
 Inside the root the run creates `D:\{guid}` and works in `scratch` and `long` beneath it, then removes the
 whole tree when it finishes. Nothing is derived from the repository, so no test writes inside the working
-copy.
+copy, and no test names a volume, a share or a drive letter in its source — the volume comes from
+`--scratch` and from there down.
 
 `--filter` matches any part of a case name, and every case is named `<Suite>.<Case>`. It exits
 non-zero when a case fails.
 
-The suite needs the volume you name to be recorded as recycling, which
-Windows writes under `HKCU\...\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete=0` when "Don't move files to
-the Recycle Bin" is clear for that drive. Almost every case now recycles there, and a volume with no
-such key is answered `Indeterminate` or `NoRecycleBinOnVolume` — both refused by the default
-`NoRecycleBinAction.Throw`. The suite checks this before it deletes anything and names the key rather
-than failing a hundred cases at once.
+`--scratch` accepts any volume. Most cases need one Windows records as recycling, which it writes under
+`HKCU\...\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete=0` when "Don't move files to the Recycle Bin" is
+clear for that drive; a volume with no such key is answered `Indeterminate` or `NoRecycleBinOnVolume` —
+both refused by the default `NoRecycleBinAction.Throw`. The run asks the library once which kind of
+volume it was given, and each case that needs the other kind skips rather than fails, so naming a
+removable drive with no `$RECYCLE.BIN` runs the cases that are about such a volume and skips the ones
+that recycle there.
 
-The suite is a console application with no external packages: 152 cases covering batch and single-path
+The suite is a console application with no external packages: 157 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock,
-concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies, a
-ten-cycle stress run asserting 100 % Recycle Bin delivery, and — on real hardware only, behind
-`--manual` — volumes with no Recycle Bin. Listing, emptying and status checking are covered by their own
-suites. The default run writes only inside the directory it claimed under `--scratch`, plus the
-`$RCW-…` staging directories the library creates on the volume root — a staging path has to be short,
-and the volume root is the shortest place on the right volume; those are removed, and reported if they
-cannot be. `--manual` writes wherever you tell it to.
+concurrent and STA callers, directories, 10 MB files, paths past `MAX_PATH` under all three policies,
+volumes with no Recycle Bin, and a ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing,
+emptying and status checking are covered by their own suites. The default run writes only inside the
+directory it claimed under `--scratch`, plus the `$RCW-…` staging directories the library creates on the
+volume root — a staging path has to be short, and the volume root is the shortest place on the right
+volume; those are removed, and reported if they cannot be. On a volume with no Recycle Bin the cases that
+recycle there skip rather than fail — forty of them — and the ten that are about such a volume run instead
+of skipping.
 
-**The 152 cases divide into three groups, and `--all` runs 145 of them.** Four are load cases that run only
-on request: the ten-cycle stress run, and the three cases that each move the whole 94-file fixture set
-through the Shell in one call. `--all` and `--filter` never run them — `--load` runs those four cases and
-nothing else. Nothing is covered by them alone; the claims sit in ordinary cases too —
-`WorkflowSuite.FiveTouchedFilesAreAllRecycled` and `EmptySuite.EmptyReportsWhatItFreed` for the batch,
-`FacadeSuite.LargeFileIsRecycled` for the bytes. Three more run only behind `--manual`, and are below.
+**Of the 157 cases, `--all` runs 153.** Four are load cases that run only on request: the ten-cycle stress
+run, and the three cases that each move the whole 94-file fixture set through the Shell in one call.
+`--all` and `--filter` never run them — `--load` runs those four cases and nothing else. Nothing is
+covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
+and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
+The remainder is the volume's decision rather than a flag's: 143 pass and 10 skip where there is a bin,
+113 pass and 40 skip where there is none, and nothing fails either way.
 
-### `--manual` destroys files on the path you name
-
-```bash
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --manual "F:\" --manual "//Virus_pc/123/"
-```
-
-`--manual` is repeatable, and every manual case runs once per root with that root handed to the case.
-**The root is yours, and one of the three cases deletes the file it creates there.** Each case claims a
-directory of its own beneath the root — a generated name that was checked, since the case's cleanup is a
-recursive delete — and removes only that directory, by full path; nothing beside it is touched. Pass a
-volume with no `$RECYCLE.BIN` — a removable drive, or a network share. A root that does
-recycle is refused rather than run, because `VolumeSuite.AStatusAndAnEmptyReadTheSameRootTheSameWay` would
-otherwise empty the Recycle Bin you were using; the run names the root and the reason.
-
-| Manual case | What only the hardware can answer |
-| --- | --- |
-| `VolumeSuite.AVolumeWithoutARecycleBinIsRefused` | The Shell's own code for a volume Windows never configured a bin for, measured on the volume itself |
-| `VolumeSuite.AVolumeWithoutARecycleBinCanBeDeletedOnRequest` | The opposite answer on that same volume: `NoRecycleBinAction.DeletePermanently` removes the file and names it in `PermanentlyDeletedPaths` |
-| `VolumeSuite.AStatusAndAnEmptyReadTheSameRootTheSameWay` | That `GetStatusAsync` and `EmptyAsync` agree on a *share* root. A drive-letter root is one `NormalizeVolumeRoot` and `Path.GetPathRoot` already agree on, so a local volume cannot witness it |
-
-**A share has to survive your command line.** `--manual "\\server\share\"` is right in PowerShell and in
+**A share has to survive your command line.** `--scratch "\\server\share\"` is right in PowerShell and in
 `cmd.exe`, which treat backslashes literally. It is wrong in anything that treats `\\` as an escape —
 bash, or any tool that unescapes the command string before the shell ever sees it — because what arrives
 is `\server\share\`, whose root is the *current drive*; a directory created from it lands wherever the
-process happens to be. The
-runner refuses a root that is not a volume root rather than acting on whatever drive is current, so the
-mistake goes red and costs nothing — but it goes red. Write the share as `//server/share/` there. The
-forward-slash spelling names the same volume, no shell rewrites it, and the runner reads it as the
-backslash root Windows writes.
+process happens to be. The runner refuses a root that is not a volume root rather than acting on whatever
+drive is current, so the mistake goes red and costs nothing — but it goes red. Write the share as
+`//server/share/` there. The forward-slash spelling names the same volume, no shell rewrites it, and the
+runner reads it as the backslash root Windows writes.
 
 **The Recycle Bin suites empty it.** `EmptySuite` removes what the earlier suites recycled, and it is
 the only way to assert that an entry really left. Everything else only ever adds to it.
