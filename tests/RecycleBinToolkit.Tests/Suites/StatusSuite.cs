@@ -91,40 +91,33 @@ internal static class StatusSuite
     /// volume is a permanent deletion.
     /// </summary>
     /// <remarks>
-    /// The volume is a <c>subst</c> mapping of the scratch root, the one shape of a bin-less volume that
-    /// can be produced on any machine; see <see cref="SubstitutedVolume"/> for what that shape is and why
-    /// it stands in for a removable volume and for a share.
+    /// The volume is the one <c>--scratch</c> named, asked about rather than built. This case used to
+    /// manufacture one — a <c>subst</c> mapping of the scratch root, which reported a drive type that
+    /// supports a bin while having no GUID and no bin — so that it ran on every machine. Nothing builds a
+    /// volume now: a run is told what its volume is once
+    /// (<see cref="ScratchWorkspace.Reason"/>) and a case that cannot make its claim on it says it did
+    /// not run. What is given up is an assertion about a DOS device of this library's own making; what is
+    /// gained is that the reason asserted is one a caller is actually handed — a flash drive, or a share,
+    /// rather than a stand-in for one.
+    /// <para>
+    /// The volume is asked about twice by two routes: once for the run and cached on
+    /// <see cref="ScratchWorkspace.Reason"/>, and once here. A reason that differed between them would
+    /// mean the run's own answer no longer described its own volume, so the third assertion pins the two
+    /// together rather than pinning only what the library returns.
+    /// </para>
     /// </remarks>
     private static async Task NoRecycleBinVolumeIsNamedNotIndeterminate(TestContext context)
     {
-        using var workspace = new ScratchWorkspace();
-        workspace.Recreate();
+        ScratchWorkspace.RequireNonRecycling("a volume the Shell reports no bin for is the shape this case is about");
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        var status = await RecycleBin.GetStatusAsync(ScratchWorkspace.VolumeRoot, context.CancellationToken).ConfigureAwait(false);
 
-        try
-        {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
-
-            var volumeRoot = letter + ":" + Path.DirectorySeparatorChar;
-
-            Check.True(
-                RecycleBinVolumeState.TryGetVolumeGuidKeyName(volumeRoot) is null,
-                "a substituted drive is the shape under test: there is no volume GUID for the per-volume setting to be read from");
-
-            var status = await RecycleBin.GetStatusAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
-
-            Check.Equal(volumeRoot, status.VolumeRoot, "the answer names the substituted volume");
-            Check.False(status.IsEnabled, $"a volume with no Recycle Bin is not an enabled Recycle Bin (got {status.Reason})");
-            Check.Equal(
-                RecycleBinAvailabilityReason.NoRecycleBinOnVolume,
-                status.Reason,
-                "the Shell that reported no bin is named as the reason, rather than the volume being left undecided");
-        }
-        finally
-        {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
-        }
+        Check.Equal(ScratchWorkspace.VolumeRoot, status.VolumeRoot, "the answer names the volume it was asked about");
+        Check.False(status.IsEnabled, $"a volume with no Recycle Bin is not an enabled Recycle Bin (got {status.Reason})");
+        Check.Equal(
+            status.Reason,
+            ScratchWorkspace.Reason,
+            "and the run's cached reason agrees with a fresh reading of the same volume");
     }
 
     /// <summary>
@@ -134,60 +127,43 @@ internal static class StatusSuite
     /// volume that has no bin as one that does.
     /// </summary>
     /// <remarks>
-    /// Two shapes produce an unknown setting, and only the second is the one that loses files. A
-    /// <c>subst</c> mapping has no GUID at all, so there is no subkey name to read; a real volume whose
-    /// GUID resolves can still have no key under the volume list, because Windows writes that key only
-    /// for volumes it has configured a bin for. The second shape is checked with a freshly minted GUID,
-    /// which the volume list cannot contain — so the check is read-only, writes nothing, and leaves
+    /// Two shapes leave the setting unknown, and they are not the same fact. A volume with no GUID at all
+    /// has no subkey name to read; a real volume whose GUID resolves can still have no key under the
+    /// volume list, because Windows writes that key only for volumes it has configured a bin for. The
+    /// second is the one that loses files, and it is the shape this case reaches with a freshly minted
+    /// GUID — a name the volume list cannot contain, so the check reads and writes nothing and leaves
     /// nothing to clean up.
     /// <para>
-    /// The last assertion pins that this cannot be honoured anywhere downstream of the reader.
+    /// The first shape was reached through a <c>subst</c> mapping, which reported a drive type that
+    /// supports a bin while having no GUID to key the setting on. Nothing in this repository builds such a
+    /// volume any more, so this case no longer needs one at all: it reads a name, not a volume, and the
+    /// library's own answer for a volume like that is pinned by
+    /// <see cref="NoRecycleBinVolumeIsNamedNotIndeterminate"/> on whichever volume <c>--scratch</c> names.
+    /// </para>
+    /// <para>
+    /// The last assertion pins that the unknown cannot be honoured anywhere downstream of the reader.
     /// <see cref="RecycleBinVolumePolicy.Classify"/> still answers Enabled for a fixed volume with no
-    /// overrides, so Unknown has to survive as a three-state value reaching the caller rather than
-    /// being flattened to a bool on the way.
+    /// overrides, so Unknown has to survive as a three-state value reaching the caller rather than being
+    /// flattened to a bool on the way.
     /// </para>
     /// </remarks>
-    private static async Task AMissingPerVolumeKeyIsNotAnEnabledVolume(TestContext context)
+    private static Task AMissingPerVolumeKeyIsNotAnEnabledVolume(TestContext context)
     {
-        using var workspace = new ScratchWorkspace();
-        workspace.Recreate();
+        Check.Equal(
+            RecycleBinVolumePolicy.VolumeRecycleSetting.Unknown,
+            RecycleBinRegistry.ReadNukeOnDelete(Guid.NewGuid().ToString("B")),
+            "a volume GUID with no key under the volume list is unknown, not a volume that recycles");
 
-        var letter = SubstitutedVolume.FirstUnusedDriveLetter();
+        Check.Equal(
+            RecycleBinAvailabilityReason.Enabled,
+            RecycleBinVolumePolicy.Classify(
+                volumeExists: true,
+                DriveType.Fixed,
+                disabledByPolicy: false,
+                nukeOnDelete: false),
+            "the decision still cannot see an unknown setting, so a three-state answer has to reach the caller for a volume with no key to stop reading as enabled");
 
-        try
-        {
-            await SubstitutedVolume.Substitute(letter, ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
-
-            var volumeRoot = letter + ":" + Path.DirectorySeparatorChar;
-            var keyName = RecycleBinVolumeState.TryGetVolumeGuidKeyName(volumeRoot);
-
-            Check.Equal(
-                RecycleBinVolumePolicy.VolumeRecycleSetting.Unknown,
-                RecycleBinRegistry.ReadNukeOnDelete(keyName),
-                "a volume whose per-volume setting cannot be looked up is unknown, not a volume that recycles");
-
-            // The volume API resolving a GUID says nothing about whether the volume recycles, and this
-            // is the shape the subst case above cannot reach: a name the volume list is free to not
-            // contain. A GUID minted here is such a name by construction, and no key is written or
-            // deleted, so the check is read-only and leaves nothing behind.
-            Check.Equal(
-                RecycleBinVolumePolicy.VolumeRecycleSetting.Unknown,
-                RecycleBinRegistry.ReadNukeOnDelete(Guid.NewGuid().ToString("B")),
-                "a volume GUID with no key under the volume list is unknown, not a volume that recycles");
-
-            Check.Equal(
-                RecycleBinAvailabilityReason.Enabled,
-                RecycleBinVolumePolicy.Classify(
-                    volumeExists: true,
-                    DriveType.Fixed,
-                    disabledByPolicy: false,
-                    nukeOnDelete: false),
-                "the decision still cannot see an unknown setting, so a three-state answer has to reach the caller for a volume with no key to stop reading as enabled");
-        }
-        finally
-        {
-            await SubstitutedVolume.RemoveSubstitute(letter).ConfigureAwait(false);
-        }
+        return Task.CompletedTask;
     }
 
     /// <summary>
