@@ -68,8 +68,8 @@ internal static class AbsentVolume
         letter + ":" + Path.DirectorySeparatorChar;
 
     /// <summary>
-    /// Ends the case as not run when <paramref name="letter"/> is mounted after all, so nothing is asked
-    /// of a volume this machine has.
+    /// Ends the case as not run when <paramref name="letter"/> turns out to be mounted after all, so
+    /// nothing is asked of a volume this machine has. Returns only while the letter is still absent.
     /// </summary>
     /// <remarks>
     /// The letter is checked again here rather than trusted from wherever it was found. The caller that
@@ -78,6 +78,11 @@ internal static class AbsentVolume
     /// card reader, a mapped network drive or somebody's disk to take the letter. A letter that was
     /// genuinely absent a moment ago says nothing about the letter by the time the empty runs, so the
     /// check sits immediately before the call rather than at the top of the case.
+    /// <para>
+    /// Both ways of being present are refused, not only the one <see cref="DriveInfo"/> reports: a root
+    /// that resolves is a volume whatever the enumeration says, which is the second half of what
+    /// <see cref="Letter"/> checks before it hands a letter out.
+    /// </para>
     /// </remarks>
     /// <param name="letter">The letter the case is about to act on.</param>
     /// <param name="because">
@@ -86,7 +91,7 @@ internal static class AbsentVolume
     /// </param>
     /// <exception cref="CheckSkippedException">
     /// The letter is mounted now, or its root resolves to a directory <see cref="DriveInfo"/> does not
-    /// report. Always thrown, so a caller that does not catch cannot read past it.
+    /// report. Not raised while the letter is genuinely absent, which is the case that returns.
     /// </exception>
     internal static void RequireAbsent(char letter, string because)
     {

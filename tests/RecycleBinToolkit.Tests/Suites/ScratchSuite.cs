@@ -49,6 +49,7 @@ internal static class ScratchSuite
         new TestCase("ScratchSuite." + nameof(AShareIsWrittenWithBackslashes), AShareIsWrittenWithBackslashes),
         new TestCase("ScratchSuite." + nameof(RequireRefusesALetterNothingIsMountedOn), RequireRefusesALetterNothingIsMountedOn),
         new TestCase("ScratchSuite." + nameof(AnUnmountedLetterIsFoundRatherThanWrittenDown), AnUnmountedLetterIsFoundRatherThanWrittenDown),
+        new TestCase("ScratchSuite." + nameof(AMountedLetterIsSkippedRatherThanActedOn), AMountedLetterIsSkippedRatherThanActedOn),
     ];
 
     /// <summary>
@@ -472,6 +473,29 @@ internal static class ScratchSuite
         Check.False(
             Directory.Exists(AbsentVolume.RootOf(letter)),
             $"and {AbsentVolume.RootOf(letter)} does not resolve, which is the second thing the lookup checks before handing a letter out");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A letter that is mounted ends the case as not run, rather than being acted on. Nothing else
+    /// stands between a run and a Recycle Bin that is not the caller's: the letter can be taken by another
+    /// process between the lookup and the call, and this is what notices.
+    /// </summary>
+    /// <remarks>
+    /// The guard is asserted to <em>skip</em> rather than merely to return, because a case that returns
+    /// normally is counted as passed and the guard would then be reporting coverage it did not produce —
+    /// and the call behind it is the one that empties a volume.
+    /// </remarks>
+    private static Task AMountedLetterIsSkippedRatherThanActedOn(TestContext context)
+    {
+        var letter = char.ToUpperInvariant(DriveInfo.GetDrives().First().Name[0]);
+
+        var skip = Check.Throws<CheckSkippedException>(
+            () => AbsentVolume.RequireAbsent(letter, "emptying a volume that is not there"),
+            "a letter that is mounted ends the case as not run rather than acting on that volume");
+
+        Check.True(skip.Message.Contains(letter), $"and the skip names the letter it refused ({skip.Message})");
 
         return Task.CompletedTask;
     }

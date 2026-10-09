@@ -18,12 +18,16 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 internal static class SubstitutedVolume
 {
     /// <summary>
-    /// The letter four cases across four suites use to mean "a volume that is not mounted".
+    /// The letter <see cref="FirstUnusedDriveLetter"/> refuses to hand out, so a <c>subst</c> mapping
+    /// never takes the letter that means "a volume that is not mounted".
     /// </summary>
     /// <remarks>
-    /// It is the one letter a mapping must leave alone. A mapping left behind on it would turn every
-    /// one of those cases into a question about a real volume, and the failures would name the
-    /// Recycle Bin rather than the leak that caused them.
+    /// The cases that ask about an absent volume get that letter from
+    /// <see cref="AbsentVolume.Letter"/>, which asks the machine and does not care which letter comes
+    /// back. What still has to be kept off it is the mapping: a mapping left behind on that letter would
+    /// turn every absent-volume case into a question about a real volume, and the failures would name
+    /// the Recycle Bin rather than the leak that caused them. This reservation is what stops that, and
+    /// it costs the pool one letter.
     /// </remarks>
     internal const char AbsentVolumeLetter = 'Z';
 
