@@ -257,6 +257,21 @@ internal sealed class ScratchDirectory
     /// <summary>
     /// The parent a claim may sit under, which is the one it was handed or a refusal naming it.
     /// </summary>
+    /// <remarks>
+    /// A claim with no run's own directory to sit inside is a state this suite cannot be put into: the
+    /// runner claims the run root before it selects a single case, so by the time any code here runs the
+    /// boundary exists. The guard is here rather than assumed because a refactor that moved this check
+    /// behind <see cref="ClaimRunRoot"/>, or let a case name the run root itself, would reopen the route
+    /// out of the working directory silently — and a null reference would not say what had gone wrong.
+    /// <para>
+    /// Nothing asserts this branch, and that is deliberate. Reaching it from a case needs either a seam
+    /// that hands over the run root — which is precisely what the two cases above exist to forbid — or a
+    /// private static cleared by reflection, which would leave the process in a state no later case could
+    /// rely on. A case that cannot run would print <c>SKIP</c> on every run and teach the reader to
+    /// ignore the one line that carries that meaning, so the guard is left to state its own reachability
+    /// here instead.
+    /// </para>
+    /// </remarks>
     /// <exception cref="ArgumentException">
     /// <paramref name="parent"/> is null or empty, or is not inside the run's own directory. Checked before
     /// anything is created, so a refusal leaves the volume exactly as it was.

@@ -36,7 +36,7 @@ internal static class ScratchSuite
 {
     internal static IReadOnlyList<TestCase> Cases =>
     [
-        new TestCase("ScratchSuite." + nameof(ClaimCreatesADirectoryInsideTheVolumeRoot), ClaimCreatesADirectoryInsideTheVolumeRoot),
+        new TestCase("ScratchSuite." + nameof(ClaimCreatesADirectoryUnderTheParentItWasGiven), ClaimCreatesADirectoryUnderTheParentItWasGiven),
         new TestCase("ScratchSuite." + nameof(ClaimNeverReusesADirectoryThatAlreadyExists), ClaimNeverReusesADirectoryThatAlreadyExists),
         new TestCase("ScratchSuite." + nameof(ClaimRegeneratesUntilItFindsAFreeName), ClaimRegeneratesUntilItFindsAFreeName),
         new TestCase("ScratchSuite." + nameof(ClaimGivesUpRatherThanSpin), ClaimGivesUpRatherThanSpin),
@@ -48,7 +48,6 @@ internal static class ScratchSuite
         new TestCase("ScratchSuite." + nameof(ClaimRefusesAParentOutsideTheRunRoot), ClaimRefusesAParentOutsideTheRunRoot),
         new TestCase("ScratchSuite." + nameof(ClaimRefusesAParentThatOnlyLooksLikeItIsInsideTheRunRoot), ClaimRefusesAParentThatOnlyLooksLikeItIsInsideTheRunRoot),
         new TestCase("ScratchSuite." + nameof(ClaimRunRootRefusesASecondRunInOneProcess), ClaimRunRootRefusesASecondRunInOneProcess),
-        new TestCase("ScratchSuite." + nameof(ClaimRefusesBeforeARunRootIsNamed), ClaimRefusesBeforeARunRootIsNamed),
         new TestCase("ScratchSuite." + nameof(AVolumeRootIsItsOwnNormalizedSpelling), AVolumeRootIsItsOwnNormalizedSpelling),
         new TestCase("ScratchSuite." + nameof(ADirectoryUnderAVolumeRootIsNotAVolumeRoot), ADirectoryUnderAVolumeRootIsNotAVolumeRoot),
         new TestCase("ScratchSuite." + nameof(ADriveLetterIsNotAVolumeRoot), ADriveLetterIsNotAVolumeRoot),
@@ -65,19 +64,19 @@ internal static class ScratchSuite
         Path.GetFileName(Normalize(claim.FullPath));
 
     /// <summary>
-    /// A claimed directory is a direct child of the parent it was named, which is a directory this run
+    /// A claimed directory is a direct child of the parent it was handed, which is a directory this run
     /// already owns, so nothing about it depends on where the repository happens to sit.
     /// </summary>
-    private static Task ClaimCreatesADirectoryInsideTheVolumeRoot(TestContext context)
+    private static Task ClaimCreatesADirectoryUnderTheParentItWasGiven(TestContext context)
     {
-        var volumeRoot = ScratchWorkspace.Root;
-        var claimed = ScratchDirectory.Claim(volumeRoot);
+        var parent = ScratchWorkspace.Root;
+        var claimed = ScratchDirectory.Claim(parent);
 
         try
         {
             Check.True(Directory.Exists(claimed.FullPath), $"the claimed directory exists: {claimed.FullPath}");
-            Check.Equal(Trimmed(ParentOf(claimed.FullPath)), Trimmed(volumeRoot), "and it is a direct child of the root that was named");
-            Check.Equal(volumeRoot, claimed.Volume, "which the claim also remembers as the parent it works under");
+            Check.Equal(Trimmed(ParentOf(claimed.FullPath)), Trimmed(parent), "and it is a direct child of the parent that was named");
+            Check.Equal(parent, claimed.Volume, "which the claim also remembers as the parent it works under");
         }
         finally
         {
@@ -380,27 +379,6 @@ internal static class ScratchSuite
             failure.Message.Contains(ScratchWorkspace.VolumeRoot, StringComparison.OrdinalIgnoreCase),
             $"and it names the root it refused ({failure.Message})");
 
-        return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// With no run's directory there is nothing to be inside, so a claim has nothing to attach to and says
-    /// so rather than falling back to a path the caller never named.
-    /// </summary>
-    /// <remarks>
-    /// Every route to this state from a case is a way to defeat the guard rather than to assert it. The
-    /// runner configures the root before a single case runs, so the only ways in are a seam that lets a
-    /// case name the run root itself — which is the one thing the other cases are there to forbid — or a
-    /// private field cleared by reflection, which leaves the process in a state no later case may rely on.
-    /// Reported as not run rather than as a pass, because a pass would be claiming coverage this case did
-    /// not produce.
-    /// </remarks>
-    private static Task ClaimRefusesBeforeARunRootIsNamed(TestContext context)
-    {
-        Check.Skip("a run always configures its root before a case runs, so this state is only reachable from a unit-level call");
-
-        // Never reached. A method returning a value needs a return on every path, and the alternative to
-        // this one is not returning normally but throwing the skip, which is what Check.Skip already does.
         return Task.CompletedTask;
     }
 
