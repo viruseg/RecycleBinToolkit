@@ -25,8 +25,9 @@ internal static class AbsentVolume
     /// what a case asking about an absent one must not be handed.
     /// <para>
     /// Scanning downwards from <c>'Z'</c> rather than upwards from <c>'A'</c> keeps the answer away from
-    /// the fixed volumes the caller named through <c>--scratch</c>, and out of the way of the letters a
-    /// <c>subst</c> mapping takes.
+    /// the fixed volumes the caller named through <c>--scratch</c>, and the direction is what guarantees
+    /// it rather than the letters: a name generated under a run root cannot collide with a mounted volume,
+    /// so no letter is taken here for a reason the caller could not have predicted.
     /// </para>
     /// </remarks>
     /// <returns>

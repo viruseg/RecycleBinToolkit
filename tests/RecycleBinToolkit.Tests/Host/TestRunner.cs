@@ -14,26 +14,24 @@ internal sealed class TestRunner
     /// Every group, in the order a reader is most likely to have meant one when a filter matches only
     /// some of them.
     /// </summary>
-    private static readonly TestKind[] Groups = [TestKind.Regular, TestKind.Load, TestKind.Manual];
+    private static readonly TestKind[] Groups = [TestKind.Regular, TestKind.Load];
 
     /// <summary>
     /// Runs the cases selected by the command line.
     /// </summary>
     /// <param name="args">
     /// <c>--scratch &lt;root&gt;</c> names the volume every case works on and is required. <c>--load</c>
-    /// selects the load group; <c>--manual &lt;root&gt;</c> selects the manual group and may
-    /// be repeated, in which case every selected manual case runs once per root, with that root handed to
-    /// the case. Without either, the regular group is selected. <c>--all</c> and no arguments select every
-    /// regular case, <c>--filter &lt;substring&gt;</c> narrows whichever group was selected to the cases
-    /// whose name contains the substring. The groups never overlap: no argument other than <c>--load</c>
-    /// runs a load case, and no argument other than <c>--manual</c> runs a manual one.
+    /// selects the load group; without it, the regular group is selected. <c>--all</c> and no arguments
+    /// select every regular case, <c>--filter &lt;substring&gt;</c> narrows whichever group was selected to
+    /// the cases whose name contains the substring. The groups never overlap: no argument other than
+    /// <c>--load</c> runs a load case.
     /// </param>
     /// <param name="cases">All known cases; grouping and filtering both happen inside the runner.</param>
     /// <returns>
     /// 0 when at least one case ran and passed. 1 when one failed, when the selection was empty, or
     /// when every selected case was skipped -- a run that produced no coverage is not a green run.
-    /// 2 when <c>--scratch</c> was left out or was given no root, when <c>--manual</c> was given without
-    /// a root for it to name, or when <c>--filter</c> was given nothing to match.
+    /// 2 when <c>--scratch</c> was left out or was given no root, or when <c>--filter</c> was given
+    /// nothing to match.
     /// </returns>
     internal static async Task<int> RunAsync(string[] args, IReadOnlyList<TestCase> cases)
     {
@@ -49,18 +47,6 @@ internal sealed class TestRunner
             return 2;
         }
 
-        if (!TryParseManualRoots(args, out var manualRoots, out var manualProblem))
-        {
-            Console.Error.WriteLine(
-                "--manual takes a path to test, such as --manual \"F:\\\" or --manual \"\\\\server\\share\\\". The manual " +
-                "cases destroy files on the path you name, so none of them runs until you give one, and a flag " +
-                "after --manual is read as a missing path rather than as a root. A command line that cannot " +
-                "carry two leading backslashes may name the share as //server/share/ instead, which is read " +
-                "as the same volume.");
-            Console.Error.WriteLine($"        {manualProblem}");
-            return 2;
-        }
-
         if (!TryParseFilter(args, out var filter, out var filterProblem))
         {
             Console.Error.WriteLine(
@@ -71,7 +57,7 @@ internal sealed class TestRunner
             return 2;
         }
 
-        var kind = SelectKind(manualRoots, args);
+        var kind = SelectKind(args);
 
         ScratchWorkspace.Configure(scratchRoot);
 
@@ -83,18 +69,10 @@ internal sealed class TestRunner
             return 1;
         }
 
-        var runs = Expand(selected, manualRoots);
+        var runs = Expand(selected);
 
         Console.WriteLine($"scratch root {ScratchWorkspace.RunRoot}");
         Console.WriteLine($"running {runs.Count} of {cases.Count} test(s)");
-
-        if (kind is TestKind.Manual && args.Contains("--load", StringComparer.Ordinal))
-        {
-            // One run selects one group, and a root was named. Saying which flag lost is the whole point:
-            // the deferral lines below are there so a caller always learns what a run left out, and a
-            // dropped --load is exactly the case where nothing else would say so.
-            Console.WriteLine("        --load is ignored: --manual named a path to test, and this run selects the manual group");
-        }
 
         DescribeDeferred(cases, kind, filter);
 
@@ -116,26 +94,26 @@ internal sealed class TestRunner
     /// <summary>
     /// Runs the selected cases in order and reports what they did.
     /// </summary>
-    /// <param name="runs">One entry per case, or per case per named root for the manual group.</param>
+    /// <param name="runs">One entry per selected case.</param>
     /// <returns>
     /// 0 when at least one case passed and none failed. 1 when one failed, or when every case was
     /// skipped -- a run that produced no coverage is not a green run, the same shape an empty selection
     /// already returns 1 for.
     /// </returns>
-    private static async Task<int> ExecuteAsync(List<(TestCase Case, string? Root)> runs)
+    private static async Task<int> ExecuteAsync(List<TestCase> runs)
     {
         var passed = 0;
         var skipped = 0;
         List<string>? failures = null;
 
-        foreach (var (testCase, root) in runs)
+        foreach (var testCase in runs)
         {
-            var name = root is null ? testCase.Name : $"{testCase.Name} [{root}]";
+            var name = testCase.Name;
             var stopwatch = Stopwatch.StartNew();
             try
             {
                 using var cts = new CancellationTokenSource(TestBudget);
-                await testCase.Body(new TestContext(cts.Token, root)).ConfigureAwait(false);
+                await testCase.Body(new TestContext(cts.Token)).ConfigureAwait(false);
                 stopwatch.Stop();
                 passed++;
                 Console.WriteLine($"  PASS  {name} ({stopwatch.ElapsedMilliseconds} ms)");
@@ -165,8 +143,6 @@ internal sealed class TestRunner
         }
 
         Console.WriteLine();
-        // Counted from the runs rather than the selection: a manual run is one case per named root, and a
-        // tally that read the selection would report fewer failures than it printed.
         var failedCount = runs.Count - passed - skipped;
         Console.WriteLine(Summary(passed, skipped, failedCount));
 
@@ -190,43 +166,12 @@ internal sealed class TestRunner
         _ => $"{passed} passed, {skipped} skipped, {failed} failed"
     };
 
-    /// <summary>
-    /// The runs a selection stands for: one per case, or one per case per named root for the manual
-    /// group, which is the only group whose answer depends on what the caller named.
-    /// </summary>
-    private static List<(TestCase Case, string? Root)> Expand(
-        IReadOnlyList<TestCase> selected,
-        IReadOnlyList<string> manualRoots)
-    {
-        var runs = new List<(TestCase Case, string? Root)>(selected.Count);
+    /// <summary>The runs a selection stands for: one per case, in the order the selection came in.</summary>
+    private static List<TestCase> Expand(IReadOnlyList<TestCase> selected) => [.. selected];
 
-        foreach (var testCase in selected)
-        {
-            if (manualRoots.Count == 0)
-            {
-                runs.Add((testCase, null));
-                continue;
-            }
-
-            runs.AddRange(manualRoots.Select(root => (testCase, Root: (string?)root)));
-        }
-
-        return runs;
-    }
-
-    /// <summary>
-    /// Which group the command line asks for. A named root outranks <c>--load</c>: the caller named a
-    /// path to be tested, and a load group says nothing about which.
-    /// </summary>
-    /// <remarks>
-    /// The run says so on stdout rather than refusing the pair. One run selects one group whichever way
-    /// this goes, and telling a caller which group they got keeps a single command working — while
-    /// refusing would leave a command that names a real path silently selecting nothing useful instead.
-    /// </remarks>
-    private static TestKind SelectKind(IReadOnlyList<string> manualRoots, string[] args) =>
-        manualRoots.Count > 0
-            ? TestKind.Manual
-            : args.Contains("--load", StringComparer.Ordinal) ? TestKind.Load : TestKind.Regular;
+    /// <summary>Which group the command line asks for.</summary>
+    private static TestKind SelectKind(string[] args) =>
+        args.Contains("--load", StringComparer.Ordinal) ? TestKind.Load : TestKind.Regular;
 
     /// <summary>
     /// Names the groups this run left out, one line each.
@@ -234,8 +179,8 @@ internal sealed class TestRunner
     /// <remarks>
     /// Left out silently, a case reads as "everything passed" — which is exactly the wrong conclusion to
     /// draw about a case nobody asked for, and it is the only way to tell afterwards that a run never
-    /// reached it. Only the regular run reports a deferral: the other two are asked for by name, so what
-    /// they leave out is the caller's own choice rather than a group nobody was offered.
+    /// reached it. Only the regular run reports a deferral: the load group is asked for by name, so what
+    /// it leaves out is the caller's own choice rather than a group nobody was offered.
     /// </remarks>
     private static void DescribeDeferred(IReadOnlyList<TestCase> cases, TestKind kind, string? filter)
     {
@@ -300,24 +245,21 @@ internal sealed class TestRunner
     private static string Name(TestKind kind) => kind switch
     {
         TestKind.Regular => "regular",
-        TestKind.Load => "load",
-        _ => "manual",
+        _ => "load",
     };
 
     /// <summary>How to ask for a group this run did not select.</summary>
     private static string Flag(TestKind kind) => kind switch
     {
         TestKind.Regular => "no flag",
-        TestKind.Load => "--load",
-        _ => "--manual <root>",
+        _ => "--load",
     };
 
     /// <summary>What including a deferred group costs the caller, in the same sentence that names it.</summary>
     private static string Advice(TestKind kind) => kind switch
     {
         TestKind.Regular => "nothing selects them by name",
-        TestKind.Load => "pass --load to include them",
-        _ => "pass --manual <root> to include them; the paths are the caller's, and the cases destroy files on them",
+        _ => "pass --load to include them",
     };
 
     /// <summary>
@@ -341,9 +283,9 @@ internal sealed class TestRunner
 
             var value = i + 1 < args.Length ? args[i + 1] : null;
 
-            // The same rule --manual follows, for the same reason: a flag is not a path, and on an argument
-            // whose value decides where files are written and deleted, taking the next token either way would
-            // read a command line nobody wrote as the one they did.
+            // A flag is not a path, and on an argument whose value decides where files are written and
+            // deleted, taking the next token either way would read a command line nobody wrote as the one
+            // they did.
             if (string.IsNullOrWhiteSpace(value) || value.StartsWith('-'))
             {
                 problem = value is null
@@ -376,57 +318,6 @@ internal sealed class TestRunner
     }
 
     /// <summary>
-    /// Reads the <c>--manual</c> roots, in the order they were given.
-    /// </summary>
-    /// <returns>
-    /// <see langword="false"/> when the flag has no path after it, or an empty one. Returning that rather
-    /// than an empty list is what keeps <c>--manual</c> on its own from running the regular group and
-    /// reading afterwards as though the manual cases had been asked for.
-    /// </returns>
-    private static bool TryParseManualRoots(string[] args, out List<string> roots, out string problem)
-    {
-        roots = [];
-        problem = string.Empty;
-
-        for (var i = 0; i < args.Length; i++)
-        {
-            if (args[i] is not "--manual")
-            {
-                continue;
-            }
-
-            var value = i + 1 < args.Length ? args[i + 1] : null;
-
-            // A flag is not a path. Taking the next token either way turns `--manual --load` into a root
-            // named "--load", and a command line with --manual copied ahead of --load loses the flag after
-            // it without a word — on a flag whose cases delete files, the argument it reads is the one thing
-            // that must not be guessed.
-            if (string.IsNullOrWhiteSpace(value) || value.StartsWith('-'))
-            {
-                problem = value is null
-                    ? "--manual is the last thing on the command line, so it has no path to test."
-                    : $"--manual is followed by \"{value}\", which is a flag rather than a path to test.";
-
-                return false;
-            }
-
-            try
-            {
-                roots.Add(VolumeRoot.Normalize(value));
-            }
-            catch (ArgumentException ex)
-            {
-                problem = ex.Message;
-                return false;
-            }
-
-            i++;
-        }
-
-        return true;
-    }
-
-    /// <summary>
     /// Reads the <c>--filter</c> substring, and refuses the two command lines that name no substring.
     /// </summary>
     /// <returns>
@@ -448,7 +339,7 @@ internal sealed class TestRunner
 
             var value = i + 1 < args.Length ? args[i + 1] : null;
 
-            // The same rule --scratch and --manual follow: a flag is not a substring. Taking the next token
+            // The same rule --scratch follows: a flag is not a substring. Taking the next token
             // either way turns `--filter --load` into a filter matching "--load", which selects nothing and
             // reports an empty run rather than the typo it is.
             if (string.IsNullOrWhiteSpace(value) || value.StartsWith('-'))
