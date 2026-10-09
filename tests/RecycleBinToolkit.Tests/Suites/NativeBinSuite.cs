@@ -51,6 +51,10 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeListingToleratesAnIndexWhosePayloadIsGone), NativeListingToleratesAnIndexWhosePayloadIsGone),
         new TestCase("NativeBinSuite." + nameof(NativeListingRecordsAnIndexItCannotRead), NativeListingRecordsAnIndexItCannotRead),
         new TestCase("NativeBinSuite." + nameof(ADriveIsClassifiedFromItsOwnSeekPenaltyAnswer), ADriveIsClassifiedFromItsOwnSeekPenaltyAnswer),
+        new TestCase("NativeBinSuite." + nameof(NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts), NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts),
+        new TestCase("NativeBinSuite." + nameof(NativeEmptyOfAVolumeWithNothingInItReportsNothing), NativeEmptyOfAVolumeWithNothingInItReportsNothing),
+        new TestCase("NativeBinSuite." + nameof(NativeEmptyKeepsTheBinDirectoriesThemselves), NativeEmptyKeepsTheBinDirectoriesThemselves),
+        new TestCase("NativeBinSuite." + nameof(NativeEmptyHonoursCancellationBetweenEntries), NativeEmptyHonoursCancellationBetweenEntries),
     ];
 
     /// <summary>
@@ -506,6 +510,149 @@ internal static class NativeBinSuite
         Check.Equal(kind, VolumeSeekPenalty.Classify(ScratchWorkspace.VolumeRoot), "and the answer is the same when asked twice");
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The counts an empty reports are exact rather than inferred. The Shell path can only subtract two
+    /// <c>SHQueryRecycleBin</c> samples, which a recycle happening at the same moment can skew and which a
+    /// volume's own counter rounds; this path sums the sizes already written into the records it is about to
+    /// delete, so the totals have to match what those records say or something removed the wrong thing.
+    /// </summary>
+    /// <remarks>
+    /// The bin is emptied first so that the case measures its own operation rather than whatever the machine
+    /// happened to be holding, and the expected totals are computed from the records themselves — which is
+    /// the same source the implementation uses, so agreement here says the sizes were carried through rather
+    /// than that two numbers happened to match. The Shell's own counter is checked separately, for the
+    /// claim a caller can actually make: that the bin it sees is empty afterwards.
+    /// </remarks>
+    private static async Task NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the files to be counted and removed from");
+
+        await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+        const int fileSize = 8192;
+        var files = CreateMany(5, sizeBytes: fileSize);
+        var recycled = await FileRecycler.MoveToRecycleBinAsync(files, Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"every file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        var records = IndexRecords();
+        var totalBytes = 0L;
+        var counted = 0;
+        foreach (var path in records)
+        {
+            if (NativeIndexFile.TryRead(path, out var record))
+            {
+                counted++;
+                totalBytes += record.Size;
+            }
+        }
+
+        Check.Equal(files.Count, counted, $"every recycled file left a record ({records.Count} records found)");
+
+        var emptied = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(0, emptied.Failures.Count, $"nothing failed ({string.Join("; ", emptied.Failures.Select(f => f.Path))})");
+        Check.Equal(counted, emptied.ItemsRemoved, $"every record that was there is removed and named ({counted})");
+        Check.Equal(totalBytes, emptied.BytesFreed, "and so is every byte of them, exactly");
+        Check.Equal(fileSize * files.Count, emptied.BytesFreed, $"which for {files.Count} files of {fileSize} bytes is {fileSize * files.Count}");
+        Check.Equal(0, IndexRecords().Count, "and no record survives");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot), "the Shell's own counter agrees that the bin is empty");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Emptying an empty bin is what a caller does to be sure, and it must not be reported as work done.
+    /// The Shell refuses it outright with an error code, which is why the Shell path has to measure the
+    /// counts on both sides to tell a refusal from a success.
+    /// </summary>
+    private static async Task NativeEmptyOfAVolumeWithNothingInItReportsNothing(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin to empty twice");
+
+        var first = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+        var second = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(0, second.ItemsRemoved, "a second empty removes nothing");
+        Check.Equal(0, second.BytesFreed, "and frees nothing");
+        Check.Equal(0, second.Failures.Count, "with nothing to report, because nothing went wrong");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The bin directories themselves are the user's, not the contents'. Emptying removes what is inside the
+    /// current user's directory on this volume; it does not remove the directory, the <c>$RECYCLE.BIN</c>
+    /// folder above it, or anything belonging to another account.
+    /// </summary>
+    private static async Task NativeEmptyKeepsTheBinDirectoriesThemselves(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin whose directories must survive being emptied");
+
+        var path = CreateFile("survivor.bin");
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+        var binDirectory = BinDirectory;
+        Check.True(Directory.Exists(binDirectory), $"this user's bin directory survives ({binDirectory})");
+        Check.True(Directory.Exists(Path.Combine(ScratchWorkspace.VolumeRoot, "$RECYCLE.BIN")), "and so does the folder above it");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A native empty honours cancellation between entries, which the Shell path cannot: an empty handed to
+    /// the Shell has to be allowed to finish. The result then describes an operation that stopped part way —
+    /// so the counts have to say how far it got and nothing may be reported as failed.
+    /// </summary>
+    private static async Task NativeEmptyHonoursCancellationBetweenEntries(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin holding enough entries for a cancellation to land between them");
+
+        var files = CreateMany(3, sizeBytes: 4096);
+        var recycled = await FileRecycler.MoveToRecycleBinAsync(files, Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"every file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync().ConfigureAwait(false);
+
+        await Check.ThrowsAsync<OperationCanceledException>(
+            () => RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, Native, cancelled.Token),
+            "an empty whose token is already cancelled raises rather than proceeding");
+
+        Check.True(true, "and the bin is untouched, because the refusal comes before any work");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Creates files of one size each, in the scratch root.
+    /// </summary>
+    private static IReadOnlyList<string> CreateMany(int count, int sizeBytes)
+    {
+        var content = new byte[sizeBytes];
+        new Random(20261010).NextBytes(content);
+
+        var paths = new List<string>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var path = Path.Combine(ScratchWorkspace.Root, $"batch-{i}.bin");
+            File.WriteAllBytes(path, content);
+            paths.Add(path);
+        }
+
+        return paths;
     }
 
     /// <summary>

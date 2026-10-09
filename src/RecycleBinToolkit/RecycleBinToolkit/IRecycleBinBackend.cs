@@ -34,4 +34,12 @@ internal interface IRecycleBinBackend
     /// <param name="cancellationToken">Cancels the enumeration and the reading.</param>
     /// <returns>The entries that could be described, plus one failure per entry that could not be.</returns>
     Task<RecycleBinContents> ListAsync(IReadOnlyList<string> volumeRoots, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Empties the Recycle Bins of the named volumes.
+    /// </summary>
+    /// <param name="volumeRoots">Volume roots to empty, each normalised with a trailing separator.</param>
+    /// <param name="cancellationToken">Cancels the wait, and stops the work where the implementation can.</param>
+    /// <returns>What was removed, and what could not be reached.</returns>
+    Task<RecycleBinEmptyResult> EmptyAsync(IReadOnlyList<string> volumeRoots, CancellationToken cancellationToken);
 }

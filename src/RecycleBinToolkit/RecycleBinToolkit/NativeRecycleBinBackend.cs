@@ -62,4 +62,13 @@ internal sealed class NativeRecycleBinBackend : IRecycleBinBackend
     /// <returns>The entries that could be described, plus one failure per entry that could not be.</returns>
     public Task<RecycleBinContents> ListAsync(IReadOnlyList<string> volumeRoots, CancellationToken cancellationToken) =>
         Task.Run(() => NativeBinLister.TryEnumerate(volumeRoots, cancellationToken), cancellationToken);
+
+    /// <summary>
+    /// Empties the bins on a pool thread.
+    /// </summary>
+    /// <param name="volumeRoots">Volume roots to empty.</param>
+    /// <param name="cancellationToken">Cancels the sweep between entries.</param>
+    /// <returns>What was removed, and what could not be reached.</returns>
+    public Task<RecycleBinEmptyResult> EmptyAsync(IReadOnlyList<string> volumeRoots, CancellationToken cancellationToken) =>
+        Task.Run(() => NativeBinEmptier.Empty(volumeRoots, cancellationToken), cancellationToken);
 }

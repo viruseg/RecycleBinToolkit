@@ -16,15 +16,6 @@ namespace RecycleBinToolkit;
 [SupportedOSPlatform("windows6.0.6000")]
 public static class RecycleBin
 {
-    /// <summary>
-    /// Ask for nothing, progress nothing, play nothing. An unattended library must never put a dialog
-    /// or a sound on a caller's desktop.
-    /// </summary>
-    private const uint EmptyFlags = PInvoke.SHERB_NOCONFIRMATION | PInvoke.SHERB_NOPROGRESSUI | PInvoke.SHERB_NOSOUND;
-
-    /// <summary>Win32 <c>ERROR_NOT_SET</c>, used when the Shell gives no error code of its own.</summary>
-    private const int UnreadableVolume = unchecked((int)0x80070490);
-
     /// <summary>Win32 <c>ERROR_PATH_NOT_FOUND</c>, for a path that is not a volume root.</summary>
     private const int VolumeNotFound = unchecked((int)0x800703FE);
 
@@ -81,9 +72,13 @@ public static class RecycleBin
     /// Which backend to empty through. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>,
     /// which is <see cref="RecycleBinBackend.WinApi"/>.
     /// </param>
-    /// <param name="cancellationToken">
-    /// Cancels the wait. On <see cref="RecycleBinBackend.WinApi"/> an empty already handed to the
-    /// Shell always finishes.
+/// <param name="cancellationToken">
+    /// Cancels the wait. On <see cref="RecycleBinBackend.WinApi"/> an empty already handed to the Shell
+    /// always finishes: it is one call that removes everything, and stopping it part way would leave the
+    /// caller with a bin neither full nor empty and no way to know which. On
+    /// <see cref="RecycleBinBackend.Native"/> the sweep checks the token between entries and a cancellation
+    /// part way through raises <see cref="OperationCanceledException"/> — so a caller who cancels gets no
+    /// result at all, and what was removed is found by reading the bin rather than by reading the result.
     /// </param>
     /// <returns>What was removed, and what could not be reached.</returns>
     /// <remarks>
@@ -100,7 +95,6 @@ public static class RecycleBin
         RecycleBinOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        _ = options;
         if (cancellationToken.IsCancellationRequested)
         {
             return await Task.FromCanceled<RecycleBinEmptyResult>(cancellationToken).ConfigureAwait(false);
@@ -118,13 +112,15 @@ public static class RecycleBin
         }
 
         // Started before the work is queued so that Elapsed covers the wait for the Shell worker as well
-        // as the empty itself. Every operation in this library queues behind one thread, so time spent
-        // waiting for it is part of what the caller waited, and reporting only the Shell's share would
-        // understate it by however long the worker was busy with something else.
+        // as the empty itself. Every operation on the Shell backend queues behind one thread, so time
+        // spent waiting for it is part of what the caller waited, and reporting only the Shell's share
+        // would understate it by however long the worker was busy with something else. The native
+        // backend has no queue, and the same stopwatch then measures the work plus the hop to the pool.
         var stopwatch = Stopwatch.StartNew();
 
-        var emptied = await RecycleBinWorker
-            .RunAsync(() => Empty(targets), cancellationToken)
+        var emptied = await RecycleBinBackends
+            .For(options ?? RecycleBinOptions.Default)
+            .EmptyAsync(targets, cancellationToken)
             .ConfigureAwait(false);
 
         return emptied with { Elapsed = stopwatch.Elapsed };
@@ -226,68 +222,6 @@ public static class RecycleBin
     /// experiences. <see cref="EmptyAsync"/> measures around the wait instead, the same way
     /// <see cref="GetItemsAsync"/> does, so both results mean the same thing.
     /// </remarks>
-    private static RecycleBinEmptyResult Empty(List<string> targets)
-    {
-        var failures = new List<RecycleFailure>();
-        var emptied = new List<string>(targets.Count);
-
-        // Nothing is measured and nothing is asked. A machine covering no volume has no Recycle Bin of its
-        // own to empty, and handing the Shell a null root would empty every volume's regardless.
-        if (!TryResolveShellRoot(targets, out var shellRoot))
-        {
-            return new RecycleBinEmptyResult(emptied, 0, 0, failures, TimeSpan.Zero);
-        }
-
-        // Measured on both sides of the call, per volume, because the Shell reports success whether it
-        // removed ten entries or none and says nothing about either count.
-        var itemsBefore = new long?[targets.Count];
-        var bytesBefore = new long?[targets.Count];
-
-        for (var i = 0; i < targets.Count; i++)
-        {
-            if (RecycleBinCounter.TryQuery(targets[i], out var items, out var bytes))
-            {
-                itemsBefore[i] = items;
-                bytesBefore[i] = bytes;
-            }
-        }
-
-        var hrEmpty = PInvoke.SHEmptyRecycleBin(default, shellRoot, EmptyFlags);
-
-        long itemsRemoved = 0;
-        long bytesFreed = 0;
-
-        for (var i = 0; i < targets.Count; i++)
-        {
-            if (!itemsBefore[i].HasValue || !RecycleBinCounter.TryQuery(targets[i], out var itemsAfter, out var bytesAfter))
-            {
-                failures.Add(new RecycleFailure(targets[i], UnreadableVolume, 1, RecycleFailureStage.Enumeration));
-                continue;
-            }
-
-            // A Recycle Bin that grew while the operation ran would otherwise report a negative
-            // removal, which no caller can interpret.
-            var removed = Math.Max(0, itemsBefore[i]!.Value - itemsAfter);
-            var freed = Math.Max(0, bytesBefore[i]!.Value - bytesAfter);
-
-            // The Shell's verdict is only consulted where the measurement cannot speak for itself:
-            // it reports an error when asked to empty a Recycle Bin that is already empty, so an
-            // HRESULT alone would fail a call that did exactly what was asked. A volume counts as
-            // failed only when the Shell refused and something is demonstrably still there.
-            if (hrEmpty.Failed && removed == 0 && itemsAfter > 0)
-            {
-                failures.Add(new RecycleFailure(targets[i], hrEmpty.Value, 1, RecycleFailureStage.Performing));
-                continue;
-            }
-
-            itemsRemoved += removed;
-            bytesFreed += freed;
-            emptied.Add(targets[i]);
-        }
-
-        return new RecycleBinEmptyResult(emptied, itemsRemoved, bytesFreed, failures, TimeSpan.Zero);
-    }
-
     /// <summary>
     /// Keeps only the entries that were deleted from <paramref name="volumeRoot"/>.
     /// </summary>
