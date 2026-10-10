@@ -55,6 +55,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderReadsARecordLongerThanTheStackBuffer), NativeIndexReaderReadsARecordLongerThanTheStackBuffer),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderRejectsATruncatedRecord), NativeIndexReaderRejectsATruncatedRecord),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderRejectsARecordOfUnknownVersion), NativeIndexReaderRejectsARecordOfUnknownVersion),
+        new TestCase("NativeBinSuite." + nameof(NativeIndexReaderDropsARecordDeclaringAnImpossiblePathLength), NativeIndexReaderDropsARecordDeclaringAnImpossiblePathLength),
         new TestCase("NativeBinSuite." + nameof(NativeListingFindsAnEntryNativeRecycleRecorded), NativeListingFindsAnEntryNativeRecycleRecorded),
         new TestCase("NativeBinSuite." + nameof(NativeListingReportsARecycledDirectoryAsADirectory), NativeListingReportsARecycledDirectoryAsADirectory),
         new TestCase("NativeBinSuite." + nameof(NativeListingOfAVolumeWithNoBinDirectoryIsEmpty), NativeListingOfAVolumeWithNoBinDirectoryIsEmpty),
@@ -354,6 +355,47 @@ internal static class NativeBinSuite
         File.WriteAllBytes(path, BuildRecord(@"W:\something.bin", size: 1, deleted: DateTime.UtcNow, version: 7));
 
         Check.False(NativeIndexFile.TryRead(path, out _), "a version 7 record is not read as a version 2 one");
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The character count in a version 2 record is a number in a file, and the file sits in a directory any
+    /// program running as this user can write to. Nothing makes it trustworthy, and a reader that takes it
+    /// at its word rents a buffer of whatever size the header names — two gigabytes at the largest count its
+    /// own overflow guard admits, which is an allocation failure escaping a method documented never to throw.
+    /// </summary>
+    /// <remarks>
+    /// The expectation is <em>dropped</em> rather than refused, because that is what a record this malformed
+    /// is: it is not an entry, and reporting it as an entry nobody could read would put a failure about a
+    /// file that says nothing about the bin into every listing of it. Only a record that could not be opened
+    /// is worth reporting, and that one carries the filesystem's own code.
+    /// </remarks>
+    private static Task NativeIndexReaderDropsARecordDeclaringAnImpossiblePathLength(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        // A header and nothing after it, declaring the largest character count the reader admits. What the
+        // reader does with that count — allocate for it, or overflow adding it — is the whole subject.
+        var header = new byte[NativeIndexFile.HeaderLength];
+        WriteInt64(header, 0, NativeIndexFile.Version);
+        WriteInt64(header, 8, 4096);
+        WriteInt64(header, 16, DateTime.UtcNow.ToFileTimeUtc());
+        WriteInt32(header, 24, int.MaxValue / 2);
+
+        var path = Path.Combine(ScratchWorkspace.Root, "$Icorrupt.bin");
+        File.WriteAllBytes(path, header);
+
+        Check.False(
+            NativeIndexFile.TryRead(path, out _, out var hResult),
+            "a record declaring a path no Windows path can be is not read as one");
+
+        Check.Equal(
+            0,
+            hResult,
+            $"and it is dropped as malformed rather than reported as an entry nobody could read (got 0x{hResult:X8})");
 
         workspace.Dispose();
         return Task.CompletedTask;

@@ -55,6 +55,18 @@ internal static class NativeIndexFile
     private const int LegacyPathLength = 520;
 
     /// <summary>
+    /// The longest path Windows can name, in characters. The extended-length prefix is what buys paths past
+    /// <c>MAX_PATH</c> and it stops at 32,767 characters, so a record declaring more is describing something
+    /// no caller could have deleted.
+    /// </summary>
+    /// <remarks>
+    /// Checked against the character count rather than against the bytes actually read, which would reject
+    /// the long paths the rented read below exists for. It is also what keeps that rent bounded: at this
+    /// ceiling the buffer is about 64 KB, against the two gigabytes a bare overflow guard would admit.
+    /// </remarks>
+    internal const int MaxPathCharacters = 32767;
+
+    /// <summary>
     /// Writes a record describing a deletion.
     /// </summary>
     /// <param name="indexPath">Where to write it. Must not already exist.</param>
@@ -159,13 +171,16 @@ internal static class NativeIndexFile
             {
                 var characters = BinaryPrimitives.ReadInt32LittleEndian(buffer[24..]);
 
-                // Guarded before anything is multiplied or sliced, but NOT against the bytes actually read: a path
-                // longer than the stack buffer is the case the rented read below exists for, and checking
-                // it against the buffer length would reject exactly that. A declaration large enough to
-                // overflow `characters * 2` is a corrupt record, and without this the wrap would produce a
-                // small length the slice after it rejects — turning a malformed file into a failure the
-                // caller is told to go looking for.
-                if (characters < 1 || characters > int.MaxValue / 2)
+                // Guarded before anything is multiplied or sliced, and against the longest path Windows can
+                // name rather than against the largest number an `int` holds. A path is at most 32,767
+                // characters with the extended-length prefix, so a larger count is not a path this machine
+                // could have produced — it is a number in a file, and the bin directory is one any program
+                // running as this user can write to. Taking it at its word rents a buffer of whatever size
+                // it names, up to the two gigabytes the largest admitted count asks for, and the addition
+                // below wraps before that on the counts just under it. Neither is an answer, and both come
+                // out of a method documented never to throw: an allocation failure is not among the
+                // exceptions caught below.
+                if (characters < 1 || characters > MaxPathCharacters)
                 {
                     return false;
                 }
