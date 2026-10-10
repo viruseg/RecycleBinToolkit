@@ -18,6 +18,7 @@ internal static class VolumeSuite
         new TestCase("VolumeSuite." + nameof(RecycleBinQueryReadsTrackedItems), RecycleBinQueryReadsTrackedItems),
         new TestCase("VolumeSuite." + nameof(RecycleBinQueryReportsFailureForMissingVolume), RecycleBinQueryReportsFailureForMissingVolume),
         new TestCase("VolumeSuite." + nameof(TheScratchVolumeReasonIsWhatTheLibraryReports), TheScratchVolumeReasonIsWhatTheLibraryReports),
+        new TestCase("VolumeSuite." + nameof(ARootCarryingNonsenseIsRefusedRatherThanThrowing), ARootCarryingNonsenseIsRefusedRatherThanThrowing),
     ];
 
     /// <summary>
@@ -117,4 +118,59 @@ internal static class VolumeSuite
 
     /// <summary>Separates the counter from a listing, which is a difference of about seventy times here.</summary>
     private const int CounterBudgetMs = 120_000;
+
+    /// <summary>
+    /// A volume root is a volume root or it is not, and a caller who types nonsense into one gets the
+    /// answer that names it — never an exception from three frames down inside the path API.
+    /// </summary>
+    /// <remarks>
+    /// A NUL is the character worth probing: it is what a caller most plausibly carries without meaning to
+    /// (a concatenated argument), and it is the one character that cannot be in any real path, so nothing
+    /// past the root check can be reached by it.
+    /// <para>
+    /// The answer is the same for all three operations that take a root, which is what makes it a rule
+    /// rather than three coincidences: <see cref="RecycleBin.GetStatusAsync"/> names the volume as not
+    /// found, and the two that act name the path as one that was not a volume root — the same
+    /// <see cref="RecycleFailureStage.PathValidation"/> each already returns for any other path inside a
+    /// volume. <see cref="RecycleBin.GetItemsAsync"/> is included because refusing a non-root there is
+    /// recent, and a caller's first sign of that rule would be an exception rather than an empty listing.
+    /// </para>
+    /// <para>
+    /// Nothing here can create or remove anything: none of the three writes to the volume the nonsense
+    /// names, because none of them gets as far as resolving one out of it.
+    /// </para>
+    /// </remarks>
+    private static async Task ARootCarryingNonsenseIsRefusedRatherThanThrowing(TestContext context)
+    {
+        const string NulInRoot = "W:\0";
+
+        var status = await RecycleBin.GetStatusAsync(NulInRoot, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(
+            RecycleBinAvailabilityReason.VolumeNotFound,
+            status.Reason,
+            "a status of a root carrying a NUL names it as a volume that is not there rather than raising");
+
+        var listed = await RecycleBin.GetItemsAsync(NulInRoot, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(0, listed.Items.Count, "a listing of one returns nothing, because no volume was resolved to list");
+        Check.Equal(1, listed.Failures.Count, "and says the path was not a volume root");
+        Check.Equal(
+            RecycleFailureStage.PathValidation,
+            listed.Failures[0].Stage,
+            "at the stage the same refusal already arrives with, rather than raising from the path API");
+
+        var emptied = await RecycleBin.EmptyAsync(NulInRoot, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(0, emptied.VolumesEmptied.Count, "an empty of one empties no volume");
+        Check.Equal(0, emptied.ItemsRemoved, "and removes nothing");
+        Check.Equal(1, emptied.Failures.Count, "and says the path was not a volume root");
+        Check.Equal(
+            RecycleFailureStage.PathValidation,
+            emptied.Failures[0].Stage,
+            "the same way the listing refused it, so all three answer one input the same way");
+    }
 }

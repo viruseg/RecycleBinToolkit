@@ -57,6 +57,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderRejectsARecordOfUnknownVersion), NativeIndexReaderRejectsARecordOfUnknownVersion),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderDropsARecordDeclaringAnImpossiblePathLength), NativeIndexReaderDropsARecordDeclaringAnImpossiblePathLength),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderDropsARecordWhoseTimestampIsOutOfRange), NativeIndexReaderDropsARecordWhoseTimestampIsOutOfRange),
+        new TestCase("NativeBinSuite." + nameof(ATakenEntryNameIsRefusedAsACollisionWhateverItsAttributes), ATakenEntryNameIsRefusedAsACollisionWhateverItsAttributes),
         new TestCase("NativeBinSuite." + nameof(NativeListingFindsAnEntryNativeRecycleRecorded), NativeListingFindsAnEntryNativeRecycleRecorded),
         new TestCase("NativeBinSuite." + nameof(NativeListingReportsARecycledDirectoryAsADirectory), NativeListingReportsARecycledDirectoryAsADirectory),
         new TestCase("NativeBinSuite." + nameof(NativeListingOfAVolumeWithNoBinDirectoryIsEmpty), NativeListingOfAVolumeWithNoBinDirectoryIsEmpty),
@@ -440,6 +441,68 @@ internal static class NativeBinSuite
         workspace.Dispose();
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// An entry name this library has already handed out is refused as taken, whatever attributes the file
+    /// carrying it ended up with — which is what makes the fresh-name retry reachable at all.
+    /// </summary>
+    /// <remarks>
+    /// The claim under test is a claim about the filesystem, so this is stated as one rather than left
+    /// implicit: <c>CREATE_NEW</c> fails on the name being present and reads no attributes at all, so a
+    /// read-only entry is refused with <c>ERROR_FILE_EXISTS</c> exactly as a writable one is. The write
+    /// side of the runner reads that code to tell a collision from a locked file, and the two codes it
+    /// accepts are the only two either operation produces on a taken name — <c>ERROR_FILE_EXISTS</c> from
+    /// the create and <c>ERROR_ALREADY_EXISTS</c> from the move.
+    /// <para>
+    /// Both halves are asserted rather than the create alone, because the move is the one a reader is more
+    /// likely to doubt: it also refuses a read-only name with <c>ERROR_ACCESS_DENIED</c> when asked to
+    /// overwrite it, and this runner never asks it to. Nothing here creates a file outside the run's own
+    /// directory, so the collisions are staged inside it rather than in a real bin.
+    /// </para>
+    /// </remarks>
+    private static Task ATakenEntryNameIsRefusedAsACollisionWhateverItsAttributes(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var taken = Path.Combine(ScratchWorkspace.Root, "$ITAKEN.bin");
+
+        // The attributes a real entry carries, plus read-only on top: the point is that none of them changes
+        // what the refusal says.
+        File.WriteAllText(taken, "an entry that is already there");
+        File.SetAttributes(taken, FileAttributes.ReadOnly | FileAttributes.Hidden | FileAttributes.System);
+
+        var refused = Check.Throws<IOException>(
+            () => NativeIndexFile.Write(taken, ScratchWorkspace.Root + "another.bin", 0, DateTime.UtcNow),
+            "creating a record over a name that is taken is refused rather than overwriting it");
+
+        Check.Equal(
+            ErrorFileExists,
+            refused.HResult,
+            $"and it is refused as a taken name, which is what earns the retry (got 0x{refused.HResult:X8}, win32 {refused.HResult & 0xFFFF})");
+
+        // The other end of the same collision: the payload's move onto a name that is already there.
+        var source = Path.Combine(ScratchWorkspace.Root, "moving-source.bin");
+        File.WriteAllText(source, "the payload");
+
+        var blocked = Check.Throws<IOException>(
+            () => File.Move(source, taken),
+            "a move onto a name that is taken is refused too");
+
+        Check.Equal(
+            ErrorAlreadyExists,
+            blocked.HResult,
+            $"and is refused by the second of the two codes the runner reads as a collision (got 0x{blocked.HResult:X8}, win32 {blocked.HResult & 0xFFFF})");
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Win32 <c>ERROR_FILE_EXISTS</c>: a create that would overwrite a name.</summary>
+    private const int ErrorFileExists = unchecked((int)0x80070050);
+
+    /// <summary>Win32 <c>ERROR_ALREADY_EXISTS</c>: a move that would overwrite a name.</summary>
+    private const int ErrorAlreadyExists = unchecked((int)0x800700B7);
 
     /// <summary>
     /// What the native backend wrote is what a listing finds. The entry, its original path, its size and
