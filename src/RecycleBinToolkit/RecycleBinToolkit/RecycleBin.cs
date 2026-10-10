@@ -23,7 +23,9 @@ public static class RecycleBin
     /// Reads the contents of the Recycle Bin.
     /// </summary>
     /// <param name="volumeRoot">
-    /// Volume root to keep, such as <c>"X:\\"</c>, or <see langword="null"/> for every volume.
+    /// Volume root to keep, such as <c>"X:\\"</c>, or <see langword="null"/> for every volume. A path inside
+    /// a volume is not a volume root: it is refused with a <see cref="RecycleFailureStage.PathValidation"/>
+    /// failure rather than answered for the whole volume containing it.
     /// </param>
     /// <param name="options">
     /// Which backend to read through. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>,
@@ -34,10 +36,15 @@ public static class RecycleBin
     /// <returns>The entries that could be read, plus the ones that could not.</returns>
     /// <remarks>
     /// The Shell's Recycle Bin is a single virtual folder spanning every mounted volume, so on
-    /// <see cref="RecycleBinBackend.WinApi"/> <paramref name="volumeRoot"/> narrows an enumeration
+    /// <see cref="RecycleBinBackend.WinApi"/> a valid <paramref name="volumeRoot"/> narrows an enumeration
     /// that has already happened rather than making a cheaper query. Entries that could not be
     /// described arrive in <see cref="RecycleBinContents.Failures"/> on either backend; an
     /// environmental problem is never an exception.
+    /// <para>
+    /// A root that names no volume is the one thing both backends answer the same way, and it is answered
+    /// as a failure rather than as an empty result: an empty listing is a claim about the bin, and the
+    /// caller whose root was one character wrong cannot tell that from a bin that really is empty.
+    /// </para>
     /// </remarks>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
@@ -50,9 +57,23 @@ public static class RecycleBin
         var effective = options ?? RecycleBinOptions.Default;
         var stopwatch = Stopwatch.StartNew();
 
+        // A path that is not a volume root names no volume of its own. Widening it to the one containing it
+        // is the Shell's own behaviour for a read — the bin is a single folder either way — but a caller who
+        // mistyped a root then reads the whole volume's bin and has no way to tell that from what they asked
+        // for. Refused rather than widened, which is what EmptyAsync does with the same input and what
+        // GetStatusAsync answers it with.
+        var targets = RecycleBinVolumeSet.Resolve(volumeRoot);
+        if (targets is null)
+        {
+            return new RecycleBinContents(
+                [],
+                [new RecycleFailure(volumeRoot!, VolumeNotFound, 0, RecycleFailureStage.PathValidation)],
+                stopwatch.Elapsed);
+        }
+
         var collected = await RecycleBinBackends
             .For(effective)
-            .ListAsync(RecycleBinVolumeSet.Resolve(volumeRoot) ?? [], cancellationToken)
+            .ListAsync(targets, cancellationToken)
             .ConfigureAwait(false);
 
         var items = Filter(collected.Items, volumeRoot);

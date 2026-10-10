@@ -19,6 +19,7 @@ internal static class ListerSuite
         new TestCase("ListerSuite." + nameof(VolumeFilterKeepsOnlyItemsFromThatVolume), VolumeFilterKeepsOnlyItemsFromThatVolume),
         new TestCase("ListerSuite." + nameof(VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn), VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn),
         new TestCase("ListerSuite." + nameof(MissingVolumeIsReportedNotThrown), MissingVolumeIsReportedNotThrown),
+        new TestCase("ListerSuite." + nameof(APathInsideAVolumeIsNotAVolumeToList), APathInsideAVolumeIsNotAVolumeToList),
         new TestCase("ListerSuite." + nameof(ListingReportsEveryFileOfABatchRecycledTogether), ListingReportsEveryFileOfABatchRecycledTogether),
     ];
 
@@ -211,6 +212,41 @@ internal static class ListerSuite
 
         Check.True(contents.Items.Count == 0, "nothing is reported for a volume that is not mounted");
         Check.Equal(0, contents.Failures.Count, $"a filter for an absent volume is not an enumeration failure (got {contents.Failures.Count})");
+    }
+
+    /// <summary>
+    /// A directory inside a volume names no volume of its own, and a listing answered with an empty result
+    /// reads as a Recycle Bin that holds nothing — which is a fact about the bin, not about the caller's
+    /// typo. Three operations take a volume root and all three have to agree on what one is.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RecycleBin.GetStatusAsync"/> answers the same input with
+    /// <see cref="RecycleBinAvailabilityReason.VolumeNotFound"/> and <see cref="RecycleBin.EmptyAsync"/>
+    /// with a <see cref="RecycleFailureStage.PathValidation"/> failure naming the path. A listing that
+    /// returned neither left a caller with no way to tell a mistyped root from an empty bin.
+    /// </remarks>
+    private static async Task APathInsideAVolumeIsNotAVolumeToList(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a real entry on the volume for a silent widening to report");
+
+        var file = workspace.CreateRandomFile(4096);
+        var recycled = await FileRecycler
+            .MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "there is an entry on the volume for the check to be about");
+
+        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.Root, null, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(0, contents.Items.Count, "a directory inside a volume is not a volume that got listed");
+        Check.Equal(1, contents.Failures.Count, "and the caller is told the path was not one");
+
+        var failure = contents.Failures[0];
+        Check.Equal(RecycleFailureStage.PathValidation, failure.Stage, "as a path that was not a volume root");
+        Check.Equal(ScratchWorkspace.Root, failure.Path, "naming the path the caller passed");
+
+        workspace.Dispose();
     }
 
     /// <summary>

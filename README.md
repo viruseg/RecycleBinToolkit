@@ -244,7 +244,7 @@ Lists the Recycle Bin.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `volumeRoot` | `string?` | Volume root to keep, such as `"W:\"`, or `null` for every volume. |
+| `volumeRoot` | `string?` | Volume root to keep, such as `"W:\"`, or `null` for every volume. A path inside a volume is not a volume root: it is reported in `Failures` rather than answered for the whole volume containing it. |
 | `options` | `RecycleBinOptions?` | Which backend to read through. `null` means `RecycleBinOptions.Default`, which is `WinApi`. |
 | `cancellationToken` | `CancellationToken` | Cancels the wait. |
 
@@ -254,6 +254,11 @@ On `WinApi` the Recycle Bin is a single Shell folder spanning every mounted volu
 narrows an enumeration that has already happened. It is a filter, not a cheaper query. On `Native` each
 volume's bin is enumerated directly and `volumeRoot` selects which directories to read, which is the
 cheaper of the two. Both return the same entries.
+
+A path inside a volume names no volume of its own, and it is refused on both backends rather than widened
+to the volume containing it — as `EmptyAsync` refuses it and `GetStatusAsync` answers it with
+`VolumeNotFound`. Refused rather than answered empty, because an empty listing is a claim about the bin
+and a caller whose root was one character off cannot tell that from a bin that really is empty.
 
 ### `EmptyAsync`
 
