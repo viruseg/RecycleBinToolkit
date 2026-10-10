@@ -692,14 +692,14 @@ internal static class NativeBinSuite
             $"the classifier answers with one of its three kinds rather than something else ({kind})");
 
         var expected = kind == VolumeStorageKind.SolidState
-            ? Math.Max(1, Environment.ProcessorCount)
+            ? Math.Min(Environment.ProcessorCount, VolumeSeekPenalty.ReadDegreeCap)
             : 1;
 
         Check.Equal(
             expected,
             VolumeSeekPenalty.DegreeOfParallelism(root),
             kind == VolumeStorageKind.SolidState
-                ? "a solid-state volume is read on every core"
+                ? "a solid-state volume is read on every core up to the cap, because reading is what concurrency helps and past eight threads it stopped improving"
                 : "anything else is read on one thread, because concurrent requests make a mechanical head seek between them and a driver that never answered may be either");
 
         Check.Equal(kind, VolumeSeekPenalty.Classify(root), "and the answer is the same when asked twice, because the hardware does not change under a run");

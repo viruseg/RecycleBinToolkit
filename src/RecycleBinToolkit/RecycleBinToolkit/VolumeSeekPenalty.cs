@@ -59,6 +59,13 @@ internal static class VolumeSeekPenalty
     /// </summary>
     private const int CacheLimit = 64;
 
+    /// <summary>
+    /// The most threads a solid-state volume's Recycle Bin is read on. Reading a batch of records is
+    /// seek-bound rather than CPU-bound, and past this many threads the measurements on this machine stopped
+    /// improving — so a wider machine gains nothing from the extra ones.
+    /// </summary>
+    internal const int ReadDegreeCap = 8;
+
     private static readonly ConcurrentDictionary<string, VolumeStorageKind> Cache =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -97,7 +104,8 @@ internal static class VolumeSeekPenalty
     /// </summary>
     /// <param name="volumeRoot">Volume root, such as <c>"X:\\"</c>.</param>
     /// <returns>
-    /// Every core for a solid-state volume, and one for anything else.
+    /// Eight threads for a solid-state volume, or every core on a machine with fewer, and one for anything
+    /// else. The cap is the figure the measurements stopped improving at, so a wider machine reads no faster.
     /// </returns>
     /// <remarks>
     /// One is the answer for a mechanical disk because the alternative is not slower, it is harmful: a head
@@ -109,7 +117,7 @@ internal static class VolumeSeekPenalty
     /// </remarks>
     internal static int DegreeOfParallelism(string volumeRoot) =>
         Classify(volumeRoot) == VolumeStorageKind.SolidState
-            ? Environment.ProcessorCount
+            ? Math.Min(Environment.ProcessorCount, ReadDegreeCap)
             : 1;
 
     private static unsafe VolumeStorageKind Query(string volumeRoot)
