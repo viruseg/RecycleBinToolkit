@@ -90,6 +90,8 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeEmptyIgnoresADirectoryNamedLikeARecord), NativeEmptyIgnoresADirectoryNamedLikeARecord),
         new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsSayWhatHappenedWhenTheRecordIsNotARecord), NativeLazyDetailsSayWhatHappenedWhenTheRecordIsNotARecord),
         new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsCarryTheFileSystemCode), NativeLazyDetailsCarryTheFileSystemCode),
+        new TestCase("NativeBinSuite." + nameof(NativeEnumerationPairsHalvesWhateverCaseTheyAreWrittenIn), NativeEnumerationPairsHalvesWhateverCaseTheyAreWrittenIn),
+        new TestCase("NativeBinSuite." + nameof(NativeListingReportsAZeroSizeForARecycledDirectory), NativeListingReportsAZeroSizeForARecycledDirectory),
     ];
 
     /// <summary>
@@ -1507,7 +1509,8 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
 
         // Found by its payload: asking an entry for its original path is the reading this case is about, and
         // an entry found that way would already be warm before its record is taken away.
-        var item = contents.Items.First(i => SamePath(i.PayloadPath, NativeBinLayout.ToPayloadPath(RecordOf(path))));
+        var expectedPayload = NativeBinLayout.ToPayloadPath(RecordOf(path));
+        var item = contents.Items.First(i => SamePath(i.PayloadPath, expectedPayload));
 
         File.Delete(RecordOf(path));
 
@@ -1713,7 +1716,8 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
 
         var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
-        var item = contents.Items.First(i => SamePath(i.PayloadPath, NativeBinLayout.ToPayloadPath(RecordOf(path))));
+        var expectedPayload = NativeBinLayout.ToPayloadPath(RecordOf(path));
+        var item = contents.Items.First(i => SamePath(i.PayloadPath, expectedPayload));
 
         File.Delete(RecordOf(path));
 
@@ -1725,6 +1729,95 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
             unchecked((int)0x80131620),
             raised.HResult,
             $"the filesystem's own code is carried, not the runtime default (got 0x{raised.HResult:X8})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The two halves of an entry are told apart by one letter, and Windows does not promise to write it the
+    /// same way twice. A pair that failed to match because of a capital would be two entries that each lack
+    /// what the other carries: one nothing can describe, one nothing can restore.
+    /// </summary>
+    /// <remarks>
+    /// Written by hand into the bin rather than recycled, because the native backend writes both halves in one
+    /// case and this machine's Shell writes them in another; neither path can be asked to produce a mismatch
+    /// on demand. The tails are what the pairing keys on, so they are spelled differently too.
+    /// </remarks>
+    private static async Task NativeEnumerationPairsHalvesWhateverCaseTheyAreWrittenIn(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin to write a mixed-case pair into");
+
+        var bin = NativeBinLayout.EnsureBinDirectory(ScratchWorkspace.VolumeRoot);
+
+        var lowercaseRecord = Path.Combine(bin, "$ilower" + RunTag + ".bin");
+        var lowercasePayload = Path.Combine(bin, "$rlower" + RunTag + ".bin");
+        var upperRecord = Path.Combine(bin, "$IUPPER" + RunTag + ".BIN");
+        var upperPayload = Path.Combine(bin, "$RUPPER" + RunTag + ".BIN");
+
+        File.WriteAllBytes(lowercasePayload, Content);
+        File.WriteAllBytes(upperPayload, Content);
+        NativeIndexFile.Write(lowercaseRecord, ScratchWorkspace.Root + "\\lower.bin", Content.LongLength, DateTime.UtcNow);
+        NativeIndexFile.Write(upperRecord, ScratchWorkspace.Root + "\\upper.bin", Content.LongLength, DateTime.UtcNow);
+
+        var entries = NativeBinEntries.Collect(bin, context.CancellationToken);
+
+        var lower = entries.SingleOrDefault(e => SamePath(e.IndexPath ?? string.Empty, lowercaseRecord));
+        Check.NotNull(lower, "a lowercase $i pairs with a lowercase $r");
+        Check.True(
+            SamePath(lower!.PayloadPath ?? string.Empty, lowercasePayload),
+            $"and both halves end up on one entry (got '{lower.PayloadPath}')");
+
+        var upper = entries.SingleOrDefault(e => SamePath(e.IndexPath ?? string.Empty, upperRecord));
+        Check.NotNull(upper, "an uppercase $I pairs with an uppercase $R whatever the extension's case is");
+        Check.True(
+            SamePath(upper!.PayloadPath ?? string.Empty, upperPayload),
+            $"and both halves end up on one entry (got '{upper.PayloadPath}')");
+
+        Check.Equal(
+            2,
+            entries.Count(e => (SamePath(e.IndexPath ?? string.Empty, lowercaseRecord) || SamePath(e.IndexPath ?? string.Empty, upperRecord)) && e.PayloadPath is not null),
+            "and neither pair was reported as two half-entries");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A recycled directory is reported as zero bytes. The size a directory's own directory entry carries is
+    /// the size of the directory record, which is not what the entry occupied and is not a figure any caller
+    /// can act on — so the walk's answer is discarded and the flag beside it is what says why.
+    /// </summary>
+    /// <remarks>
+    /// This pins the contract rather than the guard that enforces it: on NTFS <c>FindFirstFile</c> reports zero
+    /// for a directory anyway, so on this machine removing the <c>IsDirectory</c> check would not turn this red.
+    /// The test is here because the figure is part of what a listing promises, and because it is the case where
+    /// the two backends differ most easily — the Shell measures the entry's own file and the native path does
+    /// not.
+    /// </remarks>
+    private static async Task NativeListingReportsAZeroSizeForARecycledDirectory(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for a directory to be listed out of");
+
+        var directory = Path.Combine(ScratchWorkspace.Root, "zero-sized-" + RunTag);
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(Path.Combine(directory, "inside.bin"), Content);
+
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([directory], Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the directory is recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        var entries = NativeBinEntries.Collect(BinDirectory, context.CancellationToken);
+        var directoryIndex = RecordOf(directory);
+        var enumerated = entries.Single(e => SamePath(e.IndexPath ?? string.Empty, directoryIndex));
+
+        Check.True(enumerated.PayloadIsDirectory, "the enumeration reports the payload as a directory");
+        Check.Equal(0, enumerated.PayloadLength, "with no size of its own for the directory record to carry");
+
+        var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken), directory);
+        Check.True(item.IsDirectory, "and the listing agrees it is a directory");
+        Check.Equal(0, item.Size, "with the same zero size, whatever the walk said about the directory itself");
 
         workspace.Dispose();
     }
