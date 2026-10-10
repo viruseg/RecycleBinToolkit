@@ -1,4 +1,3 @@
-using System.IO.Enumeration;
 using System.Runtime.Versioning;
 
 namespace RecycleBinToolkit;
@@ -7,10 +6,11 @@ namespace RecycleBinToolkit;
 /// Empties a volume's Recycle Bin by deleting the entries in it, and reports what that removed.
 /// </summary>
 /// <remarks>
-/// The counts come from the records themselves. <c>SHEmptyRecycleBin</c> reports whether it worked and
-/// says nothing about what it removed, which is why the Shell path samples <c>SHQueryRecycleBin</c> on
-/// both sides of the call and reports the difference — a number that a recycle happening at the same moment
-/// can move. Here every entry carries its own size, so the totals are read rather than inferred.
+/// The counts come from the walk itself: it says what each entry is and how large its payload is, so an
+/// empty of ninety thousand entries measures them without reading a record. <c>SHEmptyRecycleBin</c> reports
+/// whether it worked and says nothing about what it removed, which is why the Shell path samples
+/// <c>SHQueryRecycleBin</c> on both sides of the call and reports the difference — a number that a recycle
+/// happening at the same moment can move.
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class NativeBinEmptier
@@ -75,28 +75,41 @@ internal static class NativeBinEmptier
         }
 
         var failuresBefore = failures.Count;
-        var records = CollectRecordPaths(binDirectory, cancellationToken);
+        var records = CollectRecords(binDirectory, cancellationToken);
 
-        if (records.Length == 0)
+        if (records.Count == 0)
         {
             emptied.Add(volumeRoot);
             return (0, 0);
         }
 
-        // Measured before anything is deleted, out of bytes that are about to stop existing. A directory's
-        // own size is not counted, which is what Windows itself records for one and what the counter the
-        // caller compares against also leaves out.
-        var sizes = new long[records.Length];
+        // Measured before anything is deleted, out of bytes that are about to stop existing. A whole pair
+        // already carries its size from the walk, so only the entries whose payload is gone have anything
+        // left to ask for — and a record is the only thing that can answer.
+        var sizes = new long[records.Count];
         var options = new ParallelOptions
         {
             MaxDegreeOfParallelism = VolumeSeekPenalty.DegreeOfParallelism(volumeRoot),
             CancellationToken = cancellationToken
         };
 
+        var needy = new List<int>();
+        for (var i = 0; i < records.Count; i++)
+        {
+            if (records[i].PayloadPath is not null)
+            {
+                sizes[i] = records[i].PayloadIsDirectory ? 0 : records[i].PayloadLength;
+            }
+            else
+            {
+                sizes[i] = -1;
+                needy.Add(i);
+            }
+        }
+
         // The token rides on the measuring pass as well as the sweep. A cancelled empty that still opened
         // and read every entry before noticing would take as long as the empty it was meant to abandon.
-        Parallel.For(0, records.Length, options, index =>
-            sizes[index] = SizeOf(records[index]));
+        Parallel.ForEach(needy, options, index => sizes[index] = SizeOfRecord(records[index].IndexPath!));
 
         Remove(records, sizes, failures, cancellationToken);
 
@@ -125,40 +138,16 @@ internal static class NativeBinEmptier
     }
 
     /// <summary>
-    /// How much an entry holds, or <c>-1</c> when it could not be worked out and its size is therefore not
-    /// counted.
+    /// How much an entry whose payload is gone holds, or <c>-1</c> when it could not be worked out and its
+    /// size is therefore not counted.
     /// </summary>
     /// <remarks>
-    /// A record that cannot be read is still an entry to delete, and deleting it is what was asked for. It
-    /// is measured from the payload on disk instead, because reporting a count that is short by an unknown
-    /// amount would be worse than spending one more metadata call to get it right. Only a payload that cannot
-    /// be measured either leaves the entry out of the totals, and nothing is reported for it because
-    /// nothing failed — the removal still happens.
+    /// A record that cannot be read is still an entry to delete, and deleting it is what was asked for. Only
+    /// what it holds is unknown, so only the figure is given up — the removal still happens and the entry
+    /// still leaves the bin.
     /// </remarks>
-    private static long SizeOf(string indexPath)
-    {
-        if (NativeIndexFile.TryRead(indexPath, out var record, out _))
-        {
-            return record.Size;
-        }
-
-        var payloadPath = NativeBinLayout.ToPayloadPath(indexPath);
-
-        try
-        {
-            if (Directory.Exists(payloadPath))
-            {
-                return 0;
-            }
-
-            var size = new FileInfo(payloadPath).Length;
-            return size < 0 ? -1 : size;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        {
-            return -1;
-        }
-    }
+    private static long SizeOfRecord(string indexPath) =>
+        NativeIndexFile.TryRead(indexPath, out var record, out _) ? record.Size : -1;
 
     /// <summary>
     /// Deletes every entry, payload first and record second.
@@ -171,21 +160,27 @@ internal static class NativeBinEmptier
     /// which volume it was on.
     /// </remarks>
     private static void Remove(
-        string[] records,
+        List<NativeBinEntry> records,
         long[] sizes,
         List<RecycleFailure> failures,
         CancellationToken cancellationToken)
     {
-        for (var i = 0; i < records.Length; i++)
+        for (var i = 0; i < records.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var indexPath = records[i];
-            var payloadPath = NativeBinLayout.ToPayloadPath(indexPath);
+            var indexPath = records[i].IndexPath!;
+            var payloadPath = records[i].PayloadPath;
 
             try
             {
-                DeleteEntry(payloadPath);
+                // A record with no payload is the only entry here with nothing to delete first, and it is
+                // deleted the same way — the walk already established that there is no payload to delete.
+                if (payloadPath is not null)
+                {
+                    DeleteEntry(payloadPath);
+                }
+
                 File.Delete(indexPath);
             }
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
@@ -238,47 +233,27 @@ internal static class NativeBinEmptier
     }
 
     /// <summary>
-    /// The index records in a bin directory. <see cref="EnumerationOptions.AttributesToSkip"/> is zero
-    /// because both halves of an entry carry <see cref="FileAttributes.Hidden"/> and
-    /// <see cref="FileAttributes.System"/>, and the default would enumerate nothing at all.
+    /// Every entry a bin directory holds that has a record to delete, whether its payload is still there or
+    /// not.
     /// </summary>
     /// <param name="binDirectory">The volume's bin directory for this user.</param>
-    /// <param name="cancellationToken">
-    /// Checked between entries, as the listing does with the same enumeration. One directory is quick to
-    /// walk, so this is not what makes an empty interruptible — the sweep below is — but the two shapes of
-    /// the same walk reading alike is worth more than the signature symmetry alone.
-    /// </param>
+    /// <param name="cancellationToken">Cancels the walk between entries.</param>
     /// <remarks>
-    /// An array rather than a list because everything downstream addresses these by position: the measuring
-    /// pass and the sweep both run over an index, and the sizes they fill are an array of the same length.
+    /// An entry with a record and no payload is included, because a record with nothing behind it is litter
+    /// that this is what removes. One with neither is not an entry at all and is not here to be swept.
     /// </remarks>
-    private static string[] CollectRecordPaths(string binDirectory, CancellationToken cancellationToken)
+    private static List<NativeBinEntry> CollectRecords(string binDirectory, CancellationToken cancellationToken)
     {
-        var options = new EnumerationOptions
-        {
-            RecurseSubdirectories = false,
-            AttributesToSkip = 0,
-            ReturnSpecialDirectories = false,
-            IgnoreInaccessible = true
-        };
+        var records = new List<NativeBinEntry>();
 
-        var enumerable = new FileSystemEnumerable<string>(
-            binDirectory,
-            (ref FileSystemEntry entry) => Path.Combine(binDirectory, entry.FileName.ToString()),
-            options)
+        foreach (var entry in NativeBinEntries.Collect(binDirectory, cancellationToken))
         {
-            ShouldIncludePredicate = static (ref FileSystemEntry entry) =>
-                !entry.IsDirectory && entry.FileName.StartsWith("$I", StringComparison.OrdinalIgnoreCase)
-        };
-
-        var records = new List<string>();
-
-        foreach (var record in enumerable)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            records.Add(record);
+            if (entry.IndexPath is not null)
+            {
+                records.Add(entry);
+            }
         }
 
-        return [.. records];
+        return records;
     }
 }
