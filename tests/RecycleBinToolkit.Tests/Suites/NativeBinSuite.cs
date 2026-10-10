@@ -79,6 +79,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(ADeepDirectoryMovesWhole), ADeepDirectoryMovesWhole),
         new TestCase("NativeBinSuite." + nameof(AnEmptyNamesOnlyTheVolumesItActuallyEmptied), AnEmptyNamesOnlyTheVolumesItActuallyEmptied),
         new TestCase("NativeBinSuite." + nameof(ABinWithNothingInItIsStillNamedAsEmptied), ABinWithNothingInItIsStillNamedAsEmptied),
+        new TestCase("NativeBinSuite." + nameof(NativeEnumerationPairsIndexAndPayload), NativeEnumerationPairsIndexAndPayload),
     ];
 
     /// <summary>
@@ -1274,6 +1275,48 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         RecycleBinBackendGuard.RequireWriteSupport();
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// What a listing is built from: one walk of the bin directory that pairs each entry's record with its
+    /// payload and says what the payload is. Size and directory-ness come from the directory walk itself,
+    /// which is the whole reason a listing does not read a record to learn them.
+    /// </summary>
+    private static async Task NativeEnumerationPairsIndexAndPayload(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for an entry to be enumerated out of");
+
+        var path = CreateFile("enumerated.bin");
+        var directory = Path.Combine(ScratchWorkspace.Root, "enumerated-directory-" + RunTag);
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(Path.Combine(directory, "inside.bin"), Content);
+
+        var recycled = await FileRecycler
+            .MoveToRecycleBinAsync([path, directory], Native, context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"both are recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        var indexPath = RecordOf(path);
+        var entries = NativeBinEntries.Collect(BinDirectory, context.CancellationToken);
+
+        var entry = entries.SingleOrDefault(e => string.Equals(e.IndexPath, indexPath, StringComparison.OrdinalIgnoreCase));
+        Check.NotNull(entry, $"the enumeration pairs the entry's record ({entries.Count} pair(s) in the bin)");
+        Check.Equal(
+            NativeBinLayout.ToPayloadPath(indexPath),
+            entry!.PayloadPath,
+            "and names the payload the record's own name gives, without looking it up");
+        Check.Equal((long)Content.Length, entry.PayloadLength, "with the payload's length taken from the walk");
+        Check.False(entry.PayloadIsDirectory, "and a file reported as a file");
+
+        var directoryIndex = RecordOf(directory);
+        var directoryEntry = entries.SingleOrDefault(e => string.Equals(e.IndexPath, directoryIndex, StringComparison.OrdinalIgnoreCase));
+
+        Check.NotNull(directoryEntry, "a recycled directory is enumerated as an entry too");
+        Check.True(directoryEntry!.PayloadIsDirectory, "and is reported as a directory from the walk alone");
+
+        workspace.Dispose();
     }
 
     /// <summary>
