@@ -85,9 +85,10 @@ internal static class NativeRecycleRunner
             return RecycleBinResult.Create([], [], stopwatch.Elapsed);
         }
 
-        var pending = RecycleOperationRunner.CollapseEquivalentPaths(targets);
-        var recycled = new List<string>(pending.Count);
-        var failuresByPath = new Dictionary<string, RecycleFailure>(StringComparer.OrdinalIgnoreCase);
+        var collapsed = RecycleOperationRunner.CollapseEquivalentPaths(targets);
+        var pending = collapsed;
+        var recycled = new List<string>(collapsed.Count);
+        var failuresByPath = new Dictionary<string, RecycleFailure>(collapsed.Count, StringComparer.OrdinalIgnoreCase);
 
         // One bin directory per volume, created at most once for the whole operation. Every path on a
         // volume needs it, and asking the filesystem to make a directory that already exists is a round
@@ -133,16 +134,29 @@ internal static class NativeRecycleRunner
             }
         }
 
-        // Whatever is still pending gave up, and the round it gave up on is the one its own record carries.
-        var reported = new List<RecycleFailure>();
+        // A path that gave up with no verdict of its own is one the loop stopped before it could record, and
+        // the round it stopped on is the one it is reported at. Held as a set rather than found by scanning
+        // the pending list: the scan compares RecycleTarget structs field by field, and asking N of them
+        // about a list of N is N squared of that on a batch where every path failed — which is the shape the
+        // branch below exists for.
+        var unfinished = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var target in pending)
+        {
+            unfinished.Add(target.InputPath);
+        }
 
-        foreach (var target in RecycleOperationRunner.CollapseEquivalentPaths(targets))
+        // The batch as it was collapsed, not collapsed again: the loop replaced the pending list with the
+        // subset it left behind, and hashing every long path through OrdinalIgnoreCase a second time to
+        // arrive at the identical list is a pass this does not need to make.
+        var reported = new List<RecycleFailure>(failuresByPath.Count);
+
+        foreach (var target in collapsed)
         {
             if (failuresByPath.TryGetValue(target.InputPath, out var failure))
             {
                 reported.Add(failure);
             }
-            else if (pending.Contains(target))
+            else if (unfinished.Contains(target.InputPath))
             {
                 reported.Add(new RecycleFailure(target.InputPath, 0, options.MaxAttempts, RecycleFailureStage.Performing));
             }
