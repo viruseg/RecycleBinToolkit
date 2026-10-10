@@ -503,7 +503,7 @@ internal static class NativeBinSuite
     private const int ErrorAlreadyExists = unchecked((int)0x800700B7);
 
     /// <summary>
-    /// What the native backend wrote is what a listing finds. The entry, its original path, its size and
+    /// What was written is what a listing finds. The entry, its original path, its size and
     /// its payload's location all come back.
     /// </summary>
     private static async Task NativeListingFindsAnEntryNativeRecycleRecorded(TestContext context)

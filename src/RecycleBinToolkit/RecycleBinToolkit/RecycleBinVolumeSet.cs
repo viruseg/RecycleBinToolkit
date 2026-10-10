@@ -3,12 +3,12 @@ using System.Runtime.Versioning;
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Chooses the volume roots an operation covers. One rule, both backends.
+/// Chooses the volume roots an operation covers.
 /// </summary>
 /// <remarks>
 /// Volume resolution is a question about volumes, not about how an item is moved, so it is asked
-/// once here rather than once per backend. A caller who names a path that is not a volume root gets
-/// the same refusal whichever backend would have acted on it.
+/// once here. A caller who names a path that is not a volume root gets the same refusal whichever
+/// operation would have acted on it.
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class RecycleBinVolumeSet

@@ -14,7 +14,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// <summary>The two fields that come out of one <c>$I</c> record, read together or not at all.</summary>
     private readonly record struct RecordDetails(string OriginalPath, DateTimeOffset DeletedAt);
 
-    private readonly string? _indexPath;
+    private readonly string _indexPath;
 
     /// <summary>
     /// The record still to be read, or <see langword="null"/> once there is nothing left to read.
@@ -61,14 +61,14 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// <summary>
     /// Creates an entry whose details are already known, so no property access reads anything.
     /// </summary>
-    /// <param name="indexPath">Path of the <c>$I</c> record, or <see langword="null"/> where the backend keeps no record for the item.</param>
+    /// <param name="indexPath">Path of the <c>$I</c> record describing the item.</param>
     /// <param name="payloadPath">Physical <c>$R</c> path of the payload.</param>
     /// <param name="size">Size in bytes, or <c>0</c> for a directory.</param>
     /// <param name="isDirectory">Whether the item is a directory.</param>
     /// <param name="originalPath">Full path the item was deleted from.</param>
     /// <param name="deletedAt">When the item was deleted, in the local offset.</param>
     internal RecycleBinItem(
-        string? indexPath,
+        string indexPath,
         string payloadPath,
         long size,
         bool isDirectory,
@@ -79,7 +79,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     }
 
     private RecycleBinItem(
-        string? indexPath,
+        string indexPath,
         string payloadPath,
         long size,
         bool isDirectory,
@@ -195,8 +195,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// thread for a share either way.
     /// </para>
     /// </remarks>
-    internal ReadOnlySpan<char> VolumeRoot =>
-        _indexPath is null ? default : Path.GetPathRoot(_indexPath.AsSpan());
+    internal ReadOnlySpan<char> VolumeRoot => Path.GetPathRoot(_indexPath.AsSpan());
 
     /// <summary>
     /// Reads this entry's record now rather than on first access.
@@ -232,7 +231,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
             return true;
         }
 
-        if (!NativeIndexFile.TryRead(_indexPath!, out var record, out hResult))
+        if (!NativeIndexFile.TryRead(_indexPath, out var record, out hResult))
         {
             return false;
         }
@@ -297,8 +296,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     public override int GetHashCode() => StringComparer.OrdinalIgnoreCase.GetHashCode(Identity);
 
     /// <summary>
-    /// What names this entry among all entries: its <c>$I</c> record where there is one, and its payload
-    /// otherwise. Both are unique per entry, and neither requires reading the record.
+    /// What names this entry among all entries: its <c>$I</c> record, unique per entry, without reading it.
     /// </summary>
-    private string Identity => _indexPath ?? PayloadPath;
+    private string Identity => _indexPath;
 }

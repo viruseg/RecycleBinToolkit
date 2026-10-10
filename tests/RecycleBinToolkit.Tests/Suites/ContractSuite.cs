@@ -582,7 +582,7 @@ internal static class ContractSuite
     /// </summary>
     /// <remarks>
     /// Pinned as a table rather than left to the callers that happen to exercise it, because this is the one
-    /// place in the native backend that is written by hand rather than by the path API: it finds the name's
+    /// place that is written by hand rather than by the path API: it finds the name's
     /// start, decides whether the name is a record's at all, and joins the two halves back together. The
     /// rewrite was made cheaper by hand for the same reason, and a cheaper hand-written rewrite is exactly
     /// the kind of change that agrees with itself and disagrees with the filesystem.

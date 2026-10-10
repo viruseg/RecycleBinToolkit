@@ -18,8 +18,8 @@ internal static class VolumeRoot
     /// <returns>
     /// The root with its separators reduced to backslashes and its own spelling otherwise left alone. A
     /// forward-slash spelling of a share is converted because the command line is the only thing standing
-    /// between the two; the case of a drive letter is not, because the Shell reports the paths it recorded
-    /// in its own case whatever this returned, so rewriting it here would make one side of a comparison
+    /// between the two; the case of a drive letter is not, because paths are recorded
+    /// in their own case whatever this returned, so rewriting it here would make one side of a comparison
     /// agree with the other without making either of them right.
     /// </returns>
     /// <exception cref="ArgumentException">

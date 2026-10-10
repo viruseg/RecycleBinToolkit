@@ -16,9 +16,8 @@ dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --load
 
 Build the test project after any change to `tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs` —
 see the rule below. The suites change machine state: they write into a directory they create inside the
-volume `--scratch` names, and they empty the Recycle Bin. Two things leave that directory and neither is a
-test's doing — the `$RCW-…` staging directories the library creates on the volume root, and the empty
-itself. The section below is the whole rule.
+volume `--scratch` names, and they empty the Recycle Bin. One thing leaves that directory and it is not a
+test's doing — the empty itself. The section below is the whole rule.
 
 ## --scratch, and asking which volume
 
