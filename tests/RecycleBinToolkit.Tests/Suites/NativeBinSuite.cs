@@ -80,6 +80,12 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(AnEmptyNamesOnlyTheVolumesItActuallyEmptied), AnEmptyNamesOnlyTheVolumesItActuallyEmptied),
         new TestCase("NativeBinSuite." + nameof(ABinWithNothingInItIsStillNamedAsEmptied), ABinWithNothingInItIsStillNamedAsEmptied),
         new TestCase("NativeBinSuite." + nameof(NativeEnumerationPairsIndexAndPayload), NativeEnumerationPairsIndexAndPayload),
+        new TestCase("NativeBinSuite." + nameof(NativeListingDoesNotReadIndexRecords), NativeListingDoesNotReadIndexRecords),
+        new TestCase("NativeBinSuite." + nameof(NativePreloadReportsAnIndexItCannotRead), NativePreloadReportsAnIndexItCannotRead),
+        new TestCase("NativeBinSuite." + nameof(NativePreloadMakesTheDetailsReadAlready), NativePreloadMakesTheDetailsReadAlready),
+        new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsAreBothAnsweredByTheFirstAccess), NativeLazyDetailsAreBothAnsweredByTheFirstAccess),
+        new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsThrowOnceWhenIndexIsGone), NativeLazyDetailsThrowOnceWhenIndexIsGone),
+        new TestCase("NativeBinSuite." + nameof(NativeListingIgnoresAPayloadWithoutARecord), NativeListingIgnoresAPayloadWithoutARecord),
     ];
 
     /// <summary>
@@ -1323,6 +1329,235 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
 
         workspace.Dispose();
     }
+
+    /// <summary>
+    /// The point of the whole change: a listing that never opens a record. An eighteen-thousand-entry bin
+    /// costs one walk rather than eighteen thousand reads, so a caller who wants only sizes and flags is not
+    /// charged for the paths nobody asked for.
+    /// </summary>
+    /// <remarks>
+    /// The record is held exclusively for the duration of the listing, which is the one thing a lazy listing
+    /// cannot survive: if it opened the record, it would report the entry as unreadable and the case would
+    /// see that failure instead of a clean listing.
+    /// </remarks>
+    private static async Task NativeListingDoesNotReadIndexRecords(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin holding a record the case can lock");
+
+        var path = CreateFile("unread-record.bin");
+        var size = new FileInfo(path).Length;
+
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        var payloadPath = NativeBinLayout.ToPayloadPath(RecordOf(path));
+        RecycleBinContents contents;
+
+        using (new FileStream(RecordOf(path), FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+            // Found by its payload rather than by its original path, because asking every entry for its path
+            // is the very reading this case says the listing does not do.
+            var item = contents.Items.FirstOrDefault(i => SamePath(i.PayloadPath, payloadPath));
+            Check.NotNull(item, "the entry is listed even though its record is held open");
+            Check.Equal(size, item!.Size, "with the size the walk gave, which never needed the record");
+            Check.False(item.IsDirectory, "and it is reported as a file");
+        }
+
+        Check.Equal(0, contents.Failures.Count, "and nothing is reported as unreadable, because nothing was opened");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Asking for the records up front brings the old behaviour back, failures included: a record nobody can
+    /// read costs a caller the entry and gets a line in the failures rather than a row that raises later.
+    /// </summary>
+    private static async Task NativePreloadReportsAnIndexItCannotRead(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin holding a record the case can lock");
+
+        var locked = CreateFile("preload-locked.bin");
+        var other = CreateFile("preload-readable.bin");
+
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([locked, other], Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"both are recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        var preload = new RecycleBinOptions { Backend = RecycleBinBackend.Native, PreloadItemDetails = true };
+        var baseline = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+        RecycleBinContents contents;
+
+        using (new FileStream(RecordOf(locked), FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, preload, context.CancellationToken).ConfigureAwait(false);
+        }
+
+        Check.Equal(1, contents.Failures.Count, "exactly one entry is reported as unreadable");
+        Check.Equal(RecycleFailureStage.Enumeration, contents.Failures[0].Stage, "at the stage where a listing reports what it could not read");
+        Check.Equal(baseline.Items.Count - 1, contents.Items.Count, "and every other entry is still returned");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Preloading is not a second answer to the same question — it is the same reading, done during the
+    /// listing, so nothing is read again afterwards.
+    /// </summary>
+    /// <remarks>
+    /// The record is deleted between the listing and the access, which is the only way to tell "was already
+    /// read" from "was read just now": a listing that read lazily would raise here, and one that answers
+    /// from what it already has does not.
+    /// </remarks>
+    private static async Task NativePreloadMakesTheDetailsReadAlready(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for an entry to be listed with its details read");
+
+        var path = CreateFile("preloaded.bin");
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        var preload = new RecycleBinOptions { Backend = RecycleBinBackend.Native, PreloadItemDetails = true };
+        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, preload, context.CancellationToken).ConfigureAwait(false);
+
+        var item = contents.Items.First(i => SamePath(i.OriginalPath, path));
+        File.Delete(RecordOf(path));
+
+        Check.Equal(path, item.OriginalPath, "the path is still answerable after its record is gone");
+        Check.True(item.DeletedAt > DateTimeOffset.Now.AddHours(-1), $"and so is the deletion time (got {item.DeletedAt:O})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The two fields come out of one record, so the first access to either answers both — in either order,
+    /// and whichever was asked for.
+    /// </summary>
+    /// <remarks>
+    /// The record is deleted between the first access and the second, which is the only way to tell "the same
+    /// reading answered both" from "the second access read the record itself": a property that read on every
+    /// access would raise here.
+    /// <para>
+    /// The two orders need two entries and two listings. One item answers the first access once and cannot be
+    /// asked to be the first again.
+    /// </para>
+    /// </remarks>
+    private static async Task NativeLazyDetailsAreBothAnsweredByTheFirstAccess(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for entries whose details are read");
+
+        var pathFirstFile = CreateFile("lazy-path-first.bin");
+        var dateFirstFile = CreateFile("lazy-date-first.bin");
+
+        var recycled = await FileRecycler
+            .MoveToRecycleBinAsync([pathFirstFile, dateFirstFile], Native, context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"both are recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+        var pathFirst = contents.Items.First(i => SamePath(i.OriginalPath, pathFirstFile));
+        var dateFirst = contents.Items.First(i => SamePath(i.OriginalPath, dateFirstFile));
+
+        Check.Equal(pathFirstFile, pathFirst.OriginalPath, "asking for the path answers it");
+        File.Delete(RecordOf(pathFirstFile));
+        Check.True(
+            pathFirst.DeletedAt > DateTimeOffset.Now.AddHours(-1),
+            $"and the time is still answerable afterwards, from the same reading (got {pathFirst.DeletedAt:O})");
+
+        Check.True(dateFirst.DeletedAt > DateTimeOffset.Now.AddHours(-1), $"asking for the time answers it ({dateFirst.DeletedAt:O})");
+        File.Delete(RecordOf(dateFirstFile));
+        Check.Equal(
+            dateFirstFile,
+            dateFirst.OriginalPath,
+            "and the path is still answerable afterwards, from the same reading");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An entry whose record has been collected under it is an honest failure, raised once: the caller is
+    /// told rather than handed a path that was never there, and a second access does not go back to the disk
+    /// to find out again.
+    /// </summary>
+    private static async Task NativeLazyDetailsThrowOnceWhenIndexIsGone(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for an entry to lose its record under the caller");
+
+        var path = CreateFile("vanishing-record.bin");
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+        // Found by its payload: asking an entry for its original path is the reading this case is about, and
+        // an entry found that way would already be warm before its record is taken away.
+        var item = contents.Items.First(i => SamePath(i.PayloadPath, NativeBinLayout.ToPayloadPath(RecordOf(path))));
+
+        File.Delete(RecordOf(path));
+
+        var first = Check.Throws<IOException>(() => _ = item.OriginalPath, "reading a path whose record is gone raises");
+        Check.True(
+            first.Message.Contains("$I", StringComparison.OrdinalIgnoreCase) || first.Message.Contains("record", StringComparison.OrdinalIgnoreCase),
+            $"and says what could not be read ({first.Message})");
+
+        var second = Check.Throws<IOException>(() => _ = item.DeletedAt, "reading the time raises too");
+        Check.Equal(first.Message, second.Message, "with the same answer, because the attempt is not repeated");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A payload nothing describes is the other half of the same idea. It has a size and a kind, but no
+    /// record to say what it was, so there is no entry to report — and it is not an error either.
+    /// </summary>
+    private static async Task NativeListingIgnoresAPayloadWithoutARecord(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin to leave an unpaired payload in");
+
+        var stray = Path.Combine(BinDirectory, "$RSTRAY" + RunTag + ".bin");
+        File.WriteAllBytes(stray, Content);
+
+        try
+        {
+            var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+
+            Check.False(
+                contents.Items.Any(i => SamePath(i.PayloadPath, stray)),
+                "an entry with no record is not listed, because it has no original path to answer with");
+            Check.Equal(0, contents.Failures.Count, "and it is not a failure: it is a state the bin is briefly in");
+
+            var pairs = NativeBinEntries.Collect(BinDirectory, context.CancellationToken);
+            Check.True(
+                pairs.Any(e => string.Equals(e.PayloadPath, stray, StringComparison.OrdinalIgnoreCase) && e.IndexPath is null),
+                "the enumeration does report it, as a payload with no record");
+        }
+        finally
+        {
+            File.Delete(stray);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Whether a listed entry was deleted from <paramref name="path"/>, without regard to case.
+    /// </summary>
+    private static bool SamePath(string left, string right) =>
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The record of the newest entry in the current user's bin that names <paramref name="originalPath"/>.
