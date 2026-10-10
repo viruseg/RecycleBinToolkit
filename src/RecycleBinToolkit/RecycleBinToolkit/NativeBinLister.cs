@@ -1,16 +1,15 @@
-using System.IO.Enumeration;
 using System.Runtime.Versioning;
 
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Reads a volume's Recycle Bin by enumerating its index records, with no Shell anywhere in the path.
+/// Reads a volume's Recycle Bin by enumerating its entries, with no Shell anywhere in the path.
 /// </summary>
 /// <remarks>
-/// Two passes per volume. The first enumerates the directory and collects the paths of the index records;
-/// the second reads them, in parallel, into an array indexed by position. Splitting them is what lets the
-/// reading run on several threads while the result still comes back in the order the directory gave it —
-/// a concurrent collection would have cost either an ordering pass or a lock per entry.
+/// What an item is — a directory or a file, and how large it is — comes from the bin directory itself, which
+/// is what makes a listing of eighteen thousand entries cost one walk rather than eighteen thousand reads.
+/// The two fields that are only in the record are not read at all unless someone asks for them, or unless
+/// <see cref="RecycleBinOptions.PreloadItemDetails"/> asks for all of them up front.
 /// <para>
 /// Volumes are read one after another rather than together. Two volumes can sit on different hardware, so a
 /// single degree of parallelism would be wrong for one of them, and a share has no seek penalty to ask about
@@ -24,13 +23,18 @@ internal static class NativeBinLister
     /// Reads every volume's Recycle Bin and reports what could be read.
     /// </summary>
     /// <param name="volumeRoots">Volume roots to read.</param>
+    /// <param name="options">
+    /// Settings already normalised. <see cref="RecycleBinOptions.PreloadItemDetails"/> is the only one that
+    /// reaches this code.
+    /// </param>
     /// <param name="cancellationToken">Cancels the enumeration and the reading.</param>
     /// <returns>
-    /// The entries that could be described, plus one failure per record that could not be read, parsed, or
-    /// stat-ed. The elapsed time is zero because the caller measures the wait instead.
+    /// The entries that could be described, plus one failure per record that could not be read. The elapsed
+    /// time is zero because the caller measures the wait instead.
     /// </returns>
     internal static RecycleBinContents TryEnumerate(
         IReadOnlyList<string> volumeRoots,
+        RecycleBinOptions options,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(volumeRoots);
@@ -41,7 +45,7 @@ internal static class NativeBinLister
         foreach (var root in volumeRoots)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            EnumerateVolume(root, items, failures, cancellationToken);
+            EnumerateVolume(root, options, items, failures, cancellationToken);
         }
 
         return new RecycleBinContents(items, failures, TimeSpan.Zero);
@@ -49,6 +53,7 @@ internal static class NativeBinLister
 
     private static void EnumerateVolume(
         string volumeRoot,
+        RecycleBinOptions options,
         List<RecycleBinItem> items,
         List<RecycleFailure> failures,
         CancellationToken cancellationToken)
@@ -63,40 +68,8 @@ internal static class NativeBinLister
             return;
         }
 
-        var records = CollectRecordPaths(binDirectory, cancellationToken);
-
-        if (records.Count == 0)
-        {
-            return;
-        }
-
-        var found = new RecycleBinItem?[records.Count];
-        var unreadable = new List<RecycleFailure>();
-
-        var options = new ParallelOptions
-        {
-            MaxDegreeOfParallelism = VolumeSeekPenalty.DegreeOfParallelism(volumeRoot),
-            CancellationToken = cancellationToken
-        };
-
-        // Indexed by position rather than appended to a shared collection: the reading is the parallel part,
-        // and a collection it had to lock would put the lock on the path the work is meant to speed up.
-        // Failures are the rare half — one entry somebody else is holding — and are the only thing gathered
-        // under a lock.
-        Parallel.For(0, records.Count, options, index =>
-        {
-            if (NativeIndexFile.TryRead(records[index], out var record, out var hResult))
-            {
-                found[index] = Describe(record, records[index]);
-            }
-            else if (hResult != 0)
-            {
-                lock (unreadable)
-                {
-                    unreadable.Add(new RecycleFailure(records[index], hResult, 1, RecycleFailureStage.Enumeration));
-                }
-            }
-        });
+        var entries = NativeBinEntries.Collect(binDirectory, cancellationToken);
+        var found = Describe(entries, volumeRoot, options, failures, cancellationToken);
 
         foreach (var item in found)
         {
@@ -105,90 +78,114 @@ internal static class NativeBinLister
                 items.Add(item);
             }
         }
-
-        failures.AddRange(unreadable);
     }
 
     /// <summary>
-    /// The paths of every index record in a bin directory.
+    /// Turns what the walk found into items, indexed by position.
     /// </summary>
-    /// <returns>
-    /// The paths, in the order the directory gave them. A list rather than an array because nothing here
-    /// indexes into it: the reading loop asks for each position in turn, and copying ninety thousand
-    /// references into a second array to do that is a pass and an allocation this does not need to make.
-    /// </returns>
     /// <remarks>
-    /// The filter is applied while the directory is being enumerated rather than afterwards, so a payload
-    /// and a <c>desktop.ini</c> never cross into user mode at all. It cannot be left to the pattern alone
-    /// either: .NET's default <see cref="EnumerationOptions.AttributesToSkip"/> is
-    /// <see cref="FileAttributes.Hidden"/> and <see cref="FileAttributes.System"/>, and both entries carry
-    /// both attributes — left at the default, this enumerates an empty directory.
+    /// Only a whole pair becomes an item. A payload nothing describes has no original path to answer with, and
+    /// a record whose payload is gone is what the next empty is for rather than an entry a caller can be told
+    /// about — reporting it would mean a listing whose every row raises when a caller reads its path.
     /// </remarks>
-    private static List<string> CollectRecordPaths(string binDirectory, CancellationToken cancellationToken)
+    private static RecycleBinItem?[] Describe(
+        IReadOnlyList<NativeBinEntry> entries,
+        string volumeRoot,
+        RecycleBinOptions options,
+        List<RecycleFailure> failures,
+        CancellationToken cancellationToken)
     {
-        var options = new EnumerationOptions
-        {
-            RecurseSubdirectories = false,
-            AttributesToSkip = 0,
-            ReturnSpecialDirectories = false,
-            IgnoreInaccessible = true
-        };
+        var pairs = new List<NativeBinEntry>(entries.Count);
 
-        var enumerable = new FileSystemEnumerable<string>(
-            binDirectory,
-            (ref FileSystemEntry entry) => Path.Combine(binDirectory, entry.FileName.ToString()),
-            options)
+        foreach (var entry in entries)
         {
-            ShouldIncludePredicate = static (ref FileSystemEntry entry) =>
-                !entry.IsDirectory && entry.FileName.StartsWith("$I", StringComparison.OrdinalIgnoreCase)
-        };
-
-        var records = new List<string>();
-
-        foreach (var path in enumerable)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            records.Add(path);
+            if (entry.IndexPath is not null && entry.PayloadPath is not null)
+            {
+                pairs.Add(entry);
+            }
         }
 
-        return records;
+        if (pairs.Count == 0)
+        {
+            return [];
+        }
+
+        if (!options.PreloadItemDetails)
+        {
+            // Nothing is read here. Every item answers its own first access to its details, and a listing
+            // nobody reads a path from costs nothing for having not read one.
+            var described = new RecycleBinItem?[pairs.Count];
+
+            for (var index = 0; index < pairs.Count; index++)
+            {
+                var pair = pairs[index];
+                described[index] = new RecycleBinItem(pair.IndexPath!, pair.PayloadPath!, pair.PayloadLength, pair.PayloadIsDirectory);
+            }
+
+            return described;
+        }
+
+        return Preload(pairs, volumeRoot, failures, cancellationToken);
     }
 
     /// <summary>
-    /// Turns a record into what a caller sees, asking the filesystem the one thing the record cannot answer.
+    /// Reads every record up front, in parallel, and answers each item's details from what it says.
     /// </summary>
     /// <remarks>
-    /// A version 2 record stores zero for a directory and for an empty file alike, so
-    /// <see cref="RecycleBinItem.IsDirectory"/> cannot come from it — one metadata operation on the payload
-    /// is what tells them apart.
+    /// The reading is the parallel part and it is the whole cost of the mode, so it gets the volume's own
+    /// degree of parallelism — the same measure every other read of a volume here uses, and the reason one
+    /// volume's disk is not read as hard as another's.
     /// <para>
-    /// A payload that is not there is not a failure. A record whose payload was removed between the
-    /// enumeration and this stat is an entry the bin still knows about, and reporting it is more use to a
-    /// caller than dropping it because one file has gone missing.
+    /// Indexed by position rather than appended to a shared collection: a collection it had to lock would put
+    /// the lock on the path the work is meant to speed up. Failures are the rare half — one record somebody
+    /// else is holding — and are the only thing gathered under a lock.
+    /// </para>
+    /// <para>
+    /// A record that reads but is not one is dropped without a failure, exactly as it was before the details
+    /// became lazy: it says nothing about the bin, so reporting it as an entry a caller could not read would
+    /// be noise about a file that is not part of it.
     /// </para>
     /// </remarks>
-    private static RecycleBinItem Describe(NativeIndexRecord record, string indexPath)
+    private static RecycleBinItem?[] Preload(
+        List<NativeBinEntry> pairs,
+        string volumeRoot,
+        List<RecycleFailure> failures,
+        CancellationToken cancellationToken)
     {
-        var payloadPath = NativeBinLayout.ToPayloadPath(indexPath);
+        var warmed = new RecycleBinItem?[pairs.Count];
+        var unreadable = new List<RecycleFailure>();
 
-        bool isDirectory;
-        try
+        var options = new ParallelOptions
         {
-            isDirectory = (File.GetAttributes(payloadPath) & FileAttributes.Directory) != 0;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        {
-            // The record says what was deleted; only whether it was a directory is missing, and a file is the
-            // answer that is true for an entry whose payload has since been purged.
-            isDirectory = false;
-        }
+            MaxDegreeOfParallelism = VolumeSeekPenalty.DegreeOfParallelism(volumeRoot),
+            CancellationToken = cancellationToken
+        };
 
-        return new RecycleBinItem(
-            Path.GetFileName(record.OriginalPath),
-            record.OriginalPath,
-            payloadPath,
-            isDirectory ? 0 : record.Size,
-            new DateTimeOffset(record.DeletedAtUtc.ToLocalTime()),
-            isDirectory);
+        Parallel.For(0, pairs.Count, options, index =>
+        {
+            var pair = pairs[index];
+
+            var item = RecycleBinItem.Warmed(
+                pair.IndexPath!,
+                pair.PayloadPath!,
+                pair.PayloadLength,
+                pair.PayloadIsDirectory,
+                out var hResult);
+
+            if (item is not null)
+            {
+                warmed[index] = item;
+            }
+            else if (hResult != 0)
+            {
+                lock (unreadable)
+                {
+                    unreadable.Add(new RecycleFailure(pair.IndexPath!, hResult, 1, RecycleFailureStage.Enumeration));
+                }
+            }
+        });
+
+        failures.AddRange(unreadable);
+        return warmed;
     }
 }

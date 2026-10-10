@@ -73,10 +73,10 @@ public static class RecycleBin
 
         var collected = await RecycleBinBackends
             .For(effective)
-            .ListAsync(targets, cancellationToken)
+            .ListAsync(targets, effective, cancellationToken)
             .ConfigureAwait(false);
 
-        var items = Filter(collected.Items, volumeRoot);
+        var items = Filter(collected.Items, volumeRoot, effective);
 
         return new RecycleBinContents(items, collected.Failures, stopwatch.Elapsed);
     }
@@ -247,13 +247,23 @@ public static class RecycleBin
     /// Keeps only the entries that were deleted from <paramref name="volumeRoot"/>.
     /// </summary>
     /// <remarks>
-    /// The Recycle Bin is one aggregate folder spanning every mounted volume, so this is a filter over
-    /// a complete enumeration. The root is normalised first, so the comparison below is a prefix test
-    /// against a real volume root with its separator, whichever spelling the caller used.
+    /// The Recycle Bin is one aggregate folder spanning every mounted volume, so on the Shell path this is a
+    /// filter over a complete enumeration. The root is normalised first, so the comparison below is a prefix
+    /// test against a real volume root with its separator, whichever spelling the caller used.
+    /// <para>
+    /// The native path needs no such filter and must not have one. Its enumeration walks
+    /// <c>&lt;volume&gt;$RECYCLE.BIN\&lt;SID&gt;\</c> of exactly the volumes the call covered, so an entry it
+    /// returns was deleted from one of them by construction. Matching on the original path instead would read
+    /// every record the listing had just declined to read — turning the one call that needs no records into the
+    /// one that reads them all, for an answer the walk already gave.
+    /// </para>
     /// </remarks>
-    private static IReadOnlyList<RecycleBinItem> Filter(IReadOnlyList<RecycleBinItem> items, string? volumeRoot)
+    private static IReadOnlyList<RecycleBinItem> Filter(
+        IReadOnlyList<RecycleBinItem> items,
+        string? volumeRoot,
+        RecycleBinOptions options)
     {
-        if (string.IsNullOrEmpty(volumeRoot))
+        if (string.IsNullOrEmpty(volumeRoot) || options.Backend == RecycleBinBackend.Native)
         {
             return items;
         }

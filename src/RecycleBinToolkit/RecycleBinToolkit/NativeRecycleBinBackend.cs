@@ -58,10 +58,14 @@ internal sealed class NativeRecycleBinBackend : IRecycleBinBackend
     /// Reads the bins on a pool thread.
     /// </summary>
     /// <param name="volumeRoots">Volume roots to read.</param>
+    /// <param name="options">Settings already normalised; the preload flag decides whether records are read here.</param>
     /// <param name="cancellationToken">Cancels the enumeration and the reading.</param>
     /// <returns>The entries that could be described, plus one failure per entry that could not be.</returns>
-    public Task<RecycleBinContents> ListAsync(IReadOnlyList<string> volumeRoots, CancellationToken cancellationToken) =>
-        Task.Run(() => NativeBinLister.TryEnumerate(volumeRoots, cancellationToken), cancellationToken);
+    public Task<RecycleBinContents> ListAsync(
+        IReadOnlyList<string> volumeRoots,
+        RecycleBinOptions options,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => NativeBinLister.TryEnumerate(volumeRoots, options, cancellationToken), cancellationToken);
 
     /// <summary>
     /// Empties the bins on a pool thread.

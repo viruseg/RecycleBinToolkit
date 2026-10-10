@@ -58,13 +58,23 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
         bool isDirectory,
         string originalPath,
         DateTimeOffset deletedAt)
+        : this(indexPath, payloadPath, size, isDirectory, new RecordDetails(originalPath, deletedAt))
+    {
+    }
+
+    private RecycleBinItem(
+        string? indexPath,
+        string payloadPath,
+        long size,
+        bool isDirectory,
+        RecordDetails details)
     {
         _indexPath = indexPath;
         PayloadPath = payloadPath;
         Size = size;
         IsDirectory = isDirectory;
-        _originalPath = originalPath;
-        _deletedAt = deletedAt;
+        _originalPath = details.OriginalPath;
+        _deletedAt = details.DeletedAt;
     }
 
     /// <summary>Size in bytes. <c>0</c> for a directory, whose contents are not measured.</summary>
@@ -93,6 +103,40 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// </exception>
     public DateTimeOffset DeletedAt => Details.DeletedAt;
 
+    /// <summary>
+    /// Creates an item whose details are already read, or reports that they could not be.
+    /// </summary>
+    /// <param name="indexPath">Path of the <c>$I</c> record describing the item.</param>
+    /// <param name="payloadPath">Physical <c>$R</c> path of the payload.</param>
+    /// <param name="size">Size in bytes, or <c>0</c> for a directory.</param>
+    /// <param name="isDirectory">Whether the item is a directory.</param>
+    /// <param name="hResult">
+    /// Receives the code the filesystem raised, or <c>0</c> when the file was readable and simply was not a
+    /// record — the same distinction <see cref="NativeIndexFile.TryRead"/> draws, and for the same reason.
+    /// </param>
+    /// <returns>
+    /// An item that answers both details without reading anything, or <see langword="null"/> when there is
+    /// none to answer them from.
+    /// </returns>
+    /// <remarks>
+    /// This is what <see cref="RecycleBinOptions.PreloadItemDetails"/> uses, and it exists so that the two
+    /// ways an item gets its details read a record through one path and answer it the same way.
+    /// </remarks>
+    internal static RecycleBinItem? Warmed(
+        string indexPath,
+        string payloadPath,
+        long size,
+        bool isDirectory,
+        out int hResult)
+    {
+        if (!NativeIndexFile.TryRead(indexPath, out var record, out hResult))
+        {
+            return null;
+        }
+
+        return new RecycleBinItem(indexPath, payloadPath, size, isDirectory, ToDetails(record));
+    }
+
     private RecordDetails Details => _details is not null
         ? _details.Value
         : new RecordDetails(_originalPath!, _deletedAt);
@@ -100,11 +144,6 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// <summary>
     /// Reads one record and answers both fields from it.
     /// </summary>
-    /// <remarks>
-    /// The deletion time is converted here rather than per access, because the conversion is the only
-    /// work between the record and a value a caller reads and repeating it on every read would be the
-    /// property's whole cost.
-    /// </remarks>
     private static RecordDetails Read(string indexPath)
     {
         if (!NativeIndexFile.TryRead(indexPath, out var record, out var hResult))
@@ -115,8 +154,19 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
                 "listing and this access. Listing the Recycle Bin again reports what is actually there.");
         }
 
-        return new RecordDetails(record.OriginalPath, new DateTimeOffset(record.DeletedAtUtc.ToLocalTime()));
+        return ToDetails(record);
     }
+
+    /// <summary>
+    /// Turns what a record says into the two fields it is read for.
+    /// </summary>
+    /// <remarks>
+    /// The deletion time is converted here rather than per access, because the conversion is the only work
+    /// between the record and a value a caller reads, and repeating it on every read would be the property's
+    /// whole cost.
+    /// </remarks>
+    private static RecordDetails ToDetails(NativeIndexRecord record) =>
+        new(record.OriginalPath, new DateTimeOffset(record.DeletedAtUtc.ToLocalTime()));
 
     /// <summary>
     /// Two entries are the same when they are the same stored entry. Compared on the path that identifies it,
