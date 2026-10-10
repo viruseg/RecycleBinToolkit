@@ -36,6 +36,7 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(EveryReasonAndActionPairIsPinned), EveryReasonAndActionPairIsPinned),
         new TestCase("ContractSuite." + nameof(TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured), TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured),
         new TestCase("ContractSuite." + nameof(OnlyTheVolumeGuidDeviceFormCountsAsOne), OnlyTheVolumeGuidDeviceFormCountsAsOne),
+        new TestCase("ContractSuite." + nameof(ThePayloadPathIsTheRecordsNameWithItsPrefixSwapped), ThePayloadPathIsTheRecordsNameWithItsPrefixSwapped),
     ];
 
     /// <summary>
@@ -955,6 +956,75 @@ var kept = new RecycleBinOptions
             @"\\?\Volume{00000000-0000-0000-0000-000000000000}\a.bin",
             RecycleTarget.StripExtendedPrefix(@"\\?\Volume{00000000-0000-0000-0000-000000000000}\a.bin"),
             "an extended volume GUID path keeps its prefix, since no prefixless equivalent exists");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A payload is found by rewriting its record's second character, and this is every shape that rewrite
+    /// has to answer for — including the ones it must decline.
+    /// </summary>
+    /// <remarks>
+    /// Pinned as a table rather than left to the callers that happen to exercise it, because this is the one
+    /// place in the native backend that is written by hand rather than by the path API: it finds the name's
+    /// start, decides whether the name is a record's at all, and joins the two halves back together. The
+    /// rewrite was made cheaper by hand for the same reason, and a cheaper hand-written rewrite is exactly
+    /// the kind of change that agrees with itself and disagrees with the filesystem.
+    /// <para>
+    /// The rows that matter most are the declines. A path that is not a record's comes back untouched, which
+    /// is what lets a caller pass whatever it has, and a share spelled with forward slashes is answered in
+    /// backslashes because the directory half comes from the path API rather than from a slice of the input.
+    /// Both are answers a caller can notice, and neither is visible anywhere else in the suite.
+    /// </para>
+    /// </remarks>
+    private static Task ThePayloadPathIsTheRecordsNameWithItsPrefixSwapped(TestContext context)
+    {
+        (string Record, string Payload)[] rewritten =
+        [
+            (@"W:\$RECYCLE.BIN\S-1-5-21-1001\$IABCDEF.bin", @"W:\$RECYCLE.BIN\S-1-5-21-1001\$RABCDEF.bin"),
+            (// A share spelled with forward slashes comes back in backslashes, because the directory half is
+             // the path API's spelling and not the caller's.
+             "//server/share/$IABCDEF.bin", @"\\server\share\$RABCDEF.bin"),
+            (// No directory at all, so no separator is inserted.
+             "$IABCDEF.bin", "$RABCDEF.bin"),
+            // A drive-relative record, where the root is "W:" and the name starts right after it.
+            ("W:$IABC", @"W:\$RABC"),
+            // The extended-length prefix is part of the path and is carried through.
+            (@"\\?\W:\$IABCDEF.bin", @"\\?\W:\$RABCDEF.bin"),
+            // The lowercase spelling is the one a Shell on a case-sensitive volume could have written.
+            (@"W:\$iLOWER.bin", @"W:\$RLOWER.bin"),
+            // The extension is the caller's file's and is carried through untouched, including its case.
+            (@"C:\dir\$IX.PDF", @"C:\dir\$RX.PDF"),
+            // The shortest name there is that still qualifies: the marker and the prefix, and nothing after.
+            (@"W:\$I", @"W:\$R"),
+            ("$I", "$R"),
+        ];
+
+        foreach (var (record, payload) in rewritten)
+        {
+            Check.Equal(payload, NativeBinLayout.ToPayloadPath(record), $"the payload beside {record}");
+        }
+
+        // Everything below is a path that is not a record's, and every one of them comes back exactly as it
+        // went in — a caller holding something unexpected gets it back rather than a mangled version of it.
+        string[] declined =
+        [
+            @"W:\$RECYCLE.BIN\S-1-5-21-1001\$RABCDEF.bin",
+            @"W:\a.bin",
+            @"W:\.hidden",
+            @"W:\$IABCDEF.bin\",
+            @"W:\$IABCDEF\",
+            @"W:\",
+            "",
+        ];
+
+        foreach (var path in declined)
+        {
+            Check.Equal(
+                path,
+                NativeBinLayout.ToPayloadPath(path),
+                $"'{path}' is not a record, so it is handed back rather than rewritten");
+        }
 
         return Task.CompletedTask;
     }

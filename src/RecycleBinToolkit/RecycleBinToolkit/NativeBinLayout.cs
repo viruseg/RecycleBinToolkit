@@ -170,24 +170,62 @@ internal static class NativeBinLayout
     /// The payload path belonging to an index path.
     /// </summary>
     /// <param name="indexPath">Path of an <c>$I</c> record.</param>
-    /// <returns>The <c>$R</c> path beside it, worked out from the name and not looked up.</returns>
+    /// <returns>
+    /// The <c>$R</c> path beside it, worked out from the name and not looked up. A path that is not a
+    /// record's is returned unchanged, so a caller that hands this something else gets that something back
+    /// rather than a mangled version of it.
+    /// </returns>
     /// <remarks>
-    /// The two names differ in their first character and in nothing else, so the payload is a spelling of
+    /// The two names differ in their second character and in nothing else, so the payload is a spelling of
     /// the record rather than a directory entry that has to be found. On a bin of ninety thousand entries
     /// that is ninety thousand lookups this does not perform.
+    /// <para>
+    /// Built in one allocation rather than five. This runs on every record of every listing and every empty,
+    /// which on a full bin is a hundred thousand calls, and the path API's own helpers are what cost: the
+    /// name, a slice of it, an interpolated string, the directory and the combine. The name now comes back
+    /// as a span and the result is concatenated from three of them.
+    /// </para>
+    /// <para>
+    /// <see cref="Path.GetDirectoryName(string?)"/> is the one call left in place, and it is there on
+    /// purpose: it is what turns the forward slashes of a share into backslashes, so replacing it with a
+    /// slice of the input would keep the caller's spelling and answer a different question on a path written
+    /// with them.
+    /// </para>
     /// </remarks>
     internal static string ToPayloadPath(string indexPath)
     {
-        var name = Path.GetFileName(indexPath);
+        ArgumentNullException.ThrowIfNull(indexPath);
 
-        if (name.Length < 2 || name[0] != '$' || (name[1] != IndexPrefix && name[1] != char.ToLowerInvariant(IndexPrefix)))
+        var name = Path.GetFileName(indexPath.AsSpan());
+
+        if (name.Length < 2 ||
+            name[0] != EntryMarker ||
+            (name[1] != IndexPrefix && name[1] != char.ToLowerInvariant(IndexPrefix)))
         {
             return indexPath;
         }
 
-        return Path.Combine(
-            Path.GetDirectoryName(indexPath) ?? string.Empty,
-            $"${PayloadPrefix}{name[2..]}");
+        var directory = Path.GetDirectoryName(indexPath) ?? string.Empty;
+
+        // Path.Combine's own rule, which is what the call this replaced applied: a separator only where the
+        // directory does not already end in one, and none at all where there is no directory.
+        var separator = directory.Length > 0
+            && directory[^1] != Path.DirectorySeparatorChar
+            && directory[^1] != Path.AltDirectorySeparatorChar;
+
+        Span<char> head = stackalloc char[2 + (separator ? 1 : 0)];
+
+        var at = 0;
+
+        if (separator)
+        {
+            head[at++] = Path.DirectorySeparatorChar;
+        }
+
+        head[at++] = EntryMarker;
+        head[at++] = PayloadPrefix;
+
+        return string.Concat(directory, head, name[2..]);
     }
 
     private static void NextStemInto(Span<char> destination)
