@@ -19,9 +19,19 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     private readonly record struct RecordDetails(string OriginalPath, DateTimeOffset DeletedAt);
 
     private readonly string? _indexPath;
-    private readonly Lazy<RecordDetails>? _details;
-    private readonly string? _originalPath;
-    private readonly DateTimeOffset _deletedAt;
+
+    /// <summary>
+    /// The record still to be read, or <see langword="null"/> once there is nothing left to read.
+    /// </summary>
+    /// <remarks>
+    /// Written by <see cref="LoadDetails"/> through <see cref="Interlocked.CompareExchange{T}(ref T, T, T)"/>
+    /// rather than by the constructors alone, so it is the one field in the type that is not readonly. It is a
+    /// single reference either way — never half of an item, and never a torn pair of values — and
+    /// <see cref="_resolved"/> beside it stays readonly so the two cannot be seen disagreeing.
+    /// </remarks>
+    private Lazy<RecordDetails>? _details;
+
+    private readonly RecordDetails _resolved;
 
     /// <summary>
     /// Creates an entry whose record is read on demand.
@@ -73,8 +83,8 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
         PayloadPath = payloadPath;
         Size = size;
         IsDirectory = isDirectory;
-        _originalPath = details.OriginalPath;
-        _deletedAt = details.DeletedAt;
+        _details = null;
+        _resolved = details;
     }
 
     /// <summary>Size in bytes. <c>0</c> for a directory, whose contents are not measured.</summary>
@@ -137,9 +147,70 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
         return new RecycleBinItem(indexPath, payloadPath, size, isDirectory, ToDetails(record));
     }
 
-    private RecordDetails Details => _details is not null
-        ? _details.Value
-        : new RecordDetails(_originalPath!, _deletedAt);
+    private RecordDetails Details => _details is null ? _resolved : _details.Value;
+
+    /// <summary>
+    /// Whether this entry's details are already in memory, whether they were read when it was built or since.
+    /// </summary>
+    /// <remarks>
+    /// Reading it is a field test and touches no disk, which is what makes it safe to ask every entry of a
+    /// listing: a batch that asks ninety thousand of them pays ninety thousand field reads, not ninety thousand
+    /// file reads.
+    /// </remarks>
+    internal bool IsDetailsLoaded => _details is null || _details.IsValueCreated;
+
+    /// <summary>
+    /// The volume this entry's record lives on, or <see langword="null"/> where there is no record to live on.
+    /// </summary>
+    /// <remarks>
+    /// A batch that loads details reads it once per volume, because two volumes can sit on different hardware
+    /// and one degree of parallelism would be wrong for one of them.
+    /// </remarks>
+    internal string? VolumeRoot => _indexPath is null ? null : Path.GetPathRoot(_indexPath);
+
+    /// <summary>
+    /// Reads this entry's record now rather than on first access.
+    /// </summary>
+    /// <param name="hResult">
+    /// Receives the code the filesystem raised, or <c>0</c> when the file was readable and simply was not a
+    /// record. Meaningless when this method returns <see langword="true"/> for an entry with nothing to read.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> when there is nothing left to read — this entry is now loaded. Otherwise whether
+    /// this call is what read it.
+    /// </returns>
+    /// <remarks>
+    /// A record that cannot be read leaves the entry exactly as it was: cold, and raising the same
+    /// <see cref="IOException"/> it would have raised anyway at the moment a caller asks for its path. Failing
+    /// here instead would turn one dead entry into a failed batch, and half-loading it would answer one field
+    /// from nowhere.
+    /// <para>
+    /// The swap is a single reference exchange rather than a field write, so a caller reading the same entry
+    /// from another thread sees either the old record source or the new resolved one and never a mixture.
+    /// Two callers racing here may both read the file; that costs one read and changes nothing, which is
+    /// cheaper than the lock that would stop it.
+    /// </para>
+    /// </remarks>
+    internal bool LoadDetails(out int hResult)
+    {
+        var pending = _details;
+
+        if (pending is null || pending.IsValueCreated)
+        {
+            hResult = 0;
+            return true;
+        }
+
+        if (!NativeIndexFile.TryRead(_indexPath!, out var record, out hResult))
+        {
+            return false;
+        }
+
+        // Built already evaluated and over a value rather than a factory, so replacing the source of the read
+        // with the answer cannot leave anything to read on the way out.
+        Interlocked.CompareExchange(ref _details, new Lazy<RecordDetails>(ToDetails(record)), pending);
+        return true;
+    }
 
     /// <summary>
     /// Reads one record and answers both fields from it.
