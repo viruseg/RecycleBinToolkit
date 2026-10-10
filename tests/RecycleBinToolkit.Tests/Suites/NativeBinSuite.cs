@@ -56,6 +56,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderRejectsATruncatedRecord), NativeIndexReaderRejectsATruncatedRecord),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderRejectsARecordOfUnknownVersion), NativeIndexReaderRejectsARecordOfUnknownVersion),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderDropsARecordDeclaringAnImpossiblePathLength), NativeIndexReaderDropsARecordDeclaringAnImpossiblePathLength),
+        new TestCase("NativeBinSuite." + nameof(NativeIndexReaderDropsARecordWhoseTimestampIsOutOfRange), NativeIndexReaderDropsARecordWhoseTimestampIsOutOfRange),
         new TestCase("NativeBinSuite." + nameof(NativeListingFindsAnEntryNativeRecycleRecorded), NativeListingFindsAnEntryNativeRecycleRecorded),
         new TestCase("NativeBinSuite." + nameof(NativeListingReportsARecycledDirectoryAsADirectory), NativeListingReportsARecycledDirectoryAsADirectory),
         new TestCase("NativeBinSuite." + nameof(NativeListingOfAVolumeWithNoBinDirectoryIsEmpty), NativeListingOfAVolumeWithNoBinDirectoryIsEmpty),
@@ -396,6 +397,45 @@ internal static class NativeBinSuite
             0,
             hResult,
             $"and it is dropped as malformed rather than reported as an entry nobody could read (got 0x{hResult:X8})");
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A record's deletion time is a file time read straight out of the file, and converting one the runtime
+    /// cannot express raises. The record is not unreadable for that: it is not a record at all, and a bin
+    /// holding one is a bin with one fewer entry in it rather than a bin with a problem in it.
+    /// </summary>
+    /// <remarks>
+    /// The distinction is the one <see cref="NativeIndexFile.TryRead(string, out NativeIndexRecord, out int)"/>
+    /// draws between the two things that can go wrong. A record that could not be <em>opened</em> is an entry
+    /// somebody else is holding, and a listing needs to hear that one is missing. A record whose contents
+    /// make no sense says nothing about the bin, and reporting it would put a failure about a stray file
+    /// into every listing that walks past it.
+    /// </remarks>
+    private static Task NativeIndexReaderDropsARecordWhoseTimestampIsOutOfRange(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var original = Path.Combine(ScratchWorkspace.Root, "unreachable-time.bin");
+        var bytes = BuildRecord(original, size: 128, deleted: DateTime.UtcNow, version: NativeIndexFile.Version);
+
+        // Every other field is one this reader accepts, so the timestamp is the only thing wrong with it.
+        WriteInt64(bytes, 16, long.MaxValue);
+
+        var path = Path.Combine(ScratchWorkspace.Root, "$Ibadtime.bin");
+        File.WriteAllBytes(path, bytes);
+
+        Check.False(
+            NativeIndexFile.TryRead(path, out _, out var hResult),
+            "a record whose deletion time is not a time is not read as one");
+
+        Check.Equal(
+            0,
+            hResult,
+            $"and it is dropped quietly rather than reported as an entry nobody could read (got 0x{hResult:X8})");
 
         workspace.Dispose();
         return Task.CompletedTask;

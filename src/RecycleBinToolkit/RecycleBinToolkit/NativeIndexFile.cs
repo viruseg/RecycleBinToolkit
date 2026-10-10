@@ -67,6 +67,18 @@ internal static class NativeIndexFile
     internal const int MaxPathCharacters = 32767;
 
     /// <summary>
+    /// The oldest file time <see cref="DateTime.FromFileTimeUtc"/> will convert: midnight on 1 January 1601,
+    /// the epoch the conversion counts from. Below it there is no instant to name.
+    /// </summary>
+    private const long MinFileTime = 0;
+
+    /// <summary>
+    /// The newest one, which is the last instant a <see cref="DateTime"/> can hold. The conversion raises on
+    /// anything past it, and this is a number read out of a file rather than one a caller produced.
+    /// </summary>
+    private static readonly long MaxFileTime = DateTime.MaxValue.ToFileTimeUtc();
+
+    /// <summary>
     /// Writes a record describing a deletion.
     /// </summary>
     /// <param name="indexPath">Where to write it. Must not already exist.</param>
@@ -165,7 +177,19 @@ internal static class NativeIndexFile
 
             var version = BinaryPrimitives.ReadInt64LittleEndian(buffer);
             var size = BinaryPrimitives.ReadInt64LittleEndian(buffer[8..]);
-            var deleted = DateTime.FromFileTimeUtc(BinaryPrimitives.ReadInt64LittleEndian(buffer[16..]));
+
+            // Checked before it is converted rather than around the conversion. Raising here is caught
+            // below as an ArgumentException and turned into a failure carrying the runtime's own code, which
+            // says a record could not be read — about a file that is not a record at all, and about nothing
+            // the bin did. The contract is the other way round: only a record that could not be opened is
+            // worth reporting.
+            var fileTime = BinaryPrimitives.ReadInt64LittleEndian(buffer[16..]);
+            if (fileTime < MinFileTime || fileTime > MaxFileTime)
+            {
+                return false;
+            }
+
+            var deleted = DateTime.FromFileTimeUtc(fileTime);
 
             if (version == Version)
             {
