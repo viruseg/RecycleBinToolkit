@@ -20,11 +20,16 @@ namespace RecycleBinToolkit;
 /// one folder per user SID instead of the deleted items, with the SYSTEM entry among them denying
 /// access to an unelevated process.
 /// <para>
+/// Every field of every item comes out of the enumeration here, so the items this builds are complete
+/// before they are handed back and nothing about them is read later. The native path is the one that
+/// defers: see <see cref="RecycleBinItem"/>.
+/// </para>
+/// <para>
 /// Where each field comes from was measured on this Windows build rather than assumed, because the
 /// obvious sources turn out to be empty:
 /// </para>
 /// <list type="bullet">
-/// <item>Original path and name come from <c>SIGDN_NORMALDISPLAY</c>, which the Shell fills with
+/// <item>The original path comes from <c>SIGDN_NORMALDISPLAY</c>, which the Shell fills with
 /// the full path the item was deleted from. <c>System.Recycle.DeletedFrom</c> holds only the
 /// directory and is used as the fallback when the display name is not rooted.</item>
 /// <item>The deletion time comes from <c>System.Recycle.DateDeleted</c> through
@@ -158,12 +163,12 @@ internal static unsafe class RecycleBinLister
             }
 
             items.Add(new RecycleBinItem(
-                Path.GetFileName(originalPath),
-                originalPath,
+                indexPath: null,
                 physicalPath,
                 ReadSize(physicalPath, isDirectory),
-                ReadFileTime(item, RecycleBinPropertyKeys.DateDeleted),
-                isDirectory));
+                isDirectory,
+                originalPath,
+                ReadFileTime(item, RecycleBinPropertyKeys.DateDeleted)));
         }
         catch (Exception ex) when (ShellOperationContext.IsShellRefusal(ex))
         {

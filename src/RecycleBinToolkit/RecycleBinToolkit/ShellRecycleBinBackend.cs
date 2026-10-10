@@ -55,13 +55,13 @@ internal sealed class ShellRecycleBinBackend : IRecycleBinBackend
     /// this narrows an enumeration that has already happened rather than making a cheaper query; the
     /// filtering happens in <see cref="RecycleBin"/>.
     /// </param>
+    /// <param name="options">
+    /// Accepted because the interface carries it and the Shell reading path has nothing to do with it: every
+    /// field of every entry comes out of the enumeration itself, so there is nothing here to read later and
+    /// nothing a caller could ask it to skip.
+    /// </param>
     /// <param name="cancellationToken">Cancels the wait.</param>
-    /// <returns>The entries that could be read, plus the ones that could not.</returns>
-    /// <remarks>
-    /// <paramref name="options"/> is accepted because the interface carries it and the Shell reading path has
-    /// nothing to do with it: every field of every entry comes out of the enumeration itself, so there is
-    /// nothing here to read later and nothing a caller could ask it to skip.
-    /// </remarks>
+    /// <returns>The entries that could be read, plus the ones that could not be.</returns>
     public Task<RecycleBinContents> ListAsync(
         IReadOnlyList<string> volumeRoots,
         RecycleBinOptions options,

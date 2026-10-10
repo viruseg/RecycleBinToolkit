@@ -112,7 +112,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// <param name="isDirectory">Whether the item is a directory.</param>
     /// <param name="hResult">
     /// Receives the code the filesystem raised, or <c>0</c> when the file was readable and simply was not a
-    /// record — the same distinction <see cref="NativeIndexFile.TryRead"/> draws, and for the same reason.
+    /// record — the same distinction the record reader draws, and for the same reason.
     /// </param>
     /// <returns>
     /// An item that answers both details without reading anything, or <see langword="null"/> when there is
