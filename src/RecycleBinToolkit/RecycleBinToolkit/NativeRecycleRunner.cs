@@ -199,9 +199,8 @@ internal static class NativeRecycleRunner
         {
             NativeBinLayout.NextStem(stem);
 
-            var name = new string(stem);
-            var indexPath = NativeBinLayout.IndexPath(binDirectory, name, extension);
-            var payloadPath = NativeBinLayout.PayloadPath(binDirectory, name, extension);
+            var indexPath = NativeBinLayout.IndexPath(binDirectory, stem, extension);
+            var payloadPath = NativeBinLayout.PayloadPath(binDirectory, stem, extension);
 
             try
             {

@@ -17,6 +17,10 @@ namespace RecycleBinToolkit;
 internal static class NativeBinLayout
 {
     private const string RecycleBinFolder = "$RECYCLE.BIN";
+
+    /// <summary>The character every entry name starts with, before the <c>I</c> or <c>R</c> that says which half it is.</summary>
+    private const char EntryMarker = '$';
+
     private const char IndexPrefix = 'I';
     private const char PayloadPrefix = 'R';
 
@@ -25,6 +29,14 @@ internal static class NativeBinLayout
     /// the entries read as ordinary ones rather than as something unfamiliar.
     /// </summary>
     private const string StemAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+    /// <summary>
+    /// The longest entry name assembled on the stack rather than on the heap. A name is a separator, the
+    /// marker, a prefix, six random characters and the extension the caller had, and no filesystem on
+    /// Windows gives a name component more than 255 characters — so this is the whole of what a real path
+    /// reaches.
+    /// </summary>
+    private const int MaxStackNameLength = 3 + StemLength + 255;
 
     /// <summary>
     /// How many characters the random part is. Windows uses six, so an entry written here is the same
@@ -98,14 +110,61 @@ internal static class NativeBinLayout
     /// <summary>
     /// The path a record of the given stem is to be written to.
     /// </summary>
-    internal static string IndexPath(string binDirectory, string stem, string extension) =>
-        Path.Combine(binDirectory, $"${IndexPrefix}{stem}{extension}");
+    /// <param name="binDirectory">The volume's bin directory for this user.</param>
+    /// <param name="stem">The random part, of length <see cref="StemLength"/>.</param>
+    /// <param name="extension">The extension the entry keeps, which may be empty.</param>
+    internal static string IndexPath(string binDirectory, ReadOnlySpan<char> stem, ReadOnlySpan<char> extension) =>
+        EntryPath(binDirectory, IndexPrefix, stem, extension);
 
     /// <summary>
     /// The path the payload of the given stem is to be moved to.
     /// </summary>
-    internal static string PayloadPath(string binDirectory, string stem, string extension) =>
-        Path.Combine(binDirectory, $"${PayloadPrefix}{stem}{extension}");
+    /// <param name="binDirectory">The volume's bin directory for this user.</param>
+    /// <param name="stem">The random part, of length <see cref="StemLength"/>.</param>
+    /// <param name="extension">The extension the entry keeps, which may be empty.</param>
+    internal static string PayloadPath(string binDirectory, ReadOnlySpan<char> stem, ReadOnlySpan<char> extension) =>
+        EntryPath(binDirectory, PayloadPrefix, stem, extension);
+
+    /// <summary>
+    /// Builds one half of an entry's path and materialises it once.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Path.Combine(string, string)"/> has no overload taking a span for its second half, so
+    /// naming the entry as a string first costs a second allocation on every path of every batch. The
+    /// separator that call would have inserted is inserted here instead and the whole path is concatenated
+    /// from two spans, which allocates once. Both halves of the assumption are safe: the directory is this
+    /// library's own <c>&lt;root&gt;$RECYCLE.BIN\&lt;SID&gt;</c>, and the name is a prefix, a fixed-length
+    /// stem and an extension — never rooted, so the "second half wins outright" rule cannot apply.
+    /// </remarks>
+    private static string EntryPath(string binDirectory, char prefix, ReadOnlySpan<char> stem, ReadOnlySpan<char> extension)
+    {
+        var separator = binDirectory.Length > 0
+            && binDirectory[^1] != Path.DirectorySeparatorChar
+            && binDirectory[^1] != Path.AltDirectorySeparatorChar;
+
+        var nameLength = (separator ? 1 : 0) + 2 + stem.Length + extension.Length;
+
+        Span<char> name = nameLength <= MaxStackNameLength
+            ? stackalloc char[nameLength]
+            : new char[nameLength];
+
+        var at = 0;
+
+        if (separator)
+        {
+            name[at++] = Path.DirectorySeparatorChar;
+        }
+
+        // The dollar is part of the entry's name and not part of the prefix: what marks a file as this
+        // format's is the '$', and I and R only say which half it is.
+        name[at++] = EntryMarker;
+        name[at++] = prefix;
+        stem.CopyTo(name[at..]);
+        at += stem.Length;
+        extension.CopyTo(name[at..]);
+
+        return string.Concat(binDirectory.AsSpan(), (ReadOnlySpan<char>)name);
+    }
 
     /// <summary>
     /// The payload path belonging to an index path.

@@ -65,12 +65,12 @@ internal static class NativeBinLister
 
         var records = CollectRecordPaths(binDirectory, cancellationToken);
 
-        if (records.Length == 0)
+        if (records.Count == 0)
         {
             return;
         }
 
-        var found = new RecycleBinItem?[records.Length];
+        var found = new RecycleBinItem?[records.Count];
         var unreadable = new List<RecycleFailure>();
 
         var options = new ParallelOptions
@@ -83,7 +83,7 @@ internal static class NativeBinLister
         // and a collection it had to lock would put the lock on the path the work is meant to speed up.
         // Failures are the rare half — one entry somebody else is holding — and are the only thing gathered
         // under a lock.
-        Parallel.For(0, records.Length, options, index =>
+        Parallel.For(0, records.Count, options, index =>
         {
             if (NativeIndexFile.TryRead(records[index], out var record, out var hResult))
             {
@@ -112,6 +112,11 @@ internal static class NativeBinLister
     /// <summary>
     /// The paths of every index record in a bin directory.
     /// </summary>
+    /// <returns>
+    /// The paths, in the order the directory gave them. A list rather than an array because nothing here
+    /// indexes into it: the reading loop asks for each position in turn, and copying ninety thousand
+    /// references into a second array to do that is a pass and an allocation this does not need to make.
+    /// </returns>
     /// <remarks>
     /// The filter is applied while the directory is being enumerated rather than afterwards, so a payload
     /// and a <c>desktop.ini</c> never cross into user mode at all. It cannot be left to the pattern alone
@@ -119,7 +124,7 @@ internal static class NativeBinLister
     /// <see cref="FileAttributes.Hidden"/> and <see cref="FileAttributes.System"/>, and both entries carry
     /// both attributes — left at the default, this enumerates an empty directory.
     /// </remarks>
-    private static string[] CollectRecordPaths(string binDirectory, CancellationToken cancellationToken)
+    private static List<string> CollectRecordPaths(string binDirectory, CancellationToken cancellationToken)
     {
         var options = new EnumerationOptions
         {
@@ -146,7 +151,7 @@ internal static class NativeBinLister
             records.Add(path);
         }
 
-        return [.. records];
+        return records;
     }
 
     /// <summary>
