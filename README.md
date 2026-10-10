@@ -564,9 +564,46 @@ The outcome of a listing. Immutable.
 | Member | Type | Description |
 | --- | --- | --- |
 | `Items` | `IReadOnlyList<RecycleBinItem>` | The entries that were read. |
-| `Failures` | `IReadOnlyList<RecycleFailure>` | Entries the Shell would not describe, at stage `Enumeration`. |
+| `Failures` | `IReadOnlyList<RecycleFailure>` | Entries the backend would not describe, at stage `Enumeration`. |
 | `Elapsed` | `TimeSpan` | Wall-clock time spent enumerating. |
 | `TotalSize` | `long` | Sum of `Size` over `Items`, derived when the listing was built. |
+| `LoadItemDetails(CancellationToken)` | `void` | Reads every item's lazy fields now, so no later access touches the disk. See [Loading every item's details](#loading-every-items-details). |
+
+#### Loading every item's details
+
+A listing reads no records at all, and each entry reads its own on first use. That is the right shape when you
+want a few of them and it is the wrong one when you want all of them: the reads then happen one at a time, from
+inside a loop that also has to do something else.
+
+`LoadItemDetails` moves that cost into one batch:
+
+```csharp
+using RecycleBinToolkit;
+
+var contents = await RecycleBin.GetItemsAsync();
+
+// Read every item's OriginalPath and DeletedAt up front, in parallel, so the loop below never blocks on I/O.
+contents.LoadItemDetails();
+
+foreach (var item in contents.Items)
+{
+    Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+}
+```
+
+- Items whose details are already in memory are skipped — every item of a Shell listing, and every item of a
+  listing taken with `PreloadItemDetails`. A listing with nothing pending does one pass over its items and no
+  file reads.
+- Volumes are read one after another, each on as many threads as its own hardware answers for: one for a
+  mechanical disk, more for a solid-state one, one for a share.
+- An item whose record cannot be read is **left cold**, and still raises `IOException` when a caller asks for
+  its details. Nothing here throws for one, and `Failures` does not change — it describes what the listing could
+  not do.
+- The items themselves are the same objects the listing returned, so `TotalSize` and any reference you already
+  hold stay valid.
+
+Raising `OperationCanceledException` is the one thing it does throw, when the token is cancelled part way; items
+read before that point stay read.
 
 ### `RecycleBinEmptyResult`
 
@@ -941,6 +978,7 @@ FileRecycler          validates, normalises, de-duplicates, dispatches
        ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
        ├─ NativeRecycleRunner     record first, then the move, then the receipt
        ├─ NativeBinLister         pairs from the walk; records only under PreloadItemDetails, in parallel
+       ├─ ItemDetailLoader        warms a listing after the fact, one volume at a time
        └─ NativeBinEmptier        payload first, then the record, counted from the walk
 
 RecycleBin            validates, filters, reports

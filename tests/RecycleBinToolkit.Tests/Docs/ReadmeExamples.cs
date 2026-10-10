@@ -176,6 +176,19 @@ internal static class ReadmeExamples
         }
     }
 
+    internal static async Task LoadEveryItemsDetailsBeforeLoopingOverThem()
+    {
+        var contents = await RecycleBin.GetItemsAsync();
+
+        // Read every item's OriginalPath and DeletedAt up front, in parallel, so the loop below never blocks on I/O.
+        contents.LoadItemDetails();
+
+        foreach (var item in contents.Items)
+        {
+            Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+        }
+    }
+
     internal static async Task ListOneVolumeAndHearAboutUnreadableEntries()
     {
         // The Recycle Bin is one Shell folder spanning every mounted volume, so this filters an
