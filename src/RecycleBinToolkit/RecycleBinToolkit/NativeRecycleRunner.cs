@@ -94,6 +94,12 @@ internal static class NativeRecycleRunner
         // trip that answers "yes" — twenty thousand of them on a twenty-thousand-path batch.
         var bins = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        // Taken once, before the loop, because the budget it bounds is the batch's and not each round's.
+        // Added here rather than inside the wait it is checked by: a deadline recomputed there is a fresh
+        // budget every round, and the loop then runs to MaxAttempts whenever one delay fits inside it — which
+        // is the case a caller who set a budget at all is the one that hits.
+        var deadline = stopwatch.Elapsed + options.OverallTimeout;
+
         for (var round = 1; round <= options.MaxAttempts && pending.Count > 0; round++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -121,7 +127,7 @@ internal static class NativeRecycleRunner
                 break;
             }
 
-            if (!WaitBeforeRetry(options, round, stopwatch, cancellationToken))
+            if (!WaitBeforeRetry(options, round, stopwatch, deadline, cancellationToken))
             {
                 break;
             }
@@ -294,6 +300,14 @@ internal static class NativeRecycleRunner
     /// <summary>
     /// Waits out the backoff for the round that just finished.
     /// </summary>
+    /// <param name="options">The normalised settings the delay is derived from.</param>
+    /// <param name="round">The round that just finished, counting from one; the delay doubles on each.</param>
+    /// <param name="stopwatch">The batch's own clock, which <paramref name="deadline"/> was measured against.</param>
+    /// <param name="deadline">
+    /// When the batch's retry budget runs out. Taken once by the caller rather than derived here, because
+    /// the budget is the batch's and a fresh one per round would not bound anything.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the wait, ending the batch rather than faulting inside it.</param>
     /// <returns>
     /// <see langword="false"/> when no further round may start: the overall budget is spent, or the backoff
     /// does not fit in what is left of it.
@@ -302,10 +316,9 @@ internal static class NativeRecycleRunner
         RecycleBinOptions options,
         int round,
         Stopwatch stopwatch,
+        TimeSpan deadline,
         CancellationToken cancellationToken)
     {
-        var deadline = stopwatch.Elapsed + options.OverallTimeout;
-
         var exponential = options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, round - 1);
         var jittered = exponential * (1 + ((Random.Shared.NextDouble() * 2 - 1) * MaxJitterFraction));
 

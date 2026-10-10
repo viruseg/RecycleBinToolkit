@@ -71,6 +71,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(TheShellWritesAVersionTwoIndexRecordOnThisMachine), TheShellWritesAVersionTwoIndexRecordOnThisMachine),
         new TestCase("NativeBinSuite." + nameof(AnUnclampedAttemptBudgetStillRecycles), AnUnclampedAttemptBudgetStillRecycles),
         new TestCase("NativeBinSuite." + nameof(AnAbsurdOverallTimeoutDoesNotOverflow), AnAbsurdOverallTimeoutDoesNotOverflow),
+        new TestCase("NativeBinSuite." + nameof(NativeOverallTimeoutBoundsTheWholeRetryBudget), NativeOverallTimeoutBoundsTheWholeRetryBudget),
         new TestCase("NativeBinSuite." + nameof(ARecycledEntryNeverHasItsRecordWithoutItsPayload), ARecycledEntryNeverHasItsRecordWithoutItsPayload),
         new TestCase("NativeBinSuite." + nameof(ADeepDirectoryMovesWhole), ADeepDirectoryMovesWhole),
         new TestCase("NativeBinSuite." + nameof(AnEmptyNamesOnlyTheVolumesItActuallyEmptied), AnEmptyNamesOnlyTheVolumesItActuallyEmptied),
@@ -811,6 +812,53 @@ var path = CreateDeepFile(PastMaxPath);
         Check.True(result.Succeeded, $"the file is recycled anyway, because zero attempts clamps to one (first failure: {Describe(result.FirstFailure)})");
         Check.Equal(1, result.RecycledPaths.Count, "and is named as recycled rather than silently dropped");
         Check.False(File.Exists(path), "so it really is in the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// <see cref="RecycleBinOptions.OverallTimeout"/> bounds the retrying of a whole batch, not each round's
+    /// wait taken on its own. A deadline recomputed before every backoff is a fresh budget every time, so the
+    /// loop runs to <see cref="RecycleBinOptions.MaxAttempts"/> whenever each individual delay fits — which is
+    /// the case a caller setting a budget is exactly the one that hits.
+    /// </summary>
+    /// <remarks>
+    /// The numbers are chosen so the jitter cannot move the answer. Delays double from 30 ms, so the three
+    /// before the last add to at most 252 ms against a 300 ms budget — round four is always reached — and
+    /// the fourth is 240 ms at its lowest against whatever is left of the budget, which is at most 252 ms
+    /// spent and therefore at least 48 ms remaining. A deadline taken once gives four attempts; one taken
+    /// afresh each time gives five, because 240 ms still fits inside a whole 300 ms budget.
+    /// </remarks>
+    private static async Task NativeOverallTimeoutBoundsTheWholeRetryBudget(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the batch to be measured against");
+
+        var locked = CreateFile("budget-locked.bin");
+
+        var options = new RecycleBinOptions
+        {
+            Backend = RecycleBinBackend.Native,
+            MaxAttempts = 20,
+            InitialRetryDelay = TimeSpan.FromMilliseconds(30),
+            OverallTimeout = TimeSpan.FromMilliseconds(300)
+        };
+
+        RecycleBinResult result;
+
+        using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            result = await FileRecycler.MoveToRecycleBinAsync([locked], options, context.CancellationToken).ConfigureAwait(false);
+        }
+
+        Check.False(result.Succeeded, "a file that cannot be moved is still reported as a failure");
+        Check.NotNull(result.FirstFailure, "and the failure is reported");
+        Check.Equal(
+            4,
+            result.FirstFailure!.Attempts,
+            "the budget is spent across the rounds rather than restarted by each of them, so the fifth never starts");
+        Check.True(File.Exists(locked), "and the caller's file is left where they put it");
 
         workspace.Dispose();
     }
