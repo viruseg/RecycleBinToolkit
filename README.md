@@ -334,7 +334,7 @@ Immutable; set with object initialisers. Every property has a production default
 | `LongPathFailureAction` | `LongPathFailureAction` | `Throw` | What happens to a file the Shell cannot recycle. **Inert on `Native`**, which never refuses on length. |
 | `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. Applies on **both** backends. |
 | `MaxShellPathLength` | `int` | `260` | Longest path the Shell can be asked to recycle. Measured: 251 recycles, 261 does not. Clamped to at least 1. **Inert on `Native`** — there is no length limit there. |
-| `Backend` | `RecycleBinBackend` | `WinApi` | Which path to the Recycle Bin this call takes. See [Two paths to the Recycle Bin](#two-paths-to-the-recycle-bin). |
+| `Backend` | `RecycleBinBackend` | `WinApi` | Which path to the Recycle Bin this call takes. A value this version does not define falls back to `WinApi`. See [Two paths to the Recycle Bin](#two-paths-to-the-recycle-bin). |
 
 ```csharp
 // Every property has a production default, so RecycleBinOptions.Default — which is what a null

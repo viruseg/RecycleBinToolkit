@@ -20,7 +20,10 @@ internal static class RecycleBinBackends
     /// <returns>The implementation that carries out the call.</returns>
     /// <remarks>
     /// Every value of <see cref="RecycleBinBackend"/> answers here, so adding a backend is a change
-    /// in one place rather than a branch in every caller.
+    /// in one place rather than a branch in every caller. A value this version does not define falls to
+    /// the Shell, which is the contract <see cref="RecycleBinOptions.Backend"/> documents and the one
+    /// both the reading and the writing paths rely on — neither goes through
+    /// <see cref="RecycleBinOptions.Normalize"/> on the way here.
     /// </remarks>
     internal static IRecycleBinBackend For(RecycleBinOptions? options)
     {

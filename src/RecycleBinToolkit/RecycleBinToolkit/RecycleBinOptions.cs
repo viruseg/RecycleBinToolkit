@@ -105,6 +105,16 @@ public sealed class RecycleBinOptions
     /// The default is 0 and stays there. A caller who has never heard of
     /// <see cref="RecycleBinBackend.Native"/> gets the Shell path, on any Windows build this library
     /// supports, which is the only combination that is safe to hand to someone who did not choose.
+    /// <para>
+    /// Any other value is treated as <see cref="RecycleBinBackend.WinApi"/>, including one cast from an
+    /// integer that this version does not define. Falling back rather than raising is deliberate: the
+    /// property is a <c>init</c> setter, so an unknown value can only arrive from a caller who cast one,
+    /// and the two backends answer the same call differently — refusing to answer is not an option a
+    /// library can offer without deciding what the caller would have wanted instead. The Shell path is
+    /// what an unrecognised setting falls back to because it is the one every call took before the
+    /// property existed, and it is available on every Windows build this library supports, which
+    /// <see cref="RecycleBinBackend.Native"/> is not on older ones.
+    /// </para>
     /// </remarks>
     public RecycleBinBackend Backend { get; init; } = RecycleBinBackend.WinApi;
 
