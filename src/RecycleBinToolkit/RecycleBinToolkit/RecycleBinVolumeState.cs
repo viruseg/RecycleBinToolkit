@@ -8,10 +8,10 @@ namespace RecycleBinToolkit;
 /// Reads the facts about one volume and turns them into a <see cref="RecycleBinStatus"/>.
 /// </summary>
 /// <remarks>
-/// Reads what the volume table and the registry say, and asks the Shell only about a volume whose
-/// per-volume setting was not recorded — one whose GUID the volume API would not resolve, or one Windows
-/// has never configured a bin for. It runs outside the Shell worker, so it neither needs that worker nor
-/// waits behind an operation already queued on it.
+/// Reads what the volume table and the registry say. A volume whose per-volume setting was not
+/// recorded — one whose GUID the volume API would not resolve, or one Windows has never configured
+/// a bin for — is answered <see cref="RecycleBinAvailabilityReason.Indeterminate"/>: unproven is not
+/// enabled.
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class RecycleBinVolumeState
@@ -19,27 +19,21 @@ internal static class RecycleBinVolumeState
     private const int GuidPathCapacity = 64;
 
     /// <summary>
+    /// Win32 <c>ERROR_NOT_SET</c>, used when a volume cannot be read at all.
+    /// </summary>
+    internal const int UnreadableVolume = unchecked((int)0x80070490);
+
+    /// <summary>
     /// Inspects a volume.
     /// </summary>
     /// <param name="volumeRoot">Volume root, with or without a trailing separator.</param>
     /// <returns>The status of that volume.</returns>
     /// <remarks>
-    /// The Shell is consulted only for a volume whose per-volume setting was not recorded — one whose GUID
-    /// the volume API would not resolve, or one Windows has never configured a bin for — and
-    /// <see cref="RecycleBinCounter.TryQuery"/> is the only question asked of it: an empty Recycle Bin
-    /// still answers the query successfully, so a failure names a volume that has no bin at all rather
-    /// than a volume whose bin happens to be full of nothing.
-    /// <para>
     /// Configuration is the evidence throughout, which is also its limit: a key that survives on a volume
     /// whose bin has since been removed still answers <see cref="RecycleBinAvailabilityReason.Enabled"/>.
-    /// That is a limit rather than a certainty, and nothing here can settle it without asking the Shell on
-    /// every call.
-    /// </para>
-    /// <para>
-    /// The probe runs last because it is the expensive step. <c>SHQueryRecycleBin</c> walks the bin's
-    /// metadata, which took about 11 seconds against a bin of 90,000 entries, so a volume whose own key
-    /// reads <c>NukeOnDelete=0</c> is answered from configuration and never reaches it.
-    /// </para>
+    /// And a volume with no recorded setting answers
+    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> rather than a statement about whether a
+    /// bin directory exists — nothing here walks the bin to check.
     /// </remarks>
     internal static RecycleBinStatus Inspect(string volumeRoot)
     {
@@ -84,15 +78,9 @@ internal static class RecycleBinVolumeState
             return new RecycleBinStatus(root, driveType, configured);
         }
 
-        // Nothing was recorded for this volume, which is not a fact about whether it recycles. Whether
-        // the bin is there at all is the next question: one that has a bin says nothing to tell it from a
-        // configured volume, which is what Indeterminate means; one that has none is named, because a
-        // delete handed to the Shell on such a volume is removed for good.
-        if (!RecycleBinCounter.TryQuery(root, out _, out _))
-        {
-            return new RecycleBinStatus(root, driveType, RecycleBinAvailabilityReason.NoRecycleBinOnVolume);
-        }
-
+        // Nothing was recorded for this volume, which is not a fact about whether it recycles.
+        // Unproven is not enabled: the answer is Indeterminate, and the default action refuses it
+        // with the file left in place.
         return new RecycleBinStatus(root, driveType, RecycleBinAvailabilityReason.Indeterminate);
     }
 

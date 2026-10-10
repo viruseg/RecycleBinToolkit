@@ -35,14 +35,11 @@ public enum NoRecycleBinAction
     /// same risk — an <see cref="RecycleBinAvailabilityReason.Indeterminate"/> volume is most often one
     /// whose probe found a bin, which recycles normally.
     /// <para>
-    /// <b>What "hand it over" means is the backend's decision, and the two disagree.</b> On
-    /// <see cref="RecycleBinBackend.WinApi"/> the Shell's only move on a bin-less volume is to destroy
-    /// the file. On <see cref="RecycleBinBackend.Native"/> the backend can create the per-user directory
-    /// under <c>$RECYCLE.BIN</c> and recycle into it, so the file survives — and the volume, which had no
-    /// Recycle Bin, now has one. That is the non-destructive reading of an option whose name is about
-    /// handing the path over rather than about a particular outcome, but it is a change to the volume a
-    /// caller did not ask for and is visible in Explorer. A caller who does not want a bin created on that
-    /// volume wants <see cref="DeletePermanently"/>, which says so, or <see cref="Throw"/>, which refuses.
+    /// The engine can create the per-user directory under <c>$RECYCLE.BIN</c> and recycle into it, so the
+    /// file survives — and the volume, which had no Recycle Bin, now has one. That is a change to the
+    /// volume a caller did not ask for and is visible in Explorer. A caller who does not want a bin
+    /// created on that volume wants <see cref="DeletePermanently"/>, which says so, or
+    /// <see cref="Throw"/>, which refuses.
     /// </para>
     /// </remarks>
     AllowIndeterminate = 1,

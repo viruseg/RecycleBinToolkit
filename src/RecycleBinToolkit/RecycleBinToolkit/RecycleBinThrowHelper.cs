@@ -119,10 +119,10 @@ internal sealed class RecycleBinNativeBackendUnavailableException : PlatformNotS
 {
     internal RecycleBinNativeBackendUnavailableException(int major, int minor, int build)
         : base(
-            $"The Native Recycle Bin backend needs Windows 10 version 1607 (build {RecycleBinBackendGuard.MinimumBuild}) or later, " +
+            $"The Recycle Bin needs Windows 10 version 1607 (build {RecycleBinBackendGuard.MinimumBuild}) or later, " +
             $"because it writes Recycle Bin index records of version 2 and no older Shell can read those. " +
             $"This machine is Windows {major}.{minor} build {build}. Nothing was recycled and no file was touched. " +
-            "Use RecycleBinBackend.WinApi on this system, or run on a newer Windows.")
+            "Run on a newer Windows.")
     {
     }
 }

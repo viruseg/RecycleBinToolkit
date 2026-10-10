@@ -49,12 +49,12 @@ public sealed class RecycleBinContents
     /// </summary>
     /// <param name="cancellationToken">Cancels the work between records and between volumes.</param>
     /// <remarks>
-    /// A listing on <see cref="RecycleBinBackend.Native"/> reads no records at all — that is what makes one walk
+    /// A listing reads no records at all — that is what makes one walk
     /// of the bin enough, however many entries there are — and each item reads its own on first use. This is for
     /// a caller about to read all of them: it moves that cost into one batch, in parallel, instead of leaving it
     /// spread through a loop that also has to do something else.
     /// <para>
-    /// The items already read are skipped, which is every item of a Shell listing and every item of a listing
+    /// The items already read are skipped, which is every item of a listing
     /// taken with <see cref="RecycleBinOptions.PreloadItemDetails"/>. Nothing is read twice, and a listing
     /// with nothing pending does no work at all beyond one pass over its items.
     /// </para>

@@ -104,6 +104,30 @@ internal readonly struct RecycleTarget
     internal RecycleTarget WithMovedTo(string movedFullPath) => new(InputPath, movedFullPath, StripExtendedPrefix(movedFullPath), Attributes, Size);
 
     /// <summary>
+    /// Drops every target after the first that names the same file, so two spellings of one path cannot
+    /// end up with separate verdicts.
+    /// </summary>
+    /// <remarks>
+    /// <c>X:\A.BIN</c> and <c>x:\a.bin</c> have to meet here, or the bin is handed two entries for one file.
+    /// </remarks>
+    /// <param name="targets">Paths to collapse.</param>
+    internal static IReadOnlyList<RecycleTarget> CollapseEquivalent(IReadOnlyList<RecycleTarget> targets)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unique = new List<RecycleTarget>(targets.Count);
+
+        foreach (var target in targets)
+        {
+            if (seen.Add(target.ShellPath))
+            {
+                unique.Add(target);
+            }
+        }
+
+        return unique;
+    }
+
+    /// <summary>
     /// Whether a path names its volume by GUID rather than by a drive letter or a mount point.
     /// </summary>
     /// <remarks>

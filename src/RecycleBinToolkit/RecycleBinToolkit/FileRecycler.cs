@@ -37,10 +37,10 @@ public static class FileRecycler
     /// whether a failure raises or is returned as <see langword="false"/>.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the wait. On <see cref="RecycleBinBackend.WinApi"/> cancelling after the work started does
-    /// not stop the Shell, so the item may still end up in the Recycle Bin. On
-    /// <see cref="RecycleBinBackend.Native"/> the token is checked between paths instead, so a cancelled
-    /// batch stops part way and raises without returning a result.
+    /// Cancels the scan that validates the batch and the work between paths. A cancelled batch stops
+    /// part way and raises without returning a result: which files went is found by reading the bin.
+    /// The validation scan is checked too, because on a large batch it is the long half of the call
+    /// and it is over before the first move would have begun.
     /// </param>
     /// <returns><see langword="true"/> when the path was removed from disk.</returns>
     /// <exception cref="ArgumentException">
@@ -123,11 +123,10 @@ public static class FileRecycler
     /// <see cref="RecycleBinOptions.Default"/>.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the scan that validates the batch and the wait between attempts. A round already handed to the
-    /// Shell always finishes; the native backend has no rounds and checks the token between paths, so a
-    /// cancelled batch stops part way and raises without returning a result. The validation scan is checked
-    /// too, because on a large batch it is the long half of the call and it is over before the first round
-    /// would have begun.
+    /// Cancels the scan that validates the batch and the work between paths. A cancelled batch stops
+    /// part way and raises without returning a result: which files went is found by reading the bin.
+    /// The validation scan is checked too, because on a large batch it is the long half of the call
+    /// and it is over before the first move would have begun.
     /// </param>
     /// <returns>
     /// The outcome of the batch. Never throws for a per-item failure; read
@@ -163,17 +162,10 @@ public static class FileRecycler
         var effective = options ?? RecycleBinOptions.Default;
 
         // Before argument validation, before any filesystem question, and before the hop to the pool: the
-        // machine either can be written to natively or cannot, and that does not depend on the paths, so a
+        // machine either can be written to or cannot, and that does not depend on the paths, so a
         // caller is told before this library starts touching anything. It is not a RecycleFailure and
         // ThrowOnError does not suppress it — nothing was attempted, so there is nothing to report as data.
-        if (effective.Backend == RecycleBinBackend.Native)
-        {
-            RecycleBinBackendGuard.RequireWriteSupport();
-
-            return await Task
-                .Run(() => MoveNatively(filePaths, effective, cancellationToken), cancellationToken)
-                .ConfigureAwait(false);
-        }
+        RecycleBinBackendGuard.RequireWriteSupport();
 
         // Validating a batch is one filesystem probe per path and, on the volume measured here, about
         // 11 ms each — so 20,000 paths is a little over three and a half minutes. Run inline that time is
@@ -181,39 +173,9 @@ public static class FileRecycler
         // thread that called it: a caller on a UI thread would be frozen for the whole scan, and a caller
         // holding a lock would hold it. Hopping to the pool first costs a scheduling round trip and buys
         // back the caller's thread, which is the only one that has something else to be doing.
-        //
-        // The volume gate belongs on this side of the hop for the same reason and one more: inspecting a
-        // volume asks the Shell, and on a share that is a network round trip which blocks for seconds.
-        // The Shell worker is one STA thread that every other caller in the process queues behind, so a
-        // probe run there would turn one dead share into a stall for all of them.
-        var (targets, gateFailures, permanentlyDeleted) = await Task
-            .Run(() => BuildTargets(filePaths, effective, cancellationToken), cancellationToken)
+        return await Task
+            .Run(() => RecycleBatch(filePaths, effective, cancellationToken), cancellationToken)
             .ConfigureAwait(false);
-
-        if (targets.Count == 0)
-        {
-            return RecycleBinResult.Create([], permanentlyDeleted, gateFailures, TimeSpan.Zero);
-        }
-
-        var result = await RecycleBinBackends
-            .For(effective)
-            .RecycleAsync(targets, effective, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (gateFailures.Count == 0 && permanentlyDeleted.Count == 0)
-        {
-            return result;
-        }
-
-        // The gate's own verdicts come first, in the order the paths were supplied, because a caller
-        // reading the list wants the path that never reached the Shell before the ones that did.
-        var merged = new List<RecycleFailure>(gateFailures.Count + result.Failures.Count);
-        merged.AddRange(gateFailures);
-        merged.AddRange(result.Failures);
-
-        return result
-            .WithFailures(merged)
-            .WithPermanentlyDeleted([.. permanentlyDeleted, .. result.PermanentlyDeletedPaths]);
     }
 
     /// <summary>
@@ -221,12 +183,11 @@ public static class FileRecycler
     /// </summary>
     /// <remarks>
     /// One trip rather than two. Validation is minutes of filesystem work on a large batch and belongs on
-    /// the pool whatever the backend is; the recycle is seconds of file moves. Running them on the same
-    /// thread costs nothing and saves a scheduling round trip, and nothing about validation is
-    /// backend-specific, so it stays in <see cref="BuildTargets"/> rather than moving into a backend.
+    /// the pool; the recycle is seconds of file moves. Running them on the same thread costs nothing and
+    /// saves a scheduling round trip.
     /// </remarks>
     /// <returns>The outcome, with the volume gate's own verdicts merged in.</returns>
-    private static RecycleBinResult MoveNatively(
+    private static RecycleBinResult RecycleBatch(
         IReadOnlyList<string?> filePaths,
         RecycleBinOptions options,
         CancellationToken cancellationToken)
@@ -238,7 +199,7 @@ public static class FileRecycler
             return RecycleBinResult.Create([], permanentlyDeleted, gateFailures, TimeSpan.Zero);
         }
 
-        var result = NativeRecycleBinBackend.Recycle(targets, options, cancellationToken);
+        var result = NativeRecycleRunner.Run(targets, options, cancellationToken);
 
         if (gateFailures.Count == 0 && permanentlyDeleted.Count == 0)
         {
@@ -358,11 +319,11 @@ public static class FileRecycler
     /// batch — every other root's paths are carried through untouched.
     /// </para>
     /// </remarks>
-    /// <param name="targets">Validated targets, reduced to the ones the Shell may be handed.</param>
+    /// <param name="targets">Validated targets, reduced to the ones that may be recycled.</param>
     /// <param name="failures">
     /// Collects one failure per refused path and one per path the file system would not remove, after the
     /// validation failures. A path listed twice is acted on once, as
-    /// <see cref="RecycleOperationRunner.CollapseEquivalentPaths"/> would have recycled it once.
+    /// <see cref="RecycleTarget.CollapseEquivalent"/> would have recycled it once.
     /// </param>
     /// <param name="permanentlyDeleted">
     /// Collects the paths removed outright rather than handed over, which is what
@@ -422,15 +383,15 @@ public static class FileRecycler
             }
 
             // Asked once per volume, not once per path: every target under this root is refused for the
-            // same reason and carries the same code.
-            var hResult = RefusalHResult(root, status.Reason);
+            // same reason. The refusal is settled from configuration, so it carries no code: 0 is what
+            // RecycleFailure.HResult documents for a refusal nothing reported.
+            const int hResult = 0;
 
             foreach (var target in group)
             {
                 // The first spelling of a path is the one reported, because that is what
-                // RecycleOperationRunner.CollapseEquivalentPaths keeps when the Shell is reached instead.
-                // Recording the second would make a caller who listed a path twice see two failures for
-                // one file, which the runner would never have done with the same batch.
+                // RecycleTarget.CollapseEquivalent keeps. Recording the second would make a caller
+                // who listed a path twice see two failures for one file.
                 if (!(refused ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase)).Add(target.ShellPath))
                 {
                     continue;
@@ -481,9 +442,9 @@ public static class FileRecycler
     /// </summary>
     /// <param name="group">Every target on one volume root, in batch order.</param>
     /// <param name="removed">
-    /// Collects the shell paths acted on, so the batch can be reduced to what the Shell is left to do.
+    /// Collects the paths acted on, so the batch can be reduced to what is left to do.
     /// The first spelling of a path is the one acted on, so a caller who listed one path twice reads one
-    /// removal and one record — what <see cref="RecycleOperationRunner.CollapseEquivalentPaths"/> would
+    /// removal and one record — what <see cref="RecycleTarget.CollapseEquivalent"/> would
     /// have recycled once.
     /// </param>
     /// <param name="permanentlyDeleted">Receives the caller's own spelling of each path confirmed gone.</param>
@@ -512,35 +473,6 @@ public static class FileRecycler
             // gave visible rather than blaming the volume they were never asked about.
             failures.Add(new RecycleFailure(target.InputPath, hResult, attempts: 0, RecycleFailureStage.PermanentDeleteFailed));
         }
-    }
-
-    /// <summary>
-    /// The code a refusal carries: the Shell's own where the Shell named the volume, and nothing where the
-    /// refusal was settled from configuration.
-    /// </summary>
-    /// <remarks>
-    /// Only <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/> is a refusal the Shell
-    /// itself stated, so it is the only reason worth asking it a second time about — and the only one with
-    /// a code to carry. The rest are settled from configuration, which is exactly what
-    /// <see cref="RecycleFailure.HResult"/> documents as <c>0</c>: there is no code of the Shell's to
-    /// report. <see cref="RecycleBinAvailabilityReason.Indeterminate"/> is in that group even though its
-    /// probe did reach the Shell, because the probe found a bin — a volume the Shell finds a bin on has
-    /// no failure code to hand over.
-    /// </remarks>
-    private static int RefusalHResult(string volumeRoot, RecycleBinAvailabilityReason reason)
-    {
-        if (reason != RecycleBinAvailabilityReason.NoRecycleBinOnVolume)
-        {
-            return 0;
-        }
-
-        var hResult = RecycleBinCounter.QueryHResult(volumeRoot);
-
-        // A bin that appeared between the probe and this query means the reason the record was made for
-        // no longer holds. Reporting 0 rather than a success code is the honest answer to "what did the
-        // Shell refuse with" — it refused nothing — and 0 is what a caller already reading the severity
-        // bit is told to expect from a refusal the Shell never made.
-        return hResult < 0 ? hResult : 0;
     }
 
     private static RecycleFailure? TryCreateTarget(string? rawPath, out RecycleTarget? target)

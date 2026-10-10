@@ -44,16 +44,14 @@ public sealed class RecycleBinOptions
     /// <c>$RECYCLE.BIN</c> on the item's volume. The default is <c>true</c>.
     /// </summary>
     /// <remarks>
-    /// This rejects a delete the Shell itself placed elsewhere. It cannot prove a file reached the
-    /// Recycle Bin in the other direction: the Shell reports no location at all for some successful
-    /// deletes, and a missing location cannot be distinguished from a delete the Shell completed
-    /// without recycling. Turning this off trades that check for slightly less work per item.
+    /// This rejects a delete placed outside the bin. It cannot prove a file reached the
+    /// Recycle Bin in the other direction: no location is reported at all for some successful
+    /// deletes, and a missing location cannot be distinguished from a completed delete.
+    /// Turning this off trades that check for slightly less work per item.
     /// <para>
-    /// It applies to <see cref="RecycleBinBackend.WinApi"/> only, and that is a property of the backend
-    /// rather than a gap in it. The Shell chooses the destination and can report one that is not in the
-    /// bin, which is the only thing this checks. The native backend chooses the destination itself, so
-    /// there is no reported location to disagree with anything, and the same question it would ask is true
-    /// of every path by construction — it is asserted in a Debug build instead of run per item.
+    /// The engine chooses the destination itself, so there is no reported location to disagree with
+    /// anything, and the same question it would ask is true of every path by construction — it is
+    /// asserted in a Debug build instead of run per item.
     /// </para>
     /// </remarks>
     public bool VerifyRecycleBinReceipt { get; init; } = true;
@@ -98,27 +96,6 @@ public sealed class RecycleBinOptions
     public NoRecycleBinAction NoRecycleBinAction { get; init; } = NoRecycleBinAction.Throw;
 
     /// <summary>
-    /// How this operation reaches the Recycle Bin. The default is <see cref="RecycleBinBackend.WinApi"/>,
-    /// which is what every call did before the property existed.
-    /// </summary>
-    /// <remarks>
-    /// The default is 0 and stays there. A caller who has never heard of
-    /// <see cref="RecycleBinBackend.Native"/> gets the Shell path, on any Windows build this library
-    /// supports, which is the only combination that is safe to hand to someone who did not choose.
-    /// <para>
-    /// Any other value is treated as <see cref="RecycleBinBackend.WinApi"/>, including one cast from an
-    /// integer that this version does not define. Falling back rather than raising is deliberate: the
-    /// property is a <c>init</c> setter, so an unknown value can only arrive from a caller who cast one,
-    /// and the two backends answer the same call differently — refusing to answer is not an option a
-    /// library can offer without deciding what the caller would have wanted instead. The Shell path is
-    /// what an unrecognised setting falls back to because it is the one every call took before the
-    /// property existed, and it is available on every Windows build this library supports, which
-    /// <see cref="RecycleBinBackend.Native"/> is not on older ones.
-    /// </para>
-    /// </remarks>
-    public RecycleBinBackend Backend { get; init; } = RecycleBinBackend.WinApi;
-
-    /// <summary>
     /// Whether a listing reads every Recycle Bin record up front instead of reading one when a caller
     /// first asks for its details. The default is <c>false</c>.
     /// </summary>
@@ -134,9 +111,7 @@ public sealed class RecycleBinOptions
     /// pays the same cost either way, spread over the listing rather than over its own loop.
     /// </para>
     /// <para>
-    /// It applies to <see cref="RecycleBinBackend.Native"/>, which is the only backend with records to
-    /// read. The Shell reports both fields during enumeration whatever this is set to, so there the
-    /// property changes nothing. It says nothing about <see cref="RecycleBin.EmptyAsync"/>, which does not
+    /// It says nothing about <see cref="RecycleBin.EmptyAsync"/>, which does not
     /// read records for entries whose payload is present.
     /// </para>
     /// </remarks>
@@ -166,7 +141,6 @@ public sealed class RecycleBinOptions
         LongPathFailureAction = LongPathFailureAction,
         NoRecycleBinAction = NoRecycleBinAction,
         MaxShellPathLength = Math.Max(1, MaxShellPathLength),
-        Backend = Backend,
         PreloadItemDetails = PreloadItemDetails
     };
 

@@ -39,11 +39,8 @@ public sealed record RecycleBinEmptyResult
     /// Number of entries that left the Recycle Bin.
     /// </summary>
     /// <remarks>
-    /// Measured, never taken from a success code: <see cref="RecycleBinBackend.WinApi"/> queries each
-    /// volume before and after and reports the difference, because the Shell reports success whether it
-    /// removed ten entries or none; <see cref="RecycleBinBackend.Native"/> sums the sizes already recorded
-    /// in the entries it is about to delete, which is exact. Never negative — a bin that grew while a
-    /// measured empty ran is reported as zero rather than as a negative removal.
+    /// Measured, never taken from a success code: every entry's own record carries its size, so the
+    /// totals are summed from the entries being deleted. Never negative.
     /// </remarks>
     public long ItemsRemoved { get; }
 

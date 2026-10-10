@@ -66,7 +66,7 @@ internal static class NativeBinEmptier
         {
             if (!Directory.Exists(volumeRoot))
             {
-                failures.Add(new RecycleFailure(volumeRoot, RecycleBinCounter.UnreadableVolume, 1, RecycleFailureStage.Enumeration));
+                failures.Add(new RecycleFailure(volumeRoot, RecycleBinVolumeState.UnreadableVolume, 1, RecycleFailureStage.Enumeration));
                 return (0, 0);
             }
 

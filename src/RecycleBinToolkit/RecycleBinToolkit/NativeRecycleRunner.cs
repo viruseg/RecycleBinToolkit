@@ -85,7 +85,7 @@ internal static class NativeRecycleRunner
             return RecycleBinResult.Create([], [], stopwatch.Elapsed);
         }
 
-        var collapsed = RecycleOperationRunner.CollapseEquivalentPaths(targets);
+        var collapsed = RecycleTarget.CollapseEquivalent(targets);
         var pending = collapsed;
         var recycled = new List<string>(collapsed.Count);
         var failuresByPath = new Dictionary<string, RecycleFailure>(collapsed.Count, StringComparer.OrdinalIgnoreCase);
