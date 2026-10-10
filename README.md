@@ -821,17 +821,23 @@ backend reads and writes it directly.
 | `NoRecycleBinAction` | applies | **applies, unchanged** |
 | `ItemsRemoved`, `BytesFreed` from an empty | measured before and after with `SHQueryRecycleBin` | exact, summed from the records being deleted |
 | Cancelling an empty | always finishes | stops between entries and raises |
-| Recycle throughput | measured **206 files/s** | measured **678 files/s** |
+| Recycle throughput, 3,000 files of 64 KiB | measured **213 files/s** | measured **616 files/s** |
 | Reading | 291 ms for 3,000 entries | measured **64 ms** for the same |
 | Needs a particular Windows build | no | **10.0.14393 or later** |
 
-**Throughput, and why reading and writing are not alike.** The figures above are 3,000 files of 64 KiB
-and 3,000 records on the same machine, one volume at a time. Reading scales: it changes nothing about
-the directory it reads, so eight threads finish four and a half times sooner. Writing does not, and the
-reason is a directory — a Recycle Bin has exactly one per volume, and every record written and every
-payload moved lands in it. The same recycling measured 542 files/s on one thread and 189 on eight, on a
-solid-state volume, so the native backend moves its paths one at a time on purpose. Reading a bin in
-parallel is where the concurrency is; putting files into one is not.
+**Throughput, and why reading and writing are not alike.** The throughput figure is the median of
+three runs of a 3,000-file batch on `E:`, and the reading figure is one such batch on `C:` — the ratio
+is the figure to trust, because the Shell path on the same machine drifts by ten percent between runs and
+a single measurement flatters the native path. Four-kilobyte files recycled at 583 and 662 files/s,
+within the run-to-run spread, which says the cost is filesystem round trips rather than bandwidth.
+
+Reading scales: it changes nothing about the directory it reads, so eight threads finish four and a half
+times sooner. Writing does not, and the reason is a directory — a Recycle Bin has exactly one per
+volume, and every record written and every payload moved lands in it. The same recycling measured
+542 files/s on one thread and 189 on eight, on a solid-state volume, so the native backend moves its
+paths one at a time on purpose. Reading a bin in parallel is where the concurrency is; putting files
+into one is not. What makes the native path faster is the number of round trips per file — three, against
+the Shell's six COM calls per item — not the number of threads, which is why that is what it optimises.
 
 **The version requirement is a refusal, not a warning.** Windows 10 build 14393 is the first Shell
 that reads a version 2 index record. An older Shell does not reject one — it reads it as something it

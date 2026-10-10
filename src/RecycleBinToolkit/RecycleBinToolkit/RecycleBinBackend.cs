@@ -38,9 +38,9 @@ public enum RecycleBinBackend
     /// backend writes. That requirement is refused with a <see cref="PlatformNotSupportedException"/> and
     /// <see cref="RecycleBinOptions.ThrowOnError"/> does not suppress it.
     /// <para>
-    /// Measured against the Shell path on this machine, recycling a batch of three thousand 64 KiB files:
-    /// 678 files per second here against 206 through <c>IFileOperation</c> on a mechanical volume, and
-    /// 597 against 218 on a solid-state one.
+    /// Measured against the Shell path on this machine, recycling a batch of three thousand 64 KiB files,
+    /// median of three runs: 616 files per second here against 213 through <c>IFileOperation</c> on a
+    /// mechanical volume, and 625 against 229 on a solid-state one.
     /// </para>
     /// <para>
     /// Reading scales and writing does not, and that is not a limitation of this library but of what a

@@ -94,19 +94,31 @@ it is the opposite of one.
 
 Reading and emptying behave as the seek-penalty rule in `VolumeSeekPenalty` says. **Recycling behaves
 the other way round, and no amount of threading fixes it.** A Recycle Bin is one directory per volume —
-`<volume>$RECYCLE.BIN<SID>` — and a directory is the one thing a file system cannot take concurrent
+`<volume>$RECYCLE.BIN\<SID>\` — and a directory is the one thing a file system cannot take concurrent
 writers on. Every record written and every payload moved lands in that same directory, so eight threads
 contend on it and finish two and a half times slower than one. `NativeRecycleRunner` is therefore
 single-threaded on purpose, and a comment in it says so with these numbers.
 
+The threading table was taken on the code as it stood at that sweep; the throughput figures below were
+taken after the allocation work that followed. The table's claim is the shape — reading gains, recycling
+loses, both on a solid-state volume — and that shape is a property of a directory rather than of this
+library's speed. Read the two tables as different moments rather than as one run.
+
 Two measurements that are worth not re-deriving:
 
-- **The same operation is faster on an SSD by about nothing.** Recycling 3,000 files ran at 678 files/s
-  on `E:` (mechanical) and 597 on `C:` (solid-state) — the cost is filesystem round trips, not bandwidth.
-- **The native backend beats the Shell path on this machine by 3.3x on a mechanical volume and 2.7x on a
-  solid-state one** (678 against 206 files/s, 597 against 218). That margin comes from fewer round trips
-  per path, not from threads, and it is why the optimisation effort went into syscall count: the recycle
-  path does three — one `FileInfo` query in validation, one create-and-write for the record, one move.
+- **The same operation is faster on an SSD by about nothing.** Recycling 3,000 files ran at 616 files/s
+  on `E:` (mechanical) and 625 on `C:` (solid-state) — the cost is filesystem round trips, not bandwidth.
+  Four-kilobyte files recycled at 583 and 662, within the run-to-run spread, so the file size is not
+  part of the cost either.
+- **The native backend beats the Shell path on this machine by 2.7x to 2.9x** — 616 against 213 files/s
+  on `E:`, 625 against 229 on `C:`. That margin comes from fewer round trips per path, not from threads,
+  and it is why the optimisation effort went into syscall count: the recycle path does three — one
+  `FileInfo` query in validation, one create-and-write for the record, one move.
+
+  Every figure above is the median of three runs of a 3,000-file batch, and the single-sample numbers
+  that came before them read roughly 10% higher on both paths. A ratio is the trustworthy figure and an
+  absolute one is not: the Shell path on this machine drifts between runs, so a lone measurement makes
+  the native backend look faster than a repeated one does.
 
 Do not add parallelism to the recycle path. If a future measurement on some other hardware says
 otherwise, that measurement goes here first, and the constant it changed goes in the same commit.
