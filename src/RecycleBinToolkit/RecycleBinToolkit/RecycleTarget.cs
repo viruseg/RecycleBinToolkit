@@ -26,11 +26,18 @@ internal readonly struct RecycleTarget
     /// The same location without the <c>\\?\</c> prefix. The Shell's own path parser rejects the
     /// extended-length form with <c>E_INVALIDARG</c>, so this is what it receives.
     /// </param>
-    internal RecycleTarget(string inputPath, string fullPath, string shellPath)
+    /// <param name="attributes">What the filesystem said about the path when it was validated.</param>
+    /// <param name="size">
+    /// The item's size in bytes as it was then, or 0 for a directory and for a path that could not be
+    /// measured.
+    /// </param>
+    internal RecycleTarget(string inputPath, string fullPath, string shellPath, FileAttributes attributes, long size)
     {
         InputPath = inputPath;
         FullPath = fullPath;
         ShellPath = shellPath;
+        Attributes = attributes;
+        Size = size;
     }
 
     /// <summary>The caller's path, kept verbatim so diagnostics point at what they wrote.</summary>
@@ -49,6 +56,31 @@ internal readonly struct RecycleTarget
     public string ShellPath { get; }
 
     /// <summary>
+    /// What the filesystem said about the path when it was validated.
+    /// </summary>
+    /// <remarks>
+    /// Validation has to ask whether the path is there, and the answer it gets back already says whether
+    /// it is a directory. Carrying that forward costs four bytes on a struct that is already inline in a
+    /// list, and saves the native backend a second query per path to learn the same fact — which on a
+    /// batch of twenty thousand is twenty thousand filesystem round trips that already happened once.
+    /// </remarks>
+    public FileAttributes Attributes { get; }
+
+    /// <summary>Whether the item is a directory, which decides whether it is moved as one.</summary>
+    public bool IsDirectory => (Attributes & FileAttributes.Directory) != 0;
+
+    /// <summary>
+    /// The item's size in bytes when it was validated, or 0 for a directory.
+    /// </summary>
+    /// <remarks>
+    /// Carried rather than asked for again, because validation already asked and the answer it got back
+    /// included the length: one <see cref="FileInfo"/> reports attributes and size together, so asking a
+    /// second time is a second round trip for a number already in hand. The record the native backend
+    /// writes needs this, which is what turns it from a query of its own into a field of the target.
+    /// </remarks>
+    public long Size { get; }
+
+    /// <summary>
     /// Returns a copy of this target that hands the Shell a different form of the same location.
     /// </summary>
     /// <remarks>
@@ -56,7 +88,7 @@ internal readonly struct RecycleTarget
     /// because nothing moved: this is the same file under a name the Shell can parse.
     /// </remarks>
     /// <param name="shellPath">Replacement for <see cref="ShellPath"/>.</param>
-    internal RecycleTarget WithShellPath(string shellPath) => new(InputPath, FullPath, shellPath);
+    internal RecycleTarget WithShellPath(string shellPath) => new(InputPath, FullPath, shellPath, Attributes, Size);
 
     /// <summary>
     /// Returns a copy of this target that names where the item actually is now, after being moved.
@@ -69,7 +101,7 @@ internal readonly struct RecycleTarget
     /// never was, and a move back would be asked to move a path onto itself.
     /// </remarks>
     /// <param name="movedFullPath">Where the item now is, in the form the file APIs take.</param>
-    internal RecycleTarget WithMovedTo(string movedFullPath) => new(InputPath, movedFullPath, StripExtendedPrefix(movedFullPath));
+    internal RecycleTarget WithMovedTo(string movedFullPath) => new(InputPath, movedFullPath, StripExtendedPrefix(movedFullPath), Attributes, Size);
 
     /// <summary>
     /// Whether a path names its volume by GUID rather than by a drive letter or a mount point.

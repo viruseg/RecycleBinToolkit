@@ -281,7 +281,7 @@ internal static class WorkerSuite
 
         foreach (var file in files)
         {
-            targets.Add(new RecycleTarget(file, file, file));
+            targets.Add(new RecycleTarget(file, file, file, FileAttributes.Normal, 0));
         }
 
         return targets;

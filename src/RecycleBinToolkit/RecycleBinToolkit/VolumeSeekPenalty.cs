@@ -52,6 +52,13 @@ internal static class VolumeSeekPenalty
     /// </summary>
     private const uint DesiredAccess = 0;
 
+    /// <summary>
+    /// How many volumes' answers are remembered. A machine has tens of volumes, not thousands, so the bound
+    /// is never reached in practice — and it exists so a long-lived process handed an unbounded series of
+    /// root strings cannot grow this without limit.
+    /// </summary>
+    private const int CacheLimit = 64;
+
     private static readonly ConcurrentDictionary<string, VolumeStorageKind> Cache =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -65,8 +72,25 @@ internal static class VolumeSeekPenalty
     /// local volume device — <c>\\.\</c> resolves against this machine — and its cost is network latency,
     /// which parallelising makes worse rather than better.
     /// </remarks>
-    internal static VolumeStorageKind Classify(string volumeRoot) =>
-        Cache.GetOrAdd(volumeRoot, static root => RecycleBinVolumeState.IsUncRoot(root) ? VolumeStorageKind.Unknown : Query(root));
+    internal static VolumeStorageKind Classify(string volumeRoot)
+    {
+        if (Cache.TryGetValue(volumeRoot, out var known))
+        {
+            return known;
+        }
+
+        var answered = RecycleBinVolumeState.IsUncRoot(volumeRoot) ? VolumeStorageKind.Unknown : Query(volumeRoot);
+
+        // Dropped whole rather than evicted one at a time: an answer is a device control, and re-asking one
+        // volume to save the memory of another is a worse trade than a rebuild nobody can see.
+        if (Cache.Count >= CacheLimit)
+        {
+            Cache.Clear();
+        }
+
+        Cache[volumeRoot] = answered;
+        return answered;
+    }
 
     /// <summary>
     /// How many threads may work on a volume's Recycle Bin at once.

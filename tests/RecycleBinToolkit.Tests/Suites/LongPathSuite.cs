@@ -82,7 +82,7 @@ internal static class LongPathSuite
 
         var targets = new List<RecycleTarget>
         {
-            new(plainPath, extendedPath, RecycleTarget.StripExtendedPrefix(extendedPath))
+            new(plainPath, extendedPath, RecycleTarget.StripExtendedPrefix(extendedPath), FileAttributes.Normal, 0)
         };
 
         using var cancelled = new CancellationTokenSource();
@@ -222,7 +222,7 @@ internal static class LongPathSuite
 
         // The same two steps the runner performs when it stages: the target is told where the item
         // actually is, and the entry carries where it came from.
-        var target = new RecycleTarget(originalPath, originalPath, originalPath);
+        var target = new RecycleTarget(originalPath, originalPath, originalPath, FileAttributes.Normal, 0);
         var moved = typeof(RecycleTarget)
             .GetMethod("WithMovedTo", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(target, [stagedPath])!;

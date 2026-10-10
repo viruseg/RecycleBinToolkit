@@ -23,8 +23,13 @@ internal static class NativeBinSuite
     /// <summary>Enough to be past the Shell's measured 260-character limit.</summary>
     private const int PastMaxPath = 300;
 
-    /// <summary>Far enough that a version 2 record cannot be decoded from a 1 KB stack buffer.</summary>
-    private const int FarPastMaxPath = 500;
+/// <summary>
+    /// Far enough that a version 2 record cannot be decoded from a fixed read buffer, which is where the
+    /// rented read begins. Comfortably past rather than barely: the buffer is 1024 bytes and a record of
+    /// this size needs about 1500, so a fixture that sat on the boundary would stop exercising the branch
+    /// the moment the buffer grew by a character.
+    /// </summary>
+    private const int FarPastMaxPath = 700;
 
     /// <summary>Content every generated file carries, so a restore can be compared byte for byte.</summary>
     private static readonly byte[] Content = CreateContent();
@@ -738,7 +743,7 @@ internal static class NativeBinSuite
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for an item to be restored out of");
 
-        var path = CreateDeepFile(PastMaxPath);
+var path = CreateDeepFile(PastMaxPath);
         var original = await File.ReadAllBytesAsync(path, context.CancellationToken).ConfigureAwait(false);
 
         var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
@@ -751,7 +756,9 @@ internal static class NativeBinSuite
         Directory.CreateDirectory(Path.GetDirectoryName(item.OriginalPath)!);
         File.Move(item.RecycledPath, item.OriginalPath);
 
-        Check.True(File.Exists(path), "the payload is back where it was deleted from");
+        // The last component only. A deep path in a failure message is a line no one can read and a length
+        // this suite is not meant to be printing, and the assertion is about the bytes either way.
+        Check.True(File.Exists(path), $"the payload is back where it was deleted from ({Path.GetFileName(path)}, {path.Length} characters)");
 
         var restored = await File.ReadAllBytesAsync(path, context.CancellationToken).ConfigureAwait(false);
         Check.True(original.AsSpan().SequenceEqual(restored),

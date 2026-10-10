@@ -30,29 +30,27 @@ internal static class NativeBinLayout
     /// How many characters the random part is. Windows uses six, so an entry written here is the same
     /// shape as one it wrote.
     /// </summary>
-    private const int StemLength = 6;
-
-    /// <summary>
-    /// How many candidates to try before giving up on a free name. Thirty-six to the sixth is about two
-    /// billion, so exhausting thirty-six attempts is not a collision — it is a broken directory.
-    /// </summary>
-    private const int StemAttempts = 36;
-
-    private static readonly Lazy<string> LazyCurrentSid = new(() =>
-        WindowsIdentity.GetCurrent().User?.Value
-        ?? throw new InvalidOperationException(
-            "This process has no Windows identity, so there is no Recycle Bin to write to. The Shell reads a " +
-            "per-user directory and a process without an identity belongs to none."));
+    internal const int StemLength = 6;
 
     /// <summary>
     /// The SID of the user this process runs as, which names the one bin directory this library reads and
     /// writes. The same one the Shell folder shows an unelevated caller.
     /// </summary>
     /// <remarks>
-    /// Read once per process. <see cref="WindowsIdentity.GetCurrent()"/> is not free, and the answer
-    /// cannot change while the process lives.
+    /// Asked fresh each time rather than remembered for the life of the process. A host that impersonates
+    /// — IIS, a pooled application switching identity between requests — would otherwise pin every later
+    /// request to whichever identity happened to be current the first time, and write one user's files into
+    /// another user's bin. It is asked once per volume per operation rather than once per path, which
+    /// makes the cost one handle per volume and not one per file.
     /// </remarks>
-    internal static string CurrentSid => LazyCurrentSid.Value;
+    /// <exception cref="InvalidOperationException">
+    /// The process has no Windows identity, so there is no Recycle Bin that belongs to it.
+    /// </exception>
+    internal static string CurrentSid =>
+        WindowsIdentity.GetCurrent().User?.Value
+        ?? throw new InvalidOperationException(
+            "This process has no Windows identity, so there is no Recycle Bin to write to. The Shell reads a " +
+            "per-user directory and a process without an identity belongs to none.");
 
     /// <summary>
     /// The bin directory of a volume, composed without touching the filesystem.
@@ -80,48 +78,34 @@ internal static class NativeBinLayout
     }
 
     /// <summary>
-    /// A pair of names nothing is using yet, one for the record and one for the payload.
+    /// The random part an entry two names share.
     /// </summary>
-    /// <param name="binDirectory">The bin directory to look in.</param>
-    /// <param name="extension">
-    /// The deleted item's own extension, including the dot, or an empty string for one without.
-    /// </param>
-    /// <param name="indexPath">Receives the path the record is to be written to.</param>
-    /// <param name="payloadPath">Receives the path the payload is to be moved to.</param>
-    /// <returns><see langword="true"/> when a free pair was found.</returns>
+    /// <param name="destination">Receives <see cref="StemLength"/> characters from the alphabet Windows uses.</param>
     /// <remarks>
-    /// Both names are checked, not just the record's. A payload left behind by a crash carries no record,
-    /// so a generator that only avoided existing records would eventually move a new item onto one and
-    /// destroy it.
+    /// Nothing is probed, and that is the whole point. Both names this becomes are refused by the
+    /// filesystem if they are taken — the record is created with <see cref="FileMode.CreateNew"/>, which
+    /// fails rather than overwriting, and a move onto a name that exists fails rather than replacing it.
+    /// A payload left behind by a crash with no record of its own therefore cannot be overwritten and
+    /// cannot be silently joined to the wrong record; it costs the caller one path that did not move, and
+    /// the caller gives that path a fresh name.
+    /// <para>
+    /// Asking first would be a filesystem round trip on every path in the batch to avoid that, against a
+    /// collision of about one name in thirty-six to the sixth — two in a billion. That trade is not close.
+    /// </para>
     /// </remarks>
-    internal static bool TryCreatePair(
-        string binDirectory,
-        string extension,
-        out string indexPath,
-        out string payloadPath)
-    {
-        // One buffer for every attempt: a stack allocation inside the loop would not be released until the
-        // method returns, which on a directory that somehow has thirty-six taken names would be thirty-six
-        // live buffers for no reason.
-        Span<char> stem = stackalloc char[StemLength];
+    internal static void NextStem(Span<char> destination) => NextStemInto(destination);
 
-        for (var attempt = 0; attempt < StemAttempts; attempt++)
-        {
-            NextStemInto(stem);
+    /// <summary>
+    /// The path a record of the given stem is to be written to.
+    /// </summary>
+    internal static string IndexPath(string binDirectory, string stem, string extension) =>
+        Path.Combine(binDirectory, $"${IndexPrefix}{stem}{extension}");
 
-            indexPath = Path.Combine(binDirectory, $"${IndexPrefix}{stem}{extension}");
-            payloadPath = Path.Combine(binDirectory, $"${PayloadPrefix}{stem}{extension}");
-
-            if (!File.Exists(indexPath) && !File.Exists(payloadPath) && !Directory.Exists(payloadPath))
-            {
-                return true;
-            }
-        }
-
-        indexPath = string.Empty;
-        payloadPath = string.Empty;
-        return false;
-    }
+    /// <summary>
+    /// The path the payload of the given stem is to be moved to.
+    /// </summary>
+    internal static string PayloadPath(string binDirectory, string stem, string extension) =>
+        Path.Combine(binDirectory, $"${PayloadPrefix}{stem}{extension}");
 
     /// <summary>
     /// The payload path belonging to an index path.

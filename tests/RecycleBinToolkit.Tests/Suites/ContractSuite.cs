@@ -373,7 +373,7 @@ internal static class ContractSuite
 
         foreach (var shellPath in shellPaths)
         {
-            targets.Add(new RecycleTarget(shellPath, shellPath, RecycleTarget.StripExtendedPrefix(shellPath)));
+            targets.Add(new RecycleTarget(shellPath, shellPath, RecycleTarget.StripExtendedPrefix(shellPath), FileAttributes.Normal, 0));
         }
 
         return targets;
@@ -400,7 +400,7 @@ internal static class ContractSuite
         const int BytesPerTargetBudget = 8;
 
         RecycleTarget[] warm = new RecycleTarget[1];
-        warm[0] = new RecycleTarget("a", "b", "c");
+        warm[0] = new RecycleTarget("a", "b", "c", FileAttributes.Normal, 0);
         GC.KeepAlive(warm);
 
         // The array is allocated before the measurement starts, so what is counted is the cost of
@@ -414,7 +414,7 @@ internal static class ContractSuite
         var before = GC.GetTotalAllocatedBytes(precise: true);
         for (var i = 0; i < Count; i++)
         {
-            targets[i] = new RecycleTarget("input", "full", "shell");
+            targets[i] = new RecycleTarget("input", "full", "shell", FileAttributes.Normal, 0);
         }
 
         var allocated = GC.GetTotalAllocatedBytes(precise: true) - before;
@@ -921,7 +921,7 @@ var kept = new RecycleBinOptions
 
     private static Task TargetKeepsInputAndFullPath(TestContext context)
     {
-        var target = new RecycleTarget(@"sub\..\a.bin", @"W:\a.bin", @"W:\a.bin");
+        var target = new RecycleTarget(@"sub\..\a.bin", @"W:\a.bin", @"W:\a.bin", FileAttributes.Normal, 0);
 
         Check.Equal(@"sub\..\a.bin", target.InputPath, "the caller's path is preserved verbatim for diagnostics");
         Check.Equal(@"W:\a.bin", target.FullPath, "the normalised path is kept for Shell calls");
@@ -935,7 +935,7 @@ var kept = new RecycleBinOptions
     /// </summary>
     private static Task TargetCarriesBothPathForms(TestContext context)
     {
-        var extended = new RecycleTarget(@"\\?\W:\long.bin", @"\\?\W:\long.bin", @"W:\long.bin");
+        var extended = new RecycleTarget(@"\\?\W:\long.bin", @"\\?\W:\long.bin", @"W:\long.bin", FileAttributes.Normal, 0);
 
         Check.Equal(@"\\?\W:\long.bin", extended.FullPath, "the file-API form keeps the extended-length prefix");
         Check.Equal(@"W:\long.bin", extended.ShellPath, "the Shell form has no prefix");

@@ -135,9 +135,9 @@ internal static class RunnerSuite
 
         var targets = new List<RecycleTarget>
         {
-            new(recycled, recycled, recycled),
-            new(locked, locked, locked),
-            new(absent, absent, absent)
+            new(recycled, recycled, recycled, FileAttributes.Normal, 0),
+            new(locked, locked, locked, FileAttributes.Normal, 0),
+            new(absent, absent, absent, FileAttributes.Normal, 0)
         };
 
         var options = new RecycleBinOptions
@@ -386,7 +386,7 @@ internal static class RunnerSuite
         workspace.Recreate();
         var files = workspace.CreateRandomFiles(1, 4096);
 
-        var targets = new List<RecycleTarget> { new(files[0], files[0], files[0]), new(files[0], files[0], files[0]) };
+        var targets = new List<RecycleTarget> { new(files[0], files[0], files[0], FileAttributes.Normal, 0), new(files[0], files[0], files[0], FileAttributes.Normal, 0) };
 
         var result = StaThread.Run(() =>
         {
@@ -433,7 +433,7 @@ internal static class RunnerSuite
 
         foreach (var file in files)
         {
-            targets.Add(new RecycleTarget(file, file, file));
+            targets.Add(new RecycleTarget(file, file, file, FileAttributes.Normal, 0));
         }
 
         return targets;

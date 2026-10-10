@@ -87,8 +87,14 @@ internal static class NativeBinEmptier
         // own size is not counted, which is what Windows itself records for one and what the counter the
         // caller compares against also leaves out.
         var sizes = new long[records.Length];
-        var options = new ParallelOptions { MaxDegreeOfParallelism = VolumeSeekPenalty.DegreeOfParallelism(volumeRoot) };
+        var options = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = VolumeSeekPenalty.DegreeOfParallelism(volumeRoot),
+            CancellationToken = cancellationToken
+        };
 
+        // The token rides on the measuring pass as well as the sweep. A cancelled empty that still opened
+        // and read every entry before noticing would take as long as the empty it was meant to abandon.
         Parallel.For(0, records.Length, options, index =>
             sizes[index] = SizeOf(records[index]));
 

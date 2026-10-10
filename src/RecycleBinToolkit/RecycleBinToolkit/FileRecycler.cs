@@ -544,40 +544,100 @@ public static class FileRecycler
             return new RecycleFailure(rawPath, 0, 0, RecycleFailureStage.VolumeGuidPathNotAddressable);
         }
 
-        if (!Exists(fullPath))
+        if (!TryDescribe(fullPath, out var attributes, out var size))
         {
             return new RecycleFailure(rawPath, 0, 0, RecycleFailureStage.PathValidation);
         }
 
-        target = new RecycleTarget(rawPath, fullPath, RecycleTarget.StripExtendedPrefix(fullPath));
+        target = new RecycleTarget(rawPath, fullPath, RecycleTarget.StripExtendedPrefix(fullPath), attributes, size);
         return null;
     }
 
     /// <summary>
-    /// Whether a path is there at all, file or directory.
+    /// Whether a path is there at all, file or directory, and what it is.
     /// </summary>
+    /// <param name="path">Full path to describe.</param>
+    /// <param name="attributes">Receives what the filesystem said, or <c>Directory</c> when only a probe knows.</param>
+    /// <param name="size">Receives the item's length, or 0 for a directory and for a path that could not be measured.</param>
+    /// <returns><see langword="true"/> when the path is there.</returns>
     /// <remarks>
-    /// One question rather than two. <c>File.Exists(a) || Directory.Exists(a)</c> costs two filesystem
-    /// probes for every directory in the batch, because the file probe has to fail first, and it is
-    /// asked once per path before the Shell is involved — 20,000 paths measured at 11 ms each, which is
-    /// 220 seconds of the caller's thread before the first await.
+    /// One question, answering everything validation needs. <c>File.Exists(a) || Directory.Exists(a)</c>
+    /// costs two filesystem probes for every directory in the batch, because the file probe has to fail
+    /// first, and it is asked once per path before the Shell is involved — 20,000 paths measured at 11 ms
+    /// each, which is 220 seconds of the caller's thread before the first await.
     /// <para>
-    /// Asking for the attributes instead answers both at once, since a directory reports
-    /// <see cref="FileAttributes.Directory"/> and a file does not. It throws where the probes returned
-    /// false, so the fallbacks are what keep a path the file system would not describe from being reported
-    /// as absent.
+    /// <see cref="FileInfo"/> rather than <see cref="File.GetAttributes(string)"/>, and that is the whole reason
+    /// the length comes for free: one status query reports attributes, size and timestamps together, and a
+    /// separate call for the length would be a second round trip for a number the first one already
+    /// carried. The native backend writes that number into the Recycle Bin's index record, so a batch of
+    /// twenty thousand files pays for twenty thousand queries rather than forty thousand.
+    /// </para>
+    /// <para>
+    /// It throws where the probes returned false, so the fallbacks are what keep a path the file system
+    /// would not describe from being reported as absent — and they report the answer they can.
     /// </para>
     /// </remarks>
-    private static bool Exists(string path)
+    private static bool TryDescribe(string path, out FileAttributes attributes, out long size)
     {
         try
         {
-            File.GetAttributes(path);
+            var info = new FileInfo(path);
+            attributes = info.Attributes;
+
+            // Existence is asked of the info object rather than inferred from its attributes, and the reason
+            // is a sharp edge worth writing down: for a path that is not there, Attributes answers
+            // (FileAttributes)(-1) instead of throwing — every bit set, which includes the Directory bit.
+            // Reading that as "a directory" would validate every missing path on the machine as an existing
+            // one. Exists reads the same cached status, so asking it costs nothing.
+            if (!info.Exists)
+            {
+                return DescribeByProbing(path, out attributes, out size);
+            }
+
+            if ((attributes & FileAttributes.Directory) != 0)
+            {
+                size = 0;
+                return true;
+            }
+
+            size = info.Length;
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            return File.Exists(path) || Directory.Exists(path);
+            // A path the status call could not measure at all — held, denied, or on a volume that is not
+            // mounted. The probes are what keep it from being reported as absent.
+            return DescribeByProbing(path, out attributes, out size);
         }
+    }
+
+    /// <summary>
+    /// Answers for a path the status call could not describe, by asking each kind in turn.
+    /// </summary>
+    /// <remarks>
+    /// A file the status call could not measure is still there if a probe says so, and the probe does not say
+    /// what kind of thing it is — so the answer is whichever one it can answer, and a path measured this way
+    /// reports a size of zero rather than a guess. Two probes is the price of that answer, and it is paid
+    /// only by the paths that need it: a volume that is not mounted, a path somebody holds in a way the
+    /// filesystem will not describe.
+    /// </remarks>
+    private static bool DescribeByProbing(string path, out FileAttributes attributes, out long size)
+    {
+        size = 0;
+
+        if (File.Exists(path))
+        {
+            attributes = default;
+            return true;
+        }
+
+        if (Directory.Exists(path))
+        {
+            attributes = FileAttributes.Directory;
+            return true;
+        }
+
+        attributes = default;
+        return false;
     }
 }
