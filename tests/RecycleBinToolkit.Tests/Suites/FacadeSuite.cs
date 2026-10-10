@@ -383,6 +383,14 @@ internal static class FacadeSuite
         var file = Path.Combine(ScratchWorkspace.Root, $"allowed-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
 
+        // On the native backend this case is not only an assertion: it is the one thing in the suite that
+        // creates a Recycle Bin on a volume that had none, because AllowIndeterminate hands the path over
+        // and the native backend's answer is to make somewhere for it rather than destroy it. That is the
+        // documented behaviour and the case is what pins it — but a case that leaves the operator's volume
+        // configured differently than it found it is a bad neighbour, so what it caused is put back.
+        var binDirectory = Path.Combine(ScratchWorkspace.VolumeRoot, "$RECYCLE.BIN", NativeBinLayout.CurrentSid);
+        var binExisted = Directory.Exists(binDirectory);
+
         var options = new RecycleBinOptions
         {
             Backend = (RecycleBinBackend)TestBackend.Kind,
@@ -390,19 +398,73 @@ internal static class FacadeSuite
             NoRecycleBinAction = NoRecycleBinAction.AllowIndeterminate,
         };
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync([file], options, context.CancellationToken)
-            .ConfigureAwait(false);
+        try
+        {
+            var result = await FileRecycler
+                .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+                .ConfigureAwait(false);
 
-        Check.True(
-            result.Succeeded,
-            $"AllowIndeterminate hands the path over and the Shell reports success (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
-        Check.Equal(1, result.RecycledPaths.Count, "the path comes back as recycled, because the Shell said so");
-        Check.Equal(file, result.RecycledPaths[0], "in the spelling the caller supplied");
-        Check.Equal(0, result.Failures.Count, "the volume's answer did not become a failure");
-        Check.False(File.Exists(file), "the Shell removed the file, which is the risk the caller accepted");
+            Check.True(
+                result.Succeeded,
+                $"AllowIndeterminate hands the path over and the backend reports success (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+            Check.Equal(1, result.RecycledPaths.Count, "the path comes back as recycled, because the backend said so");
+            Check.Equal(file, result.RecycledPaths[0], "in the spelling the caller supplied");
+            Check.Equal(0, result.Failures.Count, "the volume's answer did not become a failure");
+            Check.False(File.Exists(file), "the file is gone from disk, which is the risk the caller accepted");
 
-        workspace.Dispose();
+            if (!binExisted && TestBackend.IsNative)
+            {
+                Check.True(Directory.Exists(binDirectory),
+                    $"the native backend made somewhere for the file rather than destroying it, so it created {binDirectory}");
+            }
+        }
+        finally
+        {
+            RemoveBinIfThisCaseMadeIt(binDirectory, binExisted);
+            workspace.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Removes a Recycle Bin directory this case created on the run's volume, and only that.
+    /// </summary>
+    /// <remarks>
+    /// Two conditions, both required. The directory must not have existed when the case started, or the
+    /// caller had one and removing it would destroy their Recycle Bin. Everything inside it is then this
+    /// case's own work — the volume had no bin a moment ago — so it is emptied through the library's own
+    /// path rather than by hand, and the directory removed afterwards.
+    /// </remarks>
+    private static async Task RemoveBinIfThisCaseMadeIt(string binDirectory, bool existedBefore)
+    {
+        if (existedBefore || !Directory.Exists(binDirectory))
+        {
+            return;
+        }
+
+        try
+        {
+            await RecycleBin
+                .EmptyAsync(ScratchWorkspace.VolumeRoot, new RecycleBinOptions { Backend = RecycleBinBackend.Native, ThrowOnError = false })
+                .ConfigureAwait(false);
+
+            Directory.Delete(binDirectory);
+
+            var parent = Path.GetDirectoryName(binDirectory);
+
+            // Only when nothing else is under $RECYCLE.BIN. Another account's directory on a multi-user
+            // machine is not this case's to remove, and the folder itself belongs to Windows.
+            if (parent is not null
+                && string.Equals(Path.GetFileName(parent), "$RECYCLE.BIN", StringComparison.OrdinalIgnoreCase)
+                && !Directory.EnumerateFileSystemEntries(parent).Any())
+            {
+                Directory.Delete(parent);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The case's assertions already ran. A volume that will not give the directory back is the
+            // operator's to deal with, not a reason to fail a case about a different thing.
+        }
     }
 
     /// <summary>

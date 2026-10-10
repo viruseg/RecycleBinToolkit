@@ -77,8 +77,41 @@ cases that recycle one and runs the cases that are about a volume the Shell repo
 Measured with `--backend winapi` and again with `--backend native` on a volume with a bin: **177 pass
 and 10 skip** either way, with nothing failing. On a volume with no bin: **119 pass and 68 skip**
 either way. A share is a third kind and is not measured here; the share figures this file used to
-carry predate the native backend. `--all` prints the counts, so a count in a document that disagrees
-with them is the document being wrong.
+carry predate the native backend. `--all` prints the counts, so a count in a document that disagreeswith them is the document being wrong.
+
+## Performance, measured
+
+**Read this before changing anything to do with how many threads the native backend uses.** The
+figures below were measured on this machine over batches of 3,000 items, and they are the reason the
+code looks the way it does. Parallelising more of it is not an improvement, and on this machine most of
+it is the opposite of one.
+
+| operation on `C:` (solid-state) | 1 thread | 2 | 4 | 8 |
+| --- | --- | --- | --- | --- |
+| read 3,000 records back | 291 ms | 140 ms | 96 ms | **64 ms** |
+| empty 3,000 entries | 1310 ms | 1248 ms | 1145 ms | **998 ms** |
+| recycle 3,000 files of 64 KiB | **542 files/s** | 402 | 200 | 189 files/s |
+
+Reading and emptying behave as the seek-penalty rule in `VolumeSeekPenalty` says. **Recycling behaves
+the other way round, and no amount of threading fixes it.** A Recycle Bin is one directory per volume —
+`<volume>$RECYCLE.BIN<SID>` — and a directory is the one thing a file system cannot take concurrent
+writers on. Every record written and every payload moved lands in that same directory, so eight threads
+contend on it and finish two and a half times slower than one. `NativeRecycleRunner` is therefore
+single-threaded on purpose, and a comment in it says so with these numbers.
+
+Two measurements that are worth not re-deriving:
+
+- **The same operation is faster on an SSD by about nothing.** Recycling 3,000 files ran at 678 files/s
+  on `E:` (mechanical) and 597 on `C:` (solid-state) — the cost is filesystem round trips, not bandwidth.
+- **The native backend beats the Shell path on this machine by 3.3x on a mechanical volume and 2.7x on a
+  solid-state one** (678 against 206 files/s, 597 against 218). That margin comes from fewer round trips
+  per path, not from threads, and it is why the optimisation effort went into syscall count: the recycle
+  path does three — one `FileInfo` query in validation, one create-and-write for the record, one move.
+
+Do not add parallelism to the recycle path. If a future measurement on some other hardware says
+otherwise, that measurement goes here first, and the constant it changed goes in the same commit.
+
+---
 
 ## What the tests may touch
 
@@ -96,6 +129,15 @@ Where a case needs a volume that has no Recycle Bin, it asks the library what th
 `ScratchWorkspace.Reason` — and skips when the answer is the other kind, in the shape
 `RequireNonRecycling(because)` and `RequireRecycling(because)` hold between them. A test does not test
 what is not on the disk.
+
+A third one is worth knowing about, because it looks like a leftover and is not:
+`NoRecycleBinAction.AllowIndeterminate` hands a path to the backend on a volume the library reports no
+bin for, and the native backend answers that by creating the per-user directory under `$RECYCLE.BIN`
+and recycling into it, rather than destroying the file the way the Shell would. So running on a volume
+that has no Recycle Bin **can leave one there**. `FacadeSuite.NoRecycleBinOptionDecidesWhetherTheShellIsAsked`
+is the case that does it — it is the only one, and it empties the directory and removes it again in a
+`finally`, and only when it was the case that made it. A run on a bin-less volume that leaves a
+`$RECYCLE.BIN` behind has not found a bug; it has found a run of a suite where that case did not finish.
 
 Two things leave the working directory and are not the tests' doing: the `$RCW-…` staging directories
 `LongPathStager` creates in the volume root, because a staging path has to be short and the volume root is
