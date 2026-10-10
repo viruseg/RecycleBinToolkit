@@ -329,7 +329,7 @@ Immutable; set with object initialisers. Every property has a production default
 | `MaxAttempts` | `int` | `6` | Attempts per item before it is reported as failed. Clamped to at least 1. |
 | `InitialRetryDelay` | `TimeSpan` | `50ms` | Delay before the first retry; it doubles each attempt, with up to 25 % jitter. Negative values clamp to zero. |
 | `OverallTimeout` | `TimeSpan` | `30s` | Upper bound on wall-clock time spent retrying the batch. A backoff that does not fit the remaining budget ends the loop immediately rather than starting an over-budget round. |
-| `VerifyRecycleBinReceipt` | `bool` | `true` | Reject a delete whose reported destination is outside `$RECYCLE.BIN`. See [Limitations](#limitations). |
+| `VerifyRecycleBinReceipt` | `bool` | `true` | Reject a delete whose reported destination is outside `$RECYCLE.BIN`. See [Limitations](#limitations). `WinApi` only — the native backend picks its own destination, so there is no reported location for it to disagree with. |
 | `ThrowOnError` | `bool` | `true` | Whether a failure raises instead of being returned. The global switch; it has the final say over `LongPathFailureAction`. |
 | `LongPathFailureAction` | `LongPathFailureAction` | `Throw` | What happens to a file the Shell cannot recycle. **Inert on `Native`**, which never refuses on length. |
 | `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. Applies on **both** backends. |
@@ -425,7 +425,7 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `ShellItemCreation` | The Shell refused to produce an item for the path. |
 | `Queueing` | The item could not be added to the pending operation. |
 | `Performing` | The Shell performed the delete and reported a failure for this item. |
-| `ReceiptVerification` | The delete reported success but the result did not reach the Recycle Bin. |
+| `ReceiptVerification` | The delete reported success but the result did not reach the Recycle Bin. `WinApi` only — the native backend picks its own destination, so there is nothing reported to reject. |
 | `LongPathNotRecyclable` | The path is too long for the Shell. It was never handed over. |
 | `NoRecycleBinOnVolume` | The volume holding the path cannot recycle it and the caller asked for a Recycle Bin, so the path was never handed over and the file is where the caller left it. `Attempts` is `0`, and `HResult` carries the Shell's own code where the Shell named the volume — `0x80070003` on a substituted drive, `0x80004005` on a removable volume with no `$RECYCLE.BIN` — and `0` where no Shell refusal backs the record, whether the refusal was settled from configuration or a bin appeared between the probe and the code's own query. |
 | `PermanentDeleteFailed` | You asked for a path to be removed for good — `LongPathFailureAction.DeletePermanently` for a path too long for the Shell, `NoRecycleBinAction.DeletePermanently` for one whose volume cannot recycle it — and the file system refused: a handle is held, the attributes are read-only. The file is exactly as you left it. |
@@ -917,7 +917,8 @@ Stated plainly, because these are properties of Windows rather than choices.
 - **A full Recycle Bin can also delete permanently while reporting success.** The Shell reports no
   destination in that case, and a missing destination cannot be told apart from a successful delete
   that simply did not report one. `VerifyRecycleBinReceipt` can reject a destination *outside* the
-  Recycle Bin, but it cannot prove the positive case.
+  Recycle Bin, but it cannot prove the positive case. Neither half of this applies to `Native`: it writes
+  the record and moves the payload itself, so a move either happened or raised.
 - **Cancellation stops the wait, not the work — on `WinApi`.** A round already handed to the Shell runs to
   completion, so a cancelled call may still recycle its files. On `Native` the token is checked between
   paths, so a cancelled batch stops part way and raises `OperationCanceledException` carrying no result:

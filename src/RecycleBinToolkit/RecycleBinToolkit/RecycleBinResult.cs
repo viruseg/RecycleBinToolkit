@@ -23,7 +23,11 @@ public enum RecycleFailureStage
     /// <summary>The Shell performed the delete and reported a failure for this item.</summary>
     Performing = 3,
 
-    /// <summary>The delete reported success but the result did not reach the Recycle Bin.</summary>
+    /// <summary>
+    /// The delete reported success but the result did not reach the Recycle Bin. Only
+    /// <see cref="RecycleBinBackend.WinApi"/> can report it: the native backend chooses the destination
+    /// rather than being handed one, so it has no reported location to reject.
+    /// </summary>
     ReceiptVerification = 4,
 
     /// <summary>

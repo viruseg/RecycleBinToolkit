@@ -48,6 +48,13 @@ public sealed class RecycleBinOptions
     /// Recycle Bin in the other direction: the Shell reports no location at all for some successful
     /// deletes, and a missing location cannot be distinguished from a delete the Shell completed
     /// without recycling. Turning this off trades that check for slightly less work per item.
+    /// <para>
+    /// It applies to <see cref="RecycleBinBackend.WinApi"/> only, and that is a property of the backend
+    /// rather than a gap in it. The Shell chooses the destination and can report one that is not in the
+    /// bin, which is the only thing this checks. The native backend chooses the destination itself, so
+    /// there is no reported location to disagree with anything, and the same question it would ask is true
+    /// of every path by construction — it is asserted in a Debug build instead of run per item.
+    /// </para>
     /// </remarks>
     public bool VerifyRecycleBinReceipt { get; init; } = true;
 

@@ -111,7 +111,7 @@ internal static class NativeRecycleRunner
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (TryRecycle(target, bins, options, out var failure))
+                if (TryRecycle(target, bins, out var failure))
                 {
                     recycled.Add(target.InputPath);
                     continue;
@@ -174,7 +174,7 @@ internal static class NativeRecycleRunner
     /// order leaves data that is gone and recorded nowhere, which is the one outcome a Recycle Bin exists to
     /// prevent.
     /// </remarks>
-    private static bool TryRecycle(RecycleTarget target, Dictionary<string, string> bins, RecycleBinOptions options, out RecycleFailure? failure)
+    private static bool TryRecycle(RecycleTarget target, Dictionary<string, string> bins, out RecycleFailure? failure)
     {
         var root = Path.GetPathRoot(target.ShellPath);
 
@@ -252,15 +252,18 @@ internal static class NativeRecycleRunner
                 return false;
             }
 
-            if (options.VerifyRecycleBinReceipt && !IsRecycled(payloadPath, target))
-            {
-                // The record stays. The payload has already moved and this is the only place where that has
-                // happened, so the entry is real and Explorer's Restore works on it: an entry with a record is
-                // recoverable and a caller can act on it, while the same entry without one is a file on disk
-                // that nothing lists, nothing empties and nobody will ever find.
-                failure = new RecycleFailure(target.InputPath, 0, 0, RecycleFailureStage.ReceiptVerification);
-                return false;
-            }
+            // Not a runtime check, and not because the invariant is unimportant. The payload was named from
+            // the bin directory of the root taken from this very target, so the destination is inside the
+            // right bin on the right volume by construction — the question is true before it is asked, and
+            // asking it anyway costs two prefixes stripped off, two roots derived and a walk of the segments
+            // on every path of every batch. RecycleBinOptions.VerifyRecycleBinReceipt exists for a failure
+            // the Shell can commit and this backend cannot: it chooses the destination itself rather than
+            // being handed one, and File.Move either moves or throws. So the invariant is asserted rather
+            // than enforced, which keeps it checked on every run of the suite — that is a Debug build —
+            // and costs a Release build nothing.
+            Debug.Assert(
+                IsRecycled(payloadPath, target),
+                "the payload just moved has to sit inside the bin of the volume it came from");
 
             failure = null;
             return true;
@@ -270,22 +273,14 @@ internal static class NativeRecycleRunner
     /// <summary>
     /// Whether the payload was aimed at a Recycle Bin on the item's own volume.
     /// </summary>
-    private static bool IsRecycled(string payloadPath, RecycleTarget target)
-    {
-        // A check of the name, not of the disk, and the difference is deliberate.
-        //
-        // File.Move and Directory.Move either move or throw — there is no version of either that reports
-        // success without moving — so asking whether the payload is there afterwards is asking the
-        // filesystem to confirm what it just said, and it costs a round trip on every path in the batch to
-        // learn nothing.
-        //
-        // The failure RecycleBinOptions.VerifyRecycleBinReceipt exists to catch is the Shell's: a delete
-        // past MAX_PATH that removes the file for good and reports success anyway. There is no such failure
-        // here, because this backend chose the destination itself rather than asking for one. What remains
-        // worth checking is that the destination it chose is inside the bin on the right volume, which is a
-        // question about two strings and costs nothing.
-        return RecycleBinReceipt.IsInsideRecycleBin(payloadPath, target.ShellPath);
-    }
+    /// <remarks>
+    /// A question about two strings rather than about the disk, and the difference from a Shell receipt is
+    /// the whole of it. <see cref="RecycleBinReceipt.IsInsideRecycleBin"/> answers for a destination the
+    /// Shell reported, where the answer can disagree with where the item came from; here both sides are
+    /// built from the same target, which is why this is asserted and not run on every path.
+    /// </remarks>
+    private static bool IsRecycled(string payloadPath, RecycleTarget target) =>
+        RecycleBinReceipt.IsInsideRecycleBin(payloadPath, target.ShellPath);
 
     /// <summary>
     /// Whether a refusal was this name being taken rather than the item being unavailable.
