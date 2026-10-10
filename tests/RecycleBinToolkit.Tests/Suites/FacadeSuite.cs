@@ -1,3 +1,4 @@
+using System.Reflection;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
@@ -18,6 +19,7 @@ internal static class FacadeSuite
         new TestCase("FacadeSuite." + nameof(LongPathPastTheShellLimitIsRefusedSafely), LongPathPastTheShellLimitIsRefusedSafely),
         new TestCase("FacadeSuite." + nameof(LargeFileIsRecycled), LargeFileIsRecycled),
         new TestCase("FacadeSuite." + nameof(CancellationIsObserved), CancellationIsObserved),
+        new TestCase("FacadeSuite." + nameof(CancellationIsObservedWhileABatchIsValidated), CancellationIsObservedWhileABatchIsValidated),
         new TestCase("FacadeSuite." + nameof(SingleMissingPathThrowsFileNotFound), SingleMissingPathThrowsFileNotFound),
         new TestCase("FacadeSuite." + nameof(SingleLockedPathThrowsWithShellHResult), SingleLockedPathThrowsWithShellHResult),
         new TestCase("FacadeSuite." + nameof(ExtendedPrefixOnAShortPathStillReportsSuccess), ExtendedPrefixOnAShortPathStillReportsSuccess),
@@ -1112,5 +1114,56 @@ internal static class FacadeSuite
         }
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A batch is validated before any of it is recycled, one filesystem probe per path, and that scan is
+    /// the long half of a large call — about 11 ms a path on the volume measured here, which is minutes for
+    /// twenty thousand paths. Nothing in it looks at the caller's token, so a caller who cancels while it
+    /// runs is made to wait for the whole scan before being told, and the wait is on a pool thread with
+    /// nothing to show for it.
+    /// </summary>
+    /// <remarks>
+    /// Driven through the private method rather than through the public one, because the public one can show
+    /// this only by losing a race against a timer, and a batch large enough to lose it reliably would be a
+    /// load case in its own right — which would put the claim behind a flag over a check that costs nothing.
+    /// Nothing here touches the disk either: the paths need not exist, because the token has to be read
+    /// before the first of them is looked at, and a path that does not exist is a validation failure rather
+    /// than a fault.
+    /// </remarks>
+    private static Task CancellationIsObservedWhileABatchIsValidated(TestContext context)
+    {
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        var paths = new List<string?> { Path.Combine(ScratchWorkspace.Root, "never-created-1.bin") };
+
+        Check.Throws<OperationCanceledException>(
+            () => BuildTargets(paths, RecycleBinOptions.Default, cancelled.Token),
+            "a token already cancelled stops the validation instead of every path being probed first");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Calls the private batch validator the way <see cref="FileRecycler.MoveToRecycleBinAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>
+    /// does, unwrapping what reflection hands back.
+    /// </summary>
+    private static void BuildTargets(
+        IReadOnlyList<string?> filePaths,
+        RecycleBinOptions options,
+        CancellationToken cancellationToken)
+    {
+        var build = typeof(FileRecycler).GetMethod("BuildTargets", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new MissingMethodException(typeof(FileRecycler).FullName, nameof(BuildTargets));
+
+        try
+        {
+            build.Invoke(null, [filePaths, options, cancellationToken]);
+        }
+        catch (TargetInvocationException wrapped) when (wrapped.InnerException is not null)
+        {
+            throw wrapped.InnerException;
+        }
     }
 }

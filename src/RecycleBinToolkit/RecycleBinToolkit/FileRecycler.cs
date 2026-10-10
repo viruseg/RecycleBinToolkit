@@ -21,6 +21,13 @@ namespace RecycleBinToolkit;
 public static class FileRecycler
 {
     /// <summary>
+    /// How many paths a batch is validated through between two looks at the caller's token. Small enough
+    /// that a cancelled scan stops at once on any batch a caller would recognise as large, large enough
+    /// that the check is not a measurable share of a loop whose body blocks on the filesystem.
+    /// </summary>
+    private const int CancellationCheckInterval = 64;
+
+    /// <summary>
     /// Moves a single file or directory to the Recycle Bin.
     /// </summary>
     /// <param name="filePath">Path of the file or directory to recycle.</param>
@@ -116,9 +123,11 @@ public static class FileRecycler
     /// <see cref="RecycleBinOptions.Default"/>.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the wait between attempts. A round already handed to the Shell always finishes; the native
-    /// backend has no rounds and checks the token between paths, so a cancelled batch stops part way and
-    /// raises without returning a result.
+    /// Cancels the scan that validates the batch and the wait between attempts. A round already handed to the
+    /// Shell always finishes; the native backend has no rounds and checks the token between paths, so a
+    /// cancelled batch stops part way and raises without returning a result. The validation scan is checked
+    /// too, because on a large batch it is the long half of the call and it is over before the first round
+    /// would have begun.
     /// </param>
     /// <returns>
     /// The outcome of the batch. Never throws for a per-item failure; read
@@ -127,7 +136,8 @@ public static class FileRecycler
     /// and the paths on every other volume in the batch are still recycled.
     /// </returns>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled before the work started.
+    /// <paramref name="cancellationToken"/> was cancelled, whether before the work started or while the
+    /// batch was being validated.
     /// </exception>
     /// <exception cref="IOException">
     /// The Shell refused the delete, the Shell faulted, or a staging directory was left on a volume while
@@ -177,7 +187,7 @@ public static class FileRecycler
         // The Shell worker is one STA thread that every other caller in the process queues behind, so a
         // probe run there would turn one dead share into a stall for all of them.
         var (targets, gateFailures, permanentlyDeleted) = await Task
-            .Run(() => BuildTargets(filePaths, effective), cancellationToken)
+            .Run(() => BuildTargets(filePaths, effective, cancellationToken), cancellationToken)
             .ConfigureAwait(false);
 
         if (targets.Count == 0)
@@ -221,7 +231,7 @@ public static class FileRecycler
         RecycleBinOptions options,
         CancellationToken cancellationToken)
     {
-        var (targets, gateFailures, permanentlyDeleted) = BuildTargets(filePaths, options);
+        var (targets, gateFailures, permanentlyDeleted) = BuildTargets(filePaths, options, cancellationToken);
 
         if (targets.Count == 0)
         {
@@ -284,7 +294,8 @@ public static class FileRecycler
 
     private static (List<RecycleTarget> Targets, List<RecycleFailure> Failures, List<string> PermanentlyDeleted) BuildTargets(
         IReadOnlyList<string?> filePaths,
-        RecycleBinOptions options)
+        RecycleBinOptions options,
+        CancellationToken cancellationToken)
     {
         var targets = new List<RecycleTarget>(filePaths.Count);
         var failures = new List<RecycleFailure>();
@@ -292,6 +303,16 @@ public static class FileRecycler
 
         for (var i = 0; i < filePaths.Count; i++)
         {
+            // Asked every so often rather than per path. The probe below blocks on the filesystem for
+            // milliseconds, so a caller who cancels during a twenty-thousand-path scan waits minutes for an
+            // answer they already gave — and asking costs a predictable branch, which is why the interval
+            // is a count rather than a stopwatch: a scan of a slow volume must not turn into a scan of a
+            // clock.
+            if (i % CancellationCheckInterval == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             var failure = TryCreateTarget(filePaths[i], out var target);
             if (failure is null)
             {
@@ -302,6 +323,12 @@ public static class FileRecycler
                 failures.Add(failure);
             }
         }
+
+        // Before the volume gate rather than inside it, because the gate is where a cancelled batch would
+        // otherwise still do damage: under NoRecycleBinAction.DeletePermanently it removes the caller's
+        // files outright, and it answers one volume at a time rather than one path, so a check inside its
+        // loop would be checking once for the whole batch anyway.
+        cancellationToken.ThrowIfCancellationRequested();
 
         RefuseVolumesThatCannotRecycle(targets, failures, permanentlyDeleted, options);
 
