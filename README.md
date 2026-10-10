@@ -482,7 +482,7 @@ between calls: a volume mounted, or a policy applied, after one operation is see
 
 ### `RecycleBinItem`
 
-One entry in the Recycle Bin.
+One entry in the Recycle Bin. Immutable.
 
 | Member | Type | Description |
 | --- | --- | --- |
@@ -491,9 +491,13 @@ One entry in the Recycle Bin.
 | `Size` | `long` | Size in bytes. `0` for a directory — see [Limitations](#limitations). |
 | `IsDirectory` | `bool` | Whether the entry is a directory. |
 
-There is no `Name`: it is the last component of `OriginalPath`. There is no `RecycledPath` either — the
-Recycle Bin renames every entry to a `$R` name, and on the native backend that name is derived from the
-entry's `$I` record rather than stored.
+There is no `Name`: it is the last component of `OriginalPath`.
+
+**There is no `RecycledPath`, so a listed entry cannot be restored from this listing.** On the native backend
+that path is derived from the entry's `$I` record rather than stored, and on the Shell backend it used to be
+reported through `SIGDN_FILESYSPATH`. To put an entry back, walk the bin yourself — `<volume>$RECYCLE.BIN\<SID>\`,
+where each entry is a `$I` record and a `$R` payload — as Explorer's own Restore does. This is a breaking
+change from earlier versions; `RecycleBin.EmptyAsync` is unaffected.
 
 #### Lazy fields
 
@@ -934,9 +938,10 @@ FileRecycler          validates, normalises, de-duplicates, dispatches
   └─ NativeRecycleBinBackend   plain file calls on the thread pool; never touches the worker
        ├─ NativeBinLayout         $RECYCLE.BIN\<SID>\ and the $I/$R name pair
        ├─ NativeIndexFile         version 1 and 2 records, read and written
+       ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
        ├─ NativeRecycleRunner     record first, then the move, then the receipt
-       ├─ NativeBinLister         FileSystemEnumerable + RandomAccess, parallel per drive
-       └─ NativeBinEmptier        payload first, then the record, counted from the records
+       ├─ NativeBinLister         pairs from the walk; records only under PreloadItemDetails, in parallel
+       └─ NativeBinEmptier        payload first, then the record, counted from the walk
 
 RecycleBin            validates, filters, reports
   ├─ RecycleBinVolumeSet   which volumes an operation covers

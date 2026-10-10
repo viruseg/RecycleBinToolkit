@@ -86,6 +86,10 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsAreBothAnsweredByTheFirstAccess), NativeLazyDetailsAreBothAnsweredByTheFirstAccess),
         new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsThrowOnceWhenIndexIsGone), NativeLazyDetailsThrowOnceWhenIndexIsGone),
         new TestCase("NativeBinSuite." + nameof(NativeListingIgnoresAPayloadWithoutARecord), NativeListingIgnoresAPayloadWithoutARecord),
+        new TestCase("NativeBinSuite." + nameof(NativeEmptyCollectsAnEntryWhosePayloadIsGone), NativeEmptyCollectsAnEntryWhosePayloadIsGone),
+        new TestCase("NativeBinSuite." + nameof(NativeEmptyIgnoresADirectoryNamedLikeARecord), NativeEmptyIgnoresADirectoryNamedLikeARecord),
+        new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsSayWhatHappenedWhenTheRecordIsNotARecord), NativeLazyDetailsSayWhatHappenedWhenTheRecordIsNotARecord),
+        new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsCarryTheFileSystemCode), NativeLazyDetailsCarryTheFileSystemCode),
     ];
 
     /// <summary>
@@ -1549,6 +1553,178 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         {
             File.Delete(stray);
         }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An entry whose payload is gone is still an entry, and an empty has to take it: its record is the only
+    /// thing left of it, and leaving that behind is how a bin fills with records nothing describes.
+    /// </summary>
+    /// <remarks>
+    /// Run against a bin inside the scratch root rather than the run's own volume. This case empties a bin,
+    /// and emptying the run's real Recycle Bin costs seconds and changes what every later case sees on it —
+    /// which is how a listing case once made an unrelated timing-sensitive case fail.
+    /// <para>
+    /// The orphan's size comes from its record, since there is no payload left to measure, and it is counted
+    /// like any other entry: "exact counts" is a claim about every entry removed, not about the ones that
+    /// still had files.
+    /// </para>
+    /// </remarks>
+    private static async Task NativeEmptyCollectsAnEntryWhosePayloadIsGone(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var root = Path.Combine(ScratchWorkspace.Root, "orphan-volume") + Path.DirectorySeparatorChar;
+        var bin = NativeBinLayout.EnsureBinDirectory(root);
+
+        const long orphanSize = 1234;
+        var deleted = new DateTime(2026, 10, 10, 1, 2, 3, DateTimeKind.Utc);
+
+        var wholeStem = "AAA" + RunTag;
+        var wholeIndex = NativeBinLayout.IndexPath(bin, wholeStem, ".bin");
+        var wholePayload = NativeBinLayout.PayloadPath(bin, wholeStem, ".bin");
+
+        File.WriteAllBytes(wholePayload, Content);
+        NativeIndexFile.Write(wholeIndex, ScratchWorkspace.Root + "\\whole.bin", Content.LongLength, deleted);
+
+        var orphanStem = "BBB" + RunTag;
+        var orphanIndex = NativeBinLayout.IndexPath(bin, orphanStem, ".bin");
+        NativeIndexFile.Write(orphanIndex, ScratchWorkspace.Root + "\\orphan.bin", orphanSize, deleted);
+
+        var result = await Task
+            .Run(() => NativeBinEmptier.Empty([root], context.CancellationToken), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(0, result.Failures.Count, $"nothing fails (got {result.Failures.Count})");
+        Check.Equal(2, result.ItemsRemoved, "both entries are counted as removed, the one with no payload included");
+        Check.Equal(
+            Content.LongLength + orphanSize,
+            result.BytesFreed,
+            "and the orphan's size is read from its record, because its payload is what is gone");
+        Check.True(
+            result.VolumesEmptied.Count == 1 && result.VolumesEmptied[0] == root,
+            $"the volume is named as emptied, because nothing was left behind (got [{string.Join(", ", result.VolumesEmptied)}])");
+
+        Check.False(File.Exists(wholeIndex), "the whole entry's record is gone");
+        Check.False(File.Exists(wholePayload), "and so is its payload");
+        Check.False(File.Exists(orphanIndex), "and the orphaned record is collected, which is the whole point");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A record is a file. A directory that happens to be named like one is not a record, and an empty that
+    /// tried to delete it would fail on every run for ever and take the volume out of its results.
+    /// </summary>
+    /// <remarks>
+    /// Windows never writes one, but the bin directory belongs to whoever runs this and is writable by them,
+    /// so the state is reachable from the outside and the sweep must not trip over it.
+    /// </remarks>
+    private static async Task NativeEmptyIgnoresADirectoryNamedLikeARecord(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var root = Path.Combine(ScratchWorkspace.Root, "decoy-volume") + Path.DirectorySeparatorChar;
+        var bin = NativeBinLayout.EnsureBinDirectory(root);
+
+        var decoy = Path.Combine(bin, "$IDECOY" + RunTag + ".bin");
+        Directory.CreateDirectory(decoy);
+
+        var realStem = "CCC" + RunTag;
+        var realIndex = NativeBinLayout.IndexPath(bin, realStem, ".bin");
+        var realPayload = NativeBinLayout.PayloadPath(bin, realStem, ".bin");
+        File.WriteAllBytes(realPayload, Content);
+        NativeIndexFile.Write(realIndex, ScratchWorkspace.Root + "\\real.bin", Content.LongLength, DateTime.UtcNow);
+
+        var entries = NativeBinEntries.Collect(bin, context.CancellationToken);
+        Check.False(
+            entries.Any(e => e.IndexPath is not null && string.Equals(e.IndexPath, decoy, StringComparison.OrdinalIgnoreCase)),
+            "the enumeration does not take a directory for a record");
+
+        var result = await Task
+            .Run(() => NativeBinEmptier.Empty([root], context.CancellationToken), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(0, result.Failures.Count, $"the decoy costs the caller nothing (got {result.Failures.Count})");
+        Check.Equal(1, result.ItemsRemoved, "and the real entry is removed as the only one there was");
+        Check.True(
+            result.VolumesEmptied.Count == 1 && result.VolumesEmptied[0] == root,
+            $"so the volume is still named as emptied (got [{string.Join(", ", result.VolumesEmptied)}])");
+        Check.True(Directory.Exists(decoy), "the decoy is left exactly where it was — it is not this empty's to remove");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A record that opens and turns out not to be one is a different thing from a record that could not be
+    /// opened, and the exception says which — because "removed or locked" is a diagnosis a caller would act
+    /// on, and acting on it wrongly sends them looking for a race that never happened.
+    /// </summary>
+    private static async Task NativeLazyDetailsSayWhatHappenedWhenTheRecordIsNotARecord(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin to leave a malformed record in");
+
+        var indexPath = Path.Combine(BinDirectory, "$IBROKEN" + RunTag + ".bin");
+        var payloadPath = NativeBinLayout.ToPayloadPath(indexPath);
+
+        File.WriteAllBytes(indexPath, [1, 2, 3]);
+        File.WriteAllBytes(payloadPath, Content);
+
+        try
+        {
+            var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+            var item = contents.Items.First(i => SamePath(i.PayloadPath, payloadPath));
+
+            var raised = Check.Throws<IOException>(() => _ = item.OriginalPath, "a file that is not a record has no path to answer with");
+
+            Check.False(
+                raised.Message.Contains("removed or locked", StringComparison.OrdinalIgnoreCase),
+                $"and the message does not blame a removal that did not happen ({raised.Message})");
+            Check.True(
+                raised.Message.Contains("record", StringComparison.OrdinalIgnoreCase),
+                $"but says what is actually wrong — that the file is not a record ({raised.Message})");
+        }
+        finally
+        {
+            File.Delete(indexPath);
+            File.Delete(payloadPath);
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The whole API reports failures with the code the operating system gave. An exception raised from a lazy
+    /// property is a failure too, and a caller that reads <c>HResult</c> here expects the same thing.
+    /// </summary>
+    private static async Task NativeLazyDetailsCarryTheFileSystemCode(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for an entry to lose its record under the caller");
+
+        var path = CreateFile("code-bearing.bin");
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+        var item = contents.Items.First(i => SamePath(i.PayloadPath, NativeBinLayout.ToPayloadPath(RecordOf(path))));
+
+        File.Delete(RecordOf(path));
+
+        var raised = Check.Throws<IOException>(() => _ = item.OriginalPath, "reading a path whose record is gone raises");
+
+        // 0x80131620 is COR_E_EXCEPTION, what a plain `new IOException(message)` carries. A caller told to look
+        // at the code needs the filesystem's own, not the runtime's default for an exception with no code.
+        Check.NotEqual(
+            unchecked((int)0x80131620),
+            raised.HResult,
+            $"the filesystem's own code is carried, not the runtime default (got 0x{raised.HResult:X8})");
 
         workspace.Dispose();
     }

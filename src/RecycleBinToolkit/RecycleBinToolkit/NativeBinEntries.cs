@@ -107,7 +107,7 @@ internal static class NativeBinEntries
             },
             options)
         {
-            ShouldIncludePredicate = static (ref FileSystemEntry entry) => IsEntryName(entry.FileName)
+            ShouldIncludePredicate = static (ref FileSystemEntry entry) => IsEntry(ref entry)
         };
 
         foreach (var _ in enumerable)
@@ -131,7 +131,22 @@ internal static class NativeBinEntries
     /// <summary>
     /// Whether a directory entry is one half of a Recycle Bin entry.
     /// </summary>
-    private static bool IsEntryName(ReadOnlySpan<char> name) => TryReadHalf(name, out _);
+    /// <remarks>
+    /// A record is always a file, so a <em>directory</em> whose name starts with <c>$I</c> is not one and is
+    /// passed over. The old enumerations said so with <c>!entry.IsDirectory</c>, and dropping it cost an empty
+    /// something it cannot recover: deleting a directory this way raises on every run for ever, which reports
+    /// a failure each time and keeps the volume out of its own results. A directory named <c>$R</c> is a
+    /// different matter — a recycled directory's payload is a directory, and that is the ordinary case.
+    /// </remarks>
+    private static bool IsEntry(ref FileSystemEntry entry)
+    {
+        if (!TryReadHalf(entry.FileName, out var marker))
+        {
+            return false;
+        }
+
+        return marker == PayloadMarker || !entry.IsDirectory;
+    }
 
     /// <summary>
     /// Reads which half an entry name belongs to.

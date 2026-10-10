@@ -148,10 +148,19 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     {
         if (!NativeIndexFile.TryRead(indexPath, out var record, out var hResult))
         {
+            // Two different things end here and the caller acts on them differently, so the message says which.
+            // A zero code is a file that opened and turned out not to be a record — a truncated write, or
+            // something in the bin that never was one. Blaming a removal for that would send a caller looking
+            // for a race against another process that never happened.
+            var because = hResult == 0
+                ? "the file is readable but is not a Recycle Bin record — it is truncated, or it was never one"
+                : $"it could not be opened (0x{hResult:X8}), so it was removed or locked since the listing";
+
             throw new IOException(
-                $"The Recycle Bin record for an item was read when one of its details was asked for, and it " +
-                $"could not be read: '{indexPath}' (0x{hResult:X8}). It was removed or locked between the " +
-                "listing and this access. Listing the Recycle Bin again reports what is actually there.");
+                $"The Recycle Bin record for an item was read when one of its details was asked for, and " +
+                $"nothing could be read from '{indexPath}': {because}. Listing the Recycle Bin again reports " +
+                "what is actually there.",
+                hResult);
         }
 
         return ToDetails(record);
