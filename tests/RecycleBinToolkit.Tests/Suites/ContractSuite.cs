@@ -349,8 +349,8 @@ internal static class ContractSuite
     {
         var items = new[]
         {
-            new RecycleBinItem("a.bin", @"W:\a.bin", @"W:\$Recycle.Bin\S\$RA.bin", 4096, default, false),
-            new RecycleBinItem("b.bin", @"W:\b.bin", @"W:\$Recycle.Bin\S\$RB.bin", 1024, default, false)
+            new RecycleBinItem(@"W:\$Recycle.Bin\S\$IA.bin", @"W:\$Recycle.Bin\S\$RA.bin", 4096, false, @"W:\a.bin", default),
+            new RecycleBinItem(@"W:\$Recycle.Bin\S\$IB.bin", @"W:\$Recycle.Bin\S\$RB.bin", 1024, false, @"W:\b.bin", default)
         };
 
         var contents = new RecycleBinContents(items, [], TimeSpan.FromMilliseconds(5));
