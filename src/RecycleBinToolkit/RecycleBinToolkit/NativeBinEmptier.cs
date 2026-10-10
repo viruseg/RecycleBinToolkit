@@ -75,7 +75,7 @@ internal static class NativeBinEmptier
         }
 
         var failuresBefore = failures.Count;
-        var records = CollectRecordPaths(binDirectory);
+        var records = CollectRecordPaths(binDirectory, cancellationToken);
 
         if (records.Length == 0)
         {
@@ -242,7 +242,17 @@ internal static class NativeBinEmptier
     /// because both halves of an entry carry <see cref="FileAttributes.Hidden"/> and
     /// <see cref="FileAttributes.System"/>, and the default would enumerate nothing at all.
     /// </summary>
-    private static string[] CollectRecordPaths(string binDirectory)
+    /// <param name="binDirectory">The volume's bin directory for this user.</param>
+    /// <param name="cancellationToken">
+    /// Checked between entries, as the listing does with the same enumeration. One directory is quick to
+    /// walk, so this is not what makes an empty interruptible — the sweep below is — but the two shapes of
+    /// the same walk reading alike is worth more than the signature symmetry alone.
+    /// </param>
+    /// <remarks>
+    /// An array rather than a list because everything downstream addresses these by position: the measuring
+    /// pass and the sweep both run over an index, and the sizes they fill are an array of the same length.
+    /// </remarks>
+    private static string[] CollectRecordPaths(string binDirectory, CancellationToken cancellationToken)
     {
         var options = new EnumerationOptions
         {
@@ -261,6 +271,14 @@ internal static class NativeBinEmptier
                 !entry.IsDirectory && entry.FileName.StartsWith("$I", StringComparison.OrdinalIgnoreCase)
         };
 
-        return [.. enumerable];
+        var records = new List<string>();
+
+        foreach (var record in enumerable)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            records.Add(record);
+        }
+
+        return [.. records];
     }
 }
