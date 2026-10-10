@@ -10,8 +10,7 @@ framework.
 dotnet build src/RecycleBinToolkit/RecycleBinToolkit/RecycleBinToolkit.csproj
 dotnet build tests/RecycleBinToolkit.Tests/RecycleBinToolkit.Tests.csproj
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --all
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --backend native --all
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --filter LongPathSuite
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --filter NativeBinSuite
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --load
 ```
 
@@ -60,28 +59,19 @@ so no test writes inside the working copy.
 The harness has two disjoint groups. `--all` and `--filter <substring>` select the regular group,
 `--load` selects the load group, and no argument other than `--load` runs a load case. A `--filter` that
 names only load cases fails with a message naming them and telling the reader to pass `--load`, so the
-flag cannot be worked around by accident.
+flag cannot be worked around by accident. A `--backend` on the command line is refused with exit 2: the
+flag chose which path a run measured, and there is one path now.
 
-`--backend <winapi|native>` chooses which path to the Recycle Bin a run measures, and defaults to
-`winapi`. It is refused rather than guessed at when the value is not one of the two, and the runner
-prints the choice in its header, so a report always says which path it exercised. The suites that
-drive the public facade follow it; the suites that test the Shell implementation's internals
-(`WorkerSuite`, `RunnerSuite`, `ShellSuite`, `ListerSuite`, `LongPathSuite`, `RegistrySuite`) do not,
-because the flag is a caller's choice rather than a statement about which code exists.
-`NativeBinSuite` passes `RecycleBinBackend.Native` explicitly and therefore measures the same backend
-whatever the run was told.
-
-There are 218 registered cases, of which four are load cases, so `--all` runs 214 of them. The rest is
+There are 163 registered cases, of which four are load cases, so `--all` runs 159 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
-cases that recycle one and runs the cases that are about a volume the Shell reports no bin for.
-Measured with `--backend winapi` and again with `--backend native` on a volume with a bin: **204 pass
-and 10 skip** either way, with nothing failing. A volume with no bin and a share are both unmeasured
-here: measure before quoting either. `--all` prints the counts, so a count in a document that disagrees
-with them is the document being wrong.
+cases that recycle one and runs the cases that are about a volume with no bin. Measured on a volume
+with a bin: **149 pass and 10 skip**, with nothing failing. A volume with no bin and a share are both
+unmeasured here: measure before quoting either. `--all` prints the counts, so a count in a document
+that disagrees with them is the document being wrong.
 
 ## Performance, measured
 
-**Read this before changing anything to do with how many threads the native backend uses.** The
+**Read this before changing anything to do with how many threads the recycle uses.** The
 figures below were measured on this machine over batches of 3,000 items, and they are the reason the
 code looks the way it does. Parallelising more of it is not an improvement, and on this machine most of
 it is the opposite of one.
@@ -110,15 +100,11 @@ Two measurements that are worth not re-deriving:
   on `E:` (mechanical) and 625 on `C:` (solid-state) — the cost is filesystem round trips, not bandwidth.
   Four-kilobyte files recycled at 583 and 662, within the run-to-run spread, so the file size is not
   part of the cost either.
-- **The native backend beats the Shell path on this machine by 2.7x to 2.9x** — 616 against 213 files/s
-  on `E:`, 625 against 229 on `C:`. That margin comes from fewer round trips per path, not from threads,
-  and it is why the optimisation effort went into syscall count: the recycle path does three — one
-  `FileInfo` query in validation, one create-and-write for the record, one move.
+- **A recycle costs three round trips per path**: one `FileInfo` query in validation, one
+  create-and-write for the record, one move. That is what the optimisation effort went into.
 
-  Every figure above is the median of three runs of a 3,000-file batch, and the single-sample numbers
-  that came before them read roughly 10% higher on both paths. A ratio is the trustworthy figure and an
-  absolute one is not: the Shell path on this machine drifts between runs, so a lone measurement makes
-  the native backend look faster than a repeated one does.
+  Every figure above is the median of three runs of a 3,000-file batch. A ratio is the trustworthy figure and an
+  absolute one is not.
 
 Do not add parallelism to the recycle path. If a future measurement on some other hardware says
 otherwise, that measurement goes here first, and the constant it changed goes in the same commit.
@@ -143,18 +129,16 @@ Where a case needs a volume that has no Recycle Bin, it asks the library what th
 what is not on the disk.
 
 A third one is worth knowing about, because it looks like a leftover and is not:
-`NoRecycleBinAction.AllowIndeterminate` hands a path to the backend on a volume the library reports no
-bin for, and the native backend answers that by creating the per-user directory under `$RECYCLE.BIN`
-and recycling into it, rather than destroying the file the way the Shell would. So running on a volume
-that has no Recycle Bin **can leave one there**. `FacadeSuite.NoRecycleBinOptionDecidesWhetherTheShellIsAsked`
-is the case that does it — it is the only one, and it empties the directory and removes it again in a
-`finally`, and only when it was the case that made it. A run on a bin-less volume that leaves a
-`$RECYCLE.BIN` behind has not found a bug; it has found a run of a suite where that case did not finish.
+`NoRecycleBinAction.AllowIndeterminate` hands a path to the engine on a volume the library reports no
+bin for, and the engine answers that by creating the per-user directory under `$RECYCLE.BIN`
+and recycling into it. So running on a volume that has no Recycle Bin **can leave one there**.
+`FacadeSuite.NoRecycleBinOptionDecidesWhetherThePathIsRecycled` is the case that does it — it is the
+only one, and it empties the directory and removes it again in a `finally`, and only when it was the
+case that made it. A run on a bin-less volume that leaves a `$RECYCLE.BIN` behind has not found a bug;
+it has found a run of a suite where that case did not finish.
 
-Two things leave the working directory and are not the tests' doing: the `$RCW-…` staging directories
-`LongPathStager` creates in the volume root, because a staging path has to be short and the volume root is
-the shortest place on the right volume; and `EmptySuite` emptying the volume's Recycle Bin, which is the
-only way to assert that an entry really left.
+Two things leave the working directory and are not the tests' doing: `EmptySuite` emptying the
+volume's Recycle Bin, which is the only way to assert that an entry really left.
 
 ### A known limit
 
@@ -174,7 +158,7 @@ the source.
 repetition, or a bound measured in elapsed time. The number of files it touches is not the test: ten files
 of ten bytes are not a load case, and neither is a single 10 MB file, and neither is a batch of five small
 files recycled in one call. Ask what the machine is doing — `StressSuite` regenerates a 94-file fixture set
-ten times and moves 204 files through the Shell, which is where the disk gets worked hard enough to notice.
+ten times and moves 204 files, which is where the disk gets worked hard enough to notice.
 A batch over the whole fixture set is a load case on its own; the fixture set is 94 files of 64 KiB, so
 creating and moving all of them is 5.75 MiB of writing for one call that still finishes in about a second.
 
