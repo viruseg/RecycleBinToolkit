@@ -61,8 +61,8 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeListingFindsAnEntryNativeRecycleRecorded), NativeListingFindsAnEntryNativeRecycleRecorded),
         new TestCase("NativeBinSuite." + nameof(NativeListingReportsARecycledDirectoryAsADirectory), NativeListingReportsARecycledDirectoryAsADirectory),
         new TestCase("NativeBinSuite." + nameof(NativeListingOfAVolumeWithNoBinDirectoryIsEmpty), NativeListingOfAVolumeWithNoBinDirectoryIsEmpty),
-        new TestCase("NativeBinSuite." + nameof(NativeListingToleratesAnIndexWhosePayloadIsGone), NativeListingToleratesAnIndexWhosePayloadIsGone),
-        new TestCase("NativeBinSuite." + nameof(NativeListingRecordsAnIndexItCannotRead), NativeListingRecordsAnIndexItCannotRead),
+        new TestCase("NativeBinSuite." + nameof(NativeListingHidesAnIndexWhosePayloadIsGone), NativeListingHidesAnIndexWhosePayloadIsGone),
+        new TestCase("NativeBinSuite." + nameof(NativeListingIsUndisturbedByARecordItCannotRead), NativeListingIsUndisturbedByARecordItCannotRead),
         new TestCase("NativeBinSuite." + nameof(ADriveIsClassifiedFromItsOwnSeekPenaltyAnswer), ADriveIsClassifiedFromItsOwnSeekPenaltyAnswer),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts), NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyOfAVolumeWithNothingInItReportsNothing), NativeEmptyOfAVolumeWithNothingInItReportsNothing),
@@ -526,7 +526,7 @@ internal static class NativeBinSuite
         Check.Equal(path, item.OriginalPath, "the listing names the path the file was deleted from");
         Check.Equal(size, item.Size, "with the size the file had, which is what the record carried");
         Check.False(item.IsDirectory, "and it is not a directory");
-        Check.True(File.Exists(item.RecycledPath), $"its payload is where the listing says ({item.RecycledPath})");
+        Check.True(File.Exists(item.PayloadPath), $"its payload is where the listing says ({item.PayloadPath})");
 
         workspace.Dispose();
     }
@@ -553,7 +553,7 @@ internal static class NativeBinSuite
 
         Check.True(item.IsDirectory, "the listing says it is a directory");
         Check.Equal(0, item.Size, "with the size of zero the record carries for one");
-        Check.True(Directory.Exists(item.RecycledPath), $"and the payload is a directory ({item.RecycledPath})");
+        Check.True(Directory.Exists(item.PayloadPath), $"and the payload is a directory ({item.PayloadPath})");
 
         workspace.Dispose();
     }
@@ -585,7 +585,7 @@ internal static class NativeBinSuite
         Check.False(Directory.Exists(NativeBinLayout.BinDirectory(root)), "and here it does not exist");
 
         var contents = await Task
-            .Run(() => NativeBinLister.TryEnumerate([root], context.CancellationToken), context.CancellationToken)
+            .Run(() => NativeBinLister.TryEnumerate([root], RecycleBinOptions.Default, context.CancellationToken), context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.Equal(0, contents.Items.Count, "a volume with no bin yields no items");
@@ -596,11 +596,15 @@ internal static class NativeBinSuite
 
     /// <summary>
     /// A record whose payload is gone — a crash between the two writes, or an empty that ran while a listing
-    /// was in flight — is still an entry the bin knows about. The listing reports it, because the record is
-    /// what the bin holds and the payload is one missing file rather than a reason to fail the whole
-    /// listing.
+    /// was in flight — is not an entry a caller can be told about. There is no file left to report a size
+    /// for, and its record is litter the next empty collects, not a row in a listing.
     /// </summary>
-    private static async Task NativeListingToleratesAnIndexWhosePayloadIsGone(TestContext context)
+    /// <remarks>
+    /// What the empty does with such a record is not asserted here, and deliberately so: this case is about
+    /// what a listing says, and emptying the volume's whole Recycle Bin to find out would cost the run
+    /// seconds of disk and change what every later case sees on this volume.
+    /// </remarks>
+    private static async Task NativeListingHidesAnIndexWhosePayloadIsGone(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
@@ -617,20 +621,22 @@ internal static class NativeBinSuite
         File.Delete(payloadPath);
 
         var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
-        var item = contents.Items.FirstOrDefault(i => string.Equals(i.OriginalPath, path, StringComparison.OrdinalIgnoreCase));
 
-        Check.NotNull(item, "the entry is still listed, because its record is still there");
-        Check.Equal(payloadPath, item!.RecycledPath, "with the payload path the record's name gives");
-        Check.False(File.Exists(item.RecycledPath), "which no longer resolves to anything, and that is not a failure");
+        Check.False(
+            contents.Items.Any(i => string.Equals(i.OriginalPath, path, StringComparison.OrdinalIgnoreCase)),
+            "the entry is not listed, because there is no payload left to say what it is");
+        Check.Equal(0, contents.Failures.Count, "and an entry with nothing behind it is not a failure either");
+        Check.True(File.Exists(indexPath), "while its record is still on the volume, for the next empty to collect");
 
         workspace.Dispose();
     }
 
     /// <summary>
-    /// One record nobody can read must not cost the caller the rest of the bin. A bin of ninety thousand
-    /// entries with one locked is a listing of ninety thousand, not an exception and not ninety failures.
+    /// A listing that reads no records cannot be disturbed by one nobody can read. Locking an entry's
+    /// record used to cost a caller a failure line; now the listing never opens it, and the entry is
+    /// returned like any other — with its details waiting for whoever asks.
     /// </summary>
-    private static async Task NativeListingRecordsAnIndexItCannotRead(TestContext context)
+    private static async Task NativeListingIsUndisturbedByARecordItCannotRead(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
@@ -650,9 +656,8 @@ internal static class NativeBinSuite
             contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
         }
 
-        Check.Equal(1, contents.Failures.Count, "exactly one entry is reported as unreadable");
-        Check.Equal(RecycleFailureStage.Enumeration, contents.Failures[0].Stage, "at the stage where a listing reports what it could not read");
-        Check.Equal(baseline - 1, contents.Items.Count, "and every other entry is still returned");
+        Check.Equal(0, contents.Failures.Count, "no record is opened, so none of them can be unreadable");
+        Check.Equal(baseline, contents.Items.Count, "and every entry is returned, the locked one included");
 
         workspace.Dispose();
     }
@@ -850,7 +855,7 @@ internal static class NativeBinSuite
         var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken), path);
 
         Check.Equal(path, item.OriginalPath, "the native listing names the path the Shell recorded it from");
-        Check.True(File.Exists(item.RecycledPath), $"and points at a payload that is really there ({item.RecycledPath})");
+        Check.True(File.Exists(item.PayloadPath), $"and points at a payload that is really there ({item.PayloadPath})");
 
         workspace.Dispose();
     }
@@ -874,7 +879,7 @@ internal static class NativeBinSuite
         Check.Equal(path, item.OriginalPath, "the Shell listing names the path this backend recorded it from");
         Check.Equal(Content.Length, item.Size, "with the size the record carried");
         Check.False(item.IsDirectory, "and reports it as the file it is");
-        Check.True(File.Exists(item.RecycledPath), $"pointing at the payload ({item.RecycledPath})");
+        Check.True(File.Exists(item.PayloadPath), $"pointing at the payload ({item.PayloadPath})");
 
         workspace.Dispose();
     }
@@ -901,7 +906,7 @@ var path = CreateDeepFile(PastMaxPath);
         var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken), path);
 
         Directory.CreateDirectory(Path.GetDirectoryName(item.OriginalPath)!);
-        File.Move(item.RecycledPath, item.OriginalPath);
+        File.Move(item.PayloadPath, item.OriginalPath);
 
         // The last component only. A deep path in a failure message is a line no one can read and a length
         // this suite is not meant to be printing, and the assertion is about the bytes either way.
@@ -1114,12 +1119,12 @@ var path = CreateDeepFile(PastMaxPath);
         var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken), outer);
 
         Check.True(item.IsDirectory, "the listing reports it as a directory");
-        Check.True(Directory.Exists(item.RecycledPath), $"whose whole tree came with it ({item.RecycledPath})");
+        Check.True(Directory.Exists(item.PayloadPath), $"whose whole tree came with it ({item.PayloadPath})");
 
         // Only ever the last component of anything found: the payload sits under a path this suite must not
         // print, and a recursive enumeration of a path this deep would be as much a violation as it would be
         // a long-path operation. What is checked is that the nesting survived the move intact.
-        var walk = item.RecycledPath;
+        var walk = item.PayloadPath;
 
         for (var level = 0; level < depth - 1; level++)
         {

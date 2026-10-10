@@ -49,7 +49,10 @@ internal static class ListerSuite
 
         var item = contents.Items.FirstOrDefault(i => IsSamePath(i, files[0]));
         Check.NotNull(item, $"the recycled file is listed under the path it was deleted from ({contents.Items.Count} item(s) on the machine)");
-        Check.Equal(Path.GetFileName(files[0]), item!.Name, "the name is the file name it had before deletion");
+        Check.Equal(
+            Path.GetFileName(files[0]),
+            Path.GetFileName(item!.OriginalPath),
+            "the name it had before deletion is the last component of the path it is listed under");
         Check.Equal(fileSize, item.Size, $"the size is the {fileSize} bytes that reached the Recycle Bin");
         Check.False(item.IsDirectory, "a file is not reported as a directory");
         Check.True(item.DeletedAt >= deletedAfter, $"the deletion time is from this run, not a default value (got {item.DeletedAt:O})");
@@ -79,11 +82,11 @@ internal static class ListerSuite
 
         var item = contents.Items.FirstOrDefault(i => IsSamePath(i, files[0]));
         Check.NotNull(item, "the recycled file is listed");
-        Check.NotNull(item!.RecycledPath, "the physical Recycle Bin path is reported");
+        Check.NotNull(item!.PayloadPath, "the physical Recycle Bin path is reported");
         Check.True(
-            RecycleBinReceipt.IsInsideRecycleBin(item.RecycledPath, files[0]),
-            $"the physical path is a Recycle Bin location on the item's own volume (got '{item.RecycledPath}')");
-        Check.True(File.Exists(item.RecycledPath), $"the physical path is where the bytes actually are (got '{item.RecycledPath}')");
+            RecycleBinReceipt.IsInsideRecycleBin(item.PayloadPath, files[0]),
+            $"the physical path is a Recycle Bin location on the item's own volume (got '{item.PayloadPath}')");
+        Check.True(File.Exists(item.PayloadPath), $"the physical path is where the bytes actually are (got '{item.PayloadPath}')");
 
         workspace.Dispose();
     }
