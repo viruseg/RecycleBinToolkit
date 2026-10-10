@@ -3,7 +3,7 @@ using System.Runtime.Versioning;
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Reads a volume's Recycle Bin by enumerating its entries, with no Shell anywhere in the path.
+/// Reads a volume's Recycle Bin by enumerating its entries.
 /// </summary>
 /// <remarks>
 /// What an item is — a directory or a file, and how large it is — comes from the bin directory itself, which

@@ -6,9 +6,8 @@ namespace RecycleBinToolkit;
 /// <remarks>
 /// A value type because a batch is a list of these and is held for the whole operation. As a reference
 /// type every path the caller ever passes would cost an object header and three references on top of the
-/// slot it occupies, which is a few megabytes of short-lived garbage across a hundred thousand paths for
-/// an operation dominated by Shell latency. Inline in the list, a target costs its three references and
-/// nothing else.
+/// slot it occupies, which is a few megabytes of short-lived garbage across a hundred thousand paths.
+/// Inline in the list, a target costs its two references and nothing else.
 /// </remarks>
 internal readonly struct RecycleTarget
 {
@@ -19,23 +18,18 @@ internal readonly struct RecycleTarget
     /// </summary>
     /// <param name="inputPath">The caller's path, kept verbatim so diagnostics point at what they wrote.</param>
     /// <param name="fullPath">
-    /// The normalised absolute path, extended-length prefixed when the caller's path was. This is
-    /// what the file APIs take.
-    /// </param>
-    /// <param name="shellPath">
-    /// The same location without the <c>\\?\</c> prefix. The Shell's own path parser rejects the
-    /// extended-length form with <c>E_INVALIDARG</c>, so this is what it receives.
+    /// The normalised absolute path, as validated. This is what the file APIs take, and what decides
+    /// whether the item is gone after the move.
     /// </param>
     /// <param name="attributes">What the filesystem said about the path when it was validated.</param>
     /// <param name="size">
     /// The item's size in bytes as it was then, or 0 for a directory and for a path that could not be
     /// measured.
     /// </param>
-    internal RecycleTarget(string inputPath, string fullPath, string shellPath, FileAttributes attributes, long size)
+    internal RecycleTarget(string inputPath, string fullPath, FileAttributes attributes, long size)
     {
         InputPath = inputPath;
         FullPath = fullPath;
-        ShellPath = shellPath;
         Attributes = attributes;
         Size = size;
     }
@@ -44,16 +38,10 @@ internal readonly struct RecycleTarget
     public string InputPath { get; }
 
     /// <summary>
-    /// The normalised absolute path, extended-length prefixed when the caller's path was. This is
-    /// what <see cref="File"/> and <see cref="Directory"/> take, and what decides whether the item
-    /// is gone after a delete.
+    /// The normalised absolute path, as validated. This is what <see cref="File"/> and
+    /// <see cref="Directory"/> take, and what decides whether the item is gone after the move.
     /// </summary>
     public string FullPath { get; }
-
-    /// <summary>
-    /// The same location without the <c>\\?\</c> prefix, which is the only form the Shell accepts.
-    /// </summary>
-    public string ShellPath { get; }
 
     /// <summary>
     /// What the filesystem said about the path when it was validated.
@@ -61,7 +49,7 @@ internal readonly struct RecycleTarget
     /// <remarks>
     /// Validation has to ask whether the path is there, and the answer it gets back already says whether
     /// it is a directory. Carrying that forward costs four bytes on a struct that is already inline in a
-    /// list, and saves the native backend a second query per path to learn the same fact — which on a
+    /// list, and saves a second query per path to learn the same fact — which on a
     /// batch of twenty thousand is twenty thousand filesystem round trips that already happened once.
     /// </remarks>
     public FileAttributes Attributes { get; }
@@ -81,34 +69,14 @@ internal readonly struct RecycleTarget
     public long Size { get; }
 
     /// <summary>
-    /// Returns a copy of this target that hands the Shell a different form of the same location.
-    /// </summary>
-    /// <remarks>
-    /// Only the Shell-facing spelling changes. <see cref="FullPath"/> still names the caller's location,
-    /// because nothing moved: this is the same file under a name the Shell can parse.
-    /// </remarks>
-    /// <param name="shellPath">Replacement for <see cref="ShellPath"/>.</param>
-    internal RecycleTarget WithShellPath(string shellPath) => new(InputPath, FullPath, shellPath, Attributes, Size);
-
-    /// <summary>
-    /// Returns a copy of this target that names where the item actually is now, after being moved.
-    /// </summary>
-    /// <remarks>
-    /// Both locations change, and that is the difference from <see cref="WithShellPath"/>. A staged item
-    /// is not the caller's file under another name: it has been renamed, so the original location is
-    /// empty. Leaving <see cref="FullPath"/> on the caller's path would make every later question asked of
-    /// it answer about a place the item is no longer at — the disk check would find nothing where the item
-    /// never was, and a move back would be asked to move a path onto itself.
-    /// </remarks>
-    /// <param name="movedFullPath">Where the item now is, in the form the file APIs take.</param>
-    internal RecycleTarget WithMovedTo(string movedFullPath) => new(InputPath, movedFullPath, StripExtendedPrefix(movedFullPath), Attributes, Size);
-
-    /// <summary>
     /// Drops every target after the first that names the same file, so two spellings of one path cannot
     /// end up with separate verdicts.
     /// </summary>
     /// <remarks>
-    /// <c>X:\A.BIN</c> and <c>x:\a.bin</c> have to meet here, or the bin is handed two entries for one file.
+    /// Compared on the normalised path, so <c>X:\A.BIN</c> and <c>x:\a.bin</c> meet here. A caller-spelled
+    /// extended prefix (<c>\\?\X:\a.bin</c>) is a different string from the plain form and is kept as its
+    /// own entry: both spellings reach the same file, the first move wins and the second is reported as a
+    /// failure rather than recycled twice.
     /// </remarks>
     /// <param name="targets">Paths to collapse.</param>
     internal static IReadOnlyList<RecycleTarget> CollapseEquivalent(IReadOnlyList<RecycleTarget> targets)
@@ -118,7 +86,7 @@ internal readonly struct RecycleTarget
 
         foreach (var target in targets)
         {
-            if (seen.Add(target.ShellPath))
+            if (seen.Add(target.FullPath))
             {
                 unique.Add(target);
             }
@@ -132,10 +100,8 @@ internal readonly struct RecycleTarget
     /// </summary>
     /// <remarks>
     /// Only the device form counts. <c>\\?\Volume{GUID}\…</c> is the only spelling such a volume has,
-    /// and the Shell's item parser rejects it with <c>E_INVALIDARG</c> — measured — while nothing above
-    /// this library can read it either: <c>DriveInfo</c> throws on the path and
-    /// <c>SHQueryRecycleBin</c> refuses it, so there is no drive letter to measure, empty or report
-    /// against.
+    /// and nothing above this library can read it: <c>DriveInfo</c> throws on the path, so there is no
+    /// drive letter to measure, empty or report against.
     /// <para>
     /// The test is anchored to the prefix rather than to the <c>Volume{</c> text, because that text also
     /// names an ordinary directory. <c>Path.GetFullPath(@"Volume{guid}\file")</c> resolves to
@@ -160,7 +126,7 @@ internal readonly struct RecycleTarget
         path.AsSpan(ExtendedPrefix.Length).StartsWith("Volume{", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Removes an extended-length prefix so the Shell can parse the path.
+    /// Removes an extended-length prefix for display and root comparisons.
     /// </summary>
     /// <remarks>
     /// A <c>\\?\UNC\server\share</c> prefix becomes <c>\\server\share</c>, since the UNC form is

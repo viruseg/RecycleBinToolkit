@@ -7,10 +7,10 @@ using Windows.Win32.System.SystemInformation;
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Decides whether this machine can be written to by the native backend at all.
+/// Decides whether this machine's Recycle Bin can be written to at all.
 /// </summary>
 /// <remarks>
-/// The native backend writes index records of version 2. The first Windows build whose own Shell reads
+/// This library writes index records of version 2. The first Windows build whose own Shell reads
 /// them is <see cref="MinimumBuild"/>; below that the Shell reads a record, does not understand it, and
 /// leaves the caller with an item in the bin that cannot be restored. That is not a slower outcome, it is a
 /// lost one, which is why it is refused rather than warned about.
@@ -18,7 +18,7 @@ namespace RecycleBinToolkit;
 /// The version comes from <c>RtlGetVersion</c> rather than from <see cref="Environment.OSVersion"/> or
 /// <see cref="OperatingSystem"/>. Both of those report the framework's declared minimum instead of the
 /// running system whenever that minimum is below it, and this assembly declares
-/// <c>windows6.0.6000</c> — so the shim would answer with exactly the version on which this backend is
+/// <c>windows6.0.6000</c> — so the shim would answer with exactly the version on which writing is
 /// refused. The native call answers with the machine.
 /// </para>
 /// </remarks>
@@ -47,7 +47,7 @@ internal static class RecycleBinBackendGuard
     internal static (int Major, int Minor, int Build) RunningVersion => LazyRunningVersion.Value;
 
     /// <summary>
-    /// Refuses the native write path on a machine whose Shell could not read what it writes.
+    /// Refuses the write path on a machine whose Shell could not read what it writes.
     /// </summary>
     /// <remarks>
     /// The refusal is not a <see cref="RecycleFailure"/> and not something

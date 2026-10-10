@@ -7,10 +7,7 @@ namespace RecycleBinToolkit;
 /// </summary>
 /// <remarks>
 /// The counts come from the walk itself: it says what each entry is and how large its payload is, so an
-/// empty of ninety thousand entries measures them without reading a record. <c>SHEmptyRecycleBin</c> reports
-/// whether it worked and says nothing about what it removed, which is why the Shell path samples
-/// <c>SHQueryRecycleBin</c> on both sides of the call and reports the difference — a number that a recycle
-/// happening at the same moment can move.
+/// empty of ninety thousand entries measures them without reading a record.
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class NativeBinEmptier
@@ -20,8 +17,8 @@ internal static class NativeBinEmptier
     /// </summary>
     /// <param name="volumeRoots">Volume roots to empty, each normalised with a trailing separator.</param>
     /// <param name="cancellationToken">
-    /// Cancels the sweep between entries. Unlike the Shell path, which cannot stop an empty it has started,
-    /// this one stops — the entry it is in the middle of is finished and the next is not begun.
+    /// Cancels the sweep between entries: the entry it is in the middle of is finished and the next is
+    /// not begun.
     /// </param>
     /// <returns>
     /// Every volume whose bin directory existed, the exact number of entries removed, their exact total
@@ -113,10 +110,10 @@ internal static class NativeBinEmptier
 
         Remove(records, sizes, failures, cancellationToken);
 
-        // A volume is named as emptied only when nothing on it was left behind, which is the rule the Shell
-        // path applies for the same reason: a caller reading VolumesEmptied is asking whether that volume
-        // is empty now, and a bin that kept a locked entry is not. The failures themselves name the entries,
-        // so nothing is lost by leaving the volume off the list.
+        // A volume is named as emptied only when nothing on it was left behind: a caller reading
+        // VolumesEmptied is asking whether that volume is empty now, and a bin that kept a locked entry
+        // is not. The failures themselves name the entries, so nothing is lost by leaving the volume off
+        // the list.
         if (failures.Count == failuresBefore)
         {
             emptied.Add(volumeRoot);

@@ -12,7 +12,7 @@ namespace RecycleBinToolkit;
 public enum NoRecycleBinAction
 {
     /// <summary>
-    /// Refuse the path and leave the file where it is. Nothing is handed to the Shell, so nothing can
+    /// Refuse the path and leave the file where it is. Nothing is attempted, so nothing can
     /// remove the file behind the caller's back.
     /// </summary>
     /// <remarks>
@@ -28,14 +28,11 @@ public enum NoRecycleBinAction
     /// </summary>
     /// <remarks>
     /// Covers <see cref="RecycleBinAvailabilityReason.Indeterminate"/> and
-    /// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/>, and with them the risk the
-    /// caller is accepting: on a volume the Shell reports no bin for it removes the file for good and
-    /// still reports success, so the path comes back in <see cref="RecycleBinResult.RecycledPaths"/>
-    /// and never in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>. The two reasons are not the
-    /// same risk — an <see cref="RecycleBinAvailabilityReason.Indeterminate"/> volume is most often one
-    /// whose probe found a bin, which recycles normally.
+    /// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/>: the path is recycled anyway, so
+    /// it comes back in <see cref="RecycleBinResult.RecycledPaths"/> and never in
+    /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
     /// <para>
-    /// The engine can create the per-user directory under <c>$RECYCLE.BIN</c> and recycle into it, so the
+    /// The engine creates the per-user directory under <c>$RECYCLE.BIN</c> and recycles into it, so the
     /// file survives — and the volume, which had no Recycle Bin, now has one. That is a change to the
     /// volume a caller did not ask for and is visible in Explorer. A caller who does not want a bin
     /// created on that volume wants <see cref="DeletePermanently"/>, which says so, or
@@ -45,15 +42,12 @@ public enum NoRecycleBinAction
     AllowIndeterminate = 1,
 
     /// <summary>
-    /// Remove the path for good, without asking the Shell, and list it in
+    /// Remove the path for good and list it in
     /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> unless the file system refuses.
     /// </summary>
     /// <remarks>
     /// It is never listed in <see cref="RecycleBinResult.RecycledPaths"/>: calling a permanent deletion
-    /// recycled would tell the caller the opposite of what happened. The removal is this library's own
-    /// rather than the Shell's, because on such a volume the Shell's only move is to destroy the file and
-    /// it reports the delete as a success — which is the risk <see cref="AllowIndeterminate"/> accepts and
-    /// this value does not.
+    /// recycled would tell the caller the opposite of what happened.
     /// <para>
     /// A file system that refuses the removal is reported at
     /// <see cref="RecycleFailureStage.PermanentDeleteFailed"/> carrying its own code, and the file stays

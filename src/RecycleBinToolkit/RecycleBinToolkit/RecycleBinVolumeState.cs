@@ -63,16 +63,14 @@ internal static class RecycleBinVolumeState
             setting is RecycleBinVolumePolicy.VolumeRecycleSetting.Nukes);
 
         // A policy, a volume type that never had a bin, and a volume set to delete outright are all
-        // reasons the caller can act on, and each of them is settled above. The Shell could only
-        // contradict one, which would throw away the reason the caller needs.
+        // reasons the caller can act on, and each of them is settled above.
         if (configured is not (RecycleBinAvailabilityReason.Enabled or RecycleBinAvailabilityReason.Indeterminate))
         {
             return new RecycleBinStatus(root, driveType, configured);
         }
 
         // Windows recorded this volume as recycling, so the answer is that reading and nothing has to be
-        // asked. This is what keeps the probe off the hot path: a volume reading NukeOnDelete=0 never
-        // reaches the Shell at all.
+        // asked.
         if (setting is RecycleBinVolumePolicy.VolumeRecycleSetting.Recycled)
         {
             return new RecycleBinStatus(root, driveType, configured);
@@ -126,8 +124,8 @@ internal static class RecycleBinVolumeState
     /// <para>
     /// An empty path is refused before that comparison, because it is the one input with no root to
     /// reduce: <see cref="Path.GetPathRoot(string)"/> answers nothing for it, and an absent answer on both
-    /// sides would agree. Left alone, a caller passing an empty string gets a root of <c>"\</c> — which
-    /// the Shell accepts as a volume and reports emptied.
+    /// sides would agree. Left alone, a caller passing an empty string gets a root of <c>"\"</c>,
+    /// which is not a volume at all.
     /// </para>
     /// </remarks>
     internal static bool IsVolumeRoot(string volumeRoot) =>
@@ -173,7 +171,7 @@ internal static class RecycleBinVolumeState
 
     /// <summary>
     /// Reads the name the per-volume Recycle Bin setting is keyed on: the volume's GUID in braces,
-    /// which is what the subkey under the Shell's own per-volume list is called.
+    /// which is what the subkey under the per-volume list is called.
     /// </summary>
     /// <remarks>
     /// Not the <c>\\?\Volume{…}\</c> device path the volume API answers with. That path is how Win32
@@ -213,8 +211,8 @@ internal static class RecycleBinVolumeState
     }
 
     /// <summary>
-    /// The volume a path belongs to, always in the form the Shell and the volume APIs accept: a root with
-    /// a trailing separator and no extended-length prefix.
+    /// The volume a path belongs to: a root with a trailing separator and no extended-length prefix,
+    /// in the form the volume APIs accept.
     /// </summary>
     /// <remarks>
     /// <see cref="Path.GetPathRoot(string)"/> answers <c>X:</c> for a bare drive letter, which is a

@@ -91,7 +91,7 @@ internal static class RecycleBinVolumePolicy
     }
 
     /// <summary>
-    /// Decides whether a reason stops the path from being handed to the Shell at all.
+    /// Decides whether a reason stops the path from being attempted at all.
     /// </summary>
     /// <param name="reason">The reason <see cref="Classify"/> — or a probe — produced.</param>
     /// <param name="action">What the caller asked for on a volume that cannot recycle.</param>

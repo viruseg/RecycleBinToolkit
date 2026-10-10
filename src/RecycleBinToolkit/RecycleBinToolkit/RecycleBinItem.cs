@@ -5,13 +5,9 @@ namespace RecycleBinToolkit;
 /// </summary>
 /// <remarks>
 /// <see cref="Size"/> and <see cref="IsDirectory"/> are known the moment the entry is enumerated.
-/// <see cref="OriginalPath"/> and <see cref="DeletedAt"/> are not: on the native backend they live in the
+/// <see cref="OriginalPath"/> and <see cref="DeletedAt"/> are not: they live in the
 /// entry's <c>$I</c> record, and reading every one of those is the whole cost of a listing. The first
 /// access to either field reads that record once and answers both.
-/// <para>
-/// On the Shell backend every field is already known when the listing is built, so nothing here is ever
-/// read after the fact.
-/// </para>
 /// </remarks>
 public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
 {

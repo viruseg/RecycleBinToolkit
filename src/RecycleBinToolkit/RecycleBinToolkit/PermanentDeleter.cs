@@ -7,11 +7,7 @@ namespace RecycleBinToolkit;
 /// gone.
 /// </summary>
 /// <remarks>
-/// The Shell is not involved, which is the point of it. On a volume whose Recycle Bin is known to be
-/// unusable the Shell's only move is to destroy the file, and it reports the delete as a success while
-/// doing so, so asking it to delete is asking for the outcome this library exists to refuse. Two routes
-/// share this one: a path the Shell would not take because of its length, and a path the caller has said
-/// may go because its volume cannot recycle it.
+/// Two routes share this one: a path the caller has said may go because its volume cannot recycle it.
 /// </remarks>
 internal static class PermanentDeleter
 {

@@ -34,8 +34,9 @@ internal static class ItemDetailLoader
     {
         ArgumentNullException.ThrowIfNull(items);
 
-        // Nothing to do is the common case twice over: a Shell listing, and a native listing that read its
-        // records up front. Both are answered by a single walk of the items that touches no disk.
+        // Nothing to do is the common case twice over: a listing that read its records up front, and
+        // one whose details are already in memory. Both are answered by a single walk of the items that
+        // touches no disk.
         if (!HasPending(items, cancellationToken))
         {
             return;

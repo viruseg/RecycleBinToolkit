@@ -4,7 +4,7 @@ using System.Security.Principal;
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Where the native backend keeps things: which directory holds a volume's bin, and what the two halves
+/// Where things are kept: which directory holds a volume's bin, and what the two halves
 /// of one entry are called.
 /// </summary>
 /// <remarks>

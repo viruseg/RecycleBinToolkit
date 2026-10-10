@@ -40,23 +40,6 @@ public sealed class RecycleBinOptions
     public TimeSpan OverallTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// When set, a reported post-delete location is rejected unless it is inside
-    /// <c>$RECYCLE.BIN</c> on the item's volume. The default is <c>true</c>.
-    /// </summary>
-    /// <remarks>
-    /// This rejects a delete placed outside the bin. It cannot prove a file reached the
-    /// Recycle Bin in the other direction: no location is reported at all for some successful
-    /// deletes, and a missing location cannot be distinguished from a completed delete.
-    /// Turning this off trades that check for slightly less work per item.
-    /// <para>
-    /// The engine chooses the destination itself, so there is no reported location to disagree with
-    /// anything, and the same question it would ask is true of every path by construction — it is
-    /// asserted in a Debug build instead of run per item.
-    /// </para>
-    /// </remarks>
-    public bool VerifyRecycleBinReceipt { get; init; } = true;
-
-    /// <summary>
     /// Whether a failure raises an exception instead of being reported through
     /// <see cref="RecycleBinResult.Failures"/>.
     /// </summary>
@@ -66,30 +49,10 @@ public sealed class RecycleBinOptions
     public bool ThrowOnError { get; init; } = true;
 
     /// <summary>
-    /// What happens to a file whose path is too long for the Shell to recycle. The default is
-    /// <see cref="LongPathFailureAction.Throw"/>, which refuses it and leaves the file in place.
-    /// </summary>
-    /// <remarks>
-    /// Set <see cref="LongPathFailureAction.DeletePermanently"/> to remove it instead, in which case the
-    /// path also appears in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
-    /// <para>
-    /// None of this applies to a path on a volume that cannot recycle it under the two actions that
-    /// settle the volume first. <see cref="NoRecycleBinAction.Throw"/> refuses such a path at
-    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> with the file left in place, and
-    /// <see cref="NoRecycleBinAction.DeletePermanently"/> has the volume gate remove it outright, so it
-    /// arrives in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> from there rather than from
-    /// here. Under <see cref="NoRecycleBinAction.AllowIndeterminate"/> the path is handed over, and
-    /// this action is what then decides its fate. See <see cref="NoRecycleBinAction"/>.
-    /// </para>
-    /// </remarks>
-    public LongPathFailureAction LongPathFailureAction { get; init; } = LongPathFailureAction.Throw;
-
-    /// <summary>
     /// What happens to a file whose volume cannot recycle it. The default is
     /// <see cref="NoRecycleBinAction.Throw"/>, which refuses it and leaves the file in place.
     /// </summary>
     /// <remarks>
-    /// This decides whether the path is handed to the Shell at all.
     /// <see cref="ThrowOnError"/> still decides whether the refusal raises or is returned through
     /// <see cref="RecycleBinResult.Failures"/>.
     /// </remarks>
@@ -118,16 +81,6 @@ public sealed class RecycleBinOptions
     public bool PreloadItemDetails { get; init; }
 
     /// <summary>
-    /// Longest path the Shell can be asked to recycle, in characters. Measured on this machine: a
-    /// 251-character path recycles, a 261-character path is removed permanently while the operation
-    /// still reports success.
-    /// </summary>
-    /// <remarks>
-    /// The default is <c>260</c>.
-    /// </remarks>
-    public int MaxShellPathLength { get; init; } = 260;
-
-    /// <summary>
     /// Returns a copy with out-of-range values clamped into a usable range, so an unvalidated
     /// caller-supplied instance cannot produce a zero-attempt or negative-delay loop.
     /// </summary>
@@ -136,11 +89,8 @@ public sealed class RecycleBinOptions
         MaxAttempts = Math.Max(1, MaxAttempts),
         InitialRetryDelay = InitialRetryDelay < TimeSpan.Zero ? TimeSpan.Zero : InitialRetryDelay,
         OverallTimeout = ClampTimeout(OverallTimeout),
-        VerifyRecycleBinReceipt = VerifyRecycleBinReceipt,
         ThrowOnError = ThrowOnError,
-        LongPathFailureAction = LongPathFailureAction,
         NoRecycleBinAction = NoRecycleBinAction,
-        MaxShellPathLength = Math.Max(1, MaxShellPathLength),
         PreloadItemDetails = PreloadItemDetails
     };
 

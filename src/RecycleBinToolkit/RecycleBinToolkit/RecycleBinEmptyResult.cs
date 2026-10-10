@@ -12,8 +12,7 @@ public sealed record RecycleBinEmptyResult
     /// <param name="bytesFreed">Bytes those entries occupied.</param>
     /// <param name="failures">Volumes that could not be emptied or measured.</param>
     /// <param name="elapsed">
-    /// Wall-clock time the caller waited. Set by <see cref="RecycleBin.EmptyAsync"/> around the wait for
-    /// the Shell worker, since it is the only place that knows both.
+    /// Wall-clock time the caller waited, from handing the work over to getting this result back.
     /// </param>
     public RecycleBinEmptyResult(
         IReadOnlyList<string> volumesEmptied,
@@ -52,19 +51,15 @@ public sealed record RecycleBinEmptyResult
     /// <summary>
     /// What could not be emptied. Empty when everything asked for was emptied.
     /// <para>
-    /// What a path in this list is depends on the backend. The Shell path names the volume that could not
-    /// be emptied or could not be measured. The native path names the volume when the volume itself could not
-    /// be reached, and the individual index record when a single entry would not delete — because on that
-    /// path an entry is deleted one at a time and the caller is better served by knowing which one stayed.
+    /// The volume when the volume itself could not be reached, and the individual index record when a
+    /// single entry would not delete — because an entry is deleted one at a time and the caller is
+    /// better served by knowing which one stayed.
     /// </para>
     /// </summary>
     public IReadOnlyList<RecycleFailure> Failures { get; }
 
     /// <summary>
-    /// Wall-clock time the caller waited, from handing the work over to getting this result back. On the
-    /// Shell backend that includes waiting for the worker to be free, which for a library that queues
-    /// every operation behind one thread is most of what a caller waits for; the native backend has no
-    /// queue, and the same measurement is the work plus the hop onto the thread pool.
+    /// Wall-clock time the caller waited, from handing the work over to getting this result back.
     /// </summary>
     public TimeSpan Elapsed { get; init; }
 }

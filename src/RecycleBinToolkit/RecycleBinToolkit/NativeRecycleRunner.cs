@@ -4,12 +4,11 @@ using System.Runtime.Versioning;
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Moves paths into <c>$RECYCLE.BIN</c> by writing the record and moving the payload, with no Shell, no
-/// apartment and no staging.
+/// Moves paths into <c>$RECYCLE.BIN</c> by writing the record and moving the payload.
 /// </summary>
 /// <remarks>
 /// Synchronous, because everything it does blocks: a file move is a metadata operation the thread waits
-/// on. It is only ever given a thread from the pool, never a caller's and never the Shell worker's.
+/// on. It is only ever given a thread from the pool, never a caller's.
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class NativeRecycleRunner
@@ -62,10 +61,8 @@ internal static class NativeRecycleRunner
     /// a record changes nothing. That is the difference this measurement is about, and it is why the
     /// parallelism that <see cref="NativeBinLister"/> uses is absent here.
     /// <para>
-    /// Retries are per path rather than per batch, which is the other difference from the Shell path. A
-    /// Shell failure is often a property of the whole operation and answering it again means answering about
-    /// every item; a move that fails is a property of one path, and retrying the others would repeat work
-    /// that already succeeded.
+    /// Retries are per path rather than per batch: a move that fails is a property of one path, and
+    /// retrying the others would repeat work that already succeeded.
     /// </para>
     /// </remarks>
     internal static RecycleBinResult Run(
@@ -82,7 +79,7 @@ internal static class NativeRecycleRunner
 
         if (targets.Count == 0)
         {
-            return RecycleBinResult.Create([], [], stopwatch.Elapsed);
+            return RecycleBinResult.Create([], [], [], stopwatch.Elapsed);
         }
 
         var collapsed = RecycleTarget.CollapseEquivalent(targets);
@@ -185,7 +182,7 @@ internal static class NativeRecycleRunner
     /// </remarks>
     private static bool TryRecycle(RecycleTarget target, Dictionary<string, string> bins, out RecycleFailure? failure)
     {
-        var root = Path.GetPathRoot(target.ShellPath);
+        var root = Path.GetPathRoot(target.FullPath);
 
         if (string.IsNullOrEmpty(root))
         {
@@ -200,7 +197,7 @@ internal static class NativeRecycleRunner
         }
 
         var isDirectory = target.IsDirectory;
-        var extension = Path.GetExtension(target.ShellPath);
+        var extension = Path.GetExtension(target.FullPath);
 
         Span<char> stem = stackalloc char[NativeBinLayout.StemLength];
 
@@ -216,7 +213,7 @@ internal static class NativeRecycleRunner
                 // No query at all. Validation already read the size, and it read it from the same query
                 // that told it the path is a file — which is why the record costs nothing to produce beyond
                 // the write itself.
-                NativeIndexFile.Write(indexPath, target.ShellPath, target.Size, DateTime.UtcNow);
+                NativeIndexFile.Write(indexPath, target.FullPath, target.Size, DateTime.UtcNow);
             }
             catch (IOException ex) when (attempt < NameAttempts && IsNameTaken(ex))
             {
@@ -244,8 +241,8 @@ internal static class NativeRecycleRunner
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
-                // The record names an item that is still where the caller left it, which the Shell would show
-                // as a phantom a user could try and fail to restore. It goes back before the failure does.
+                // The record names an item that is still where the caller left it. It goes back before
+                // the failure does.
                 TryDeleteIndex(indexPath);
 
                 // A move refused because the name was taken is the same collision as above, arriving from
@@ -260,35 +257,12 @@ internal static class NativeRecycleRunner
                 return false;
             }
 
-            // Not a runtime check, and not because the invariant is unimportant. The payload was named from
-            // the bin directory of the root taken from this very target, so the destination is inside the
-            // right bin on the right volume by construction — the question is true before it is asked, and
-            // asking it anyway costs two prefixes stripped off, two roots derived and a walk of the segments
-            // on every path of every batch. RecycleBinOptions.VerifyRecycleBinReceipt exists for a failure
-            // the Shell can commit and this backend cannot: it chooses the destination itself rather than
-            // being handed one, and File.Move either moves or throws. So the invariant is asserted rather
-            // than enforced, which keeps it checked on every run of the suite — that is a Debug build —
-            // and costs a Release build nothing.
-            Debug.Assert(
-                IsRecycled(payloadPath, target),
-                "the payload just moved has to sit inside the bin of the volume it came from");
-
+            // The payload was named from the bin directory of the root taken from this very target,
+            // so it sits inside the right bin on the right volume by construction.
             failure = null;
             return true;
         }
     }
-
-    /// <summary>
-    /// Whether the payload was aimed at a Recycle Bin on the item's own volume.
-    /// </summary>
-    /// <remarks>
-    /// A question about two strings rather than about the disk, and the difference from a Shell receipt is
-    /// the whole of it. <see cref="RecycleBinReceipt.IsInsideRecycleBin"/> answers for a destination the
-    /// Shell reported, where the answer can disagree with where the item came from; here both sides are
-    /// built from the same target, which is why this is asserted and not run on every path.
-    /// </remarks>
-    private static bool IsRecycled(string payloadPath, RecycleTarget target) =>
-        RecycleBinReceipt.IsInsideRecycleBin(payloadPath, target.ShellPath);
 
     /// <summary>
     /// Whether a refusal was this name being taken rather than the item being unavailable.
