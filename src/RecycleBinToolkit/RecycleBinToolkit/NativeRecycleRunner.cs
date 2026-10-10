@@ -134,6 +134,15 @@ internal static class NativeRecycleRunner
             }
         }
 
+        // The whole batch went, which is the outcome nearly every batch has. Nothing is left to report and
+        // nothing is left to have given up, so the two collections below would both come out empty — and
+        // assembling them first means hashing every InputPath in the batch twice for an answer already
+        // decided. Each of those paths is long and compared case-insensitively, which is why it shows up.
+        if (failuresByPath.Count == 0 && pending.Count == 0)
+        {
+            return RecycleBinResult.Create(recycled, [], [], stopwatch.Elapsed);
+        }
+
         // A path that gave up with no verdict of its own is one the loop stopped before it could record, and
         // the round it stopped on is the one it is reported at. Held as a set rather than found by scanning
         // the pending list: the scan compares RecycleTarget structs field by field, and asking N of them
