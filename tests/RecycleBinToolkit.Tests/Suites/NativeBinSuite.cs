@@ -96,6 +96,8 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(LoadItemDetailsSkipsWhatTheListingAlreadyRead), LoadItemDetailsSkipsWhatTheListingAlreadyRead),
         new TestCase("NativeBinSuite." + nameof(LoadItemDetailsLeavesAnUnreadableRecordCold), LoadItemDetailsLeavesAnUnreadableRecordCold),
         new TestCase("NativeBinSuite." + nameof(LoadItemDetailsIsANoOpOnAShellListing), LoadItemDetailsIsANoOpOnAShellListing),
+        new TestCase("NativeBinSuite." + nameof(VolumeRootIsTheRecordsOwnAndEmptyForAShellEntry), VolumeRootIsTheRecordsOwnAndEmptyForAShellEntry),
+        new TestCase("NativeBinSuite." + nameof(LoadDetailsStaysConsistentWhenManyThreadsRaceIt), LoadDetailsStaysConsistentWhenManyThreadsRaceIt),
     ];
 
     /// <summary>
@@ -1919,6 +1921,97 @@ using var workspace = new ScratchWorkspace();
     /// half-minute this suite exists to avoid. A listing already holds the pairing.
     /// </remarks>
     private static string RecordOf(RecycleBinItem item) => NativeBinLayout.ToIndexPath(item.PayloadPath);
+
+    /// <summary>
+    /// The volume a batch groups by comes out of the entry's own record path, and an entry with no record — the
+    /// Shell's — has no volume to contribute, which the span says by being empty rather than by being null.
+    /// </summary>
+    /// <remarks>
+    /// The share case is here because it is the one root whose spelling a caller might expect to match
+    /// <c>NormalizeVolumeRoot</c> and does not: a path's root has no trailing separator, so
+    /// <c>\\server\share</c> is not the key <c>\\server\share\</c> would use. It answers the same either way —
+    /// one thread, a share being <see cref="VolumeStorageKind.Unknown"/> — but a reader who changes this should
+    /// know that the two miss each other in the cache.
+    /// </remarks>
+    private static Task VolumeRootIsTheRecordsOwnAndEmptyForAShellEntry(TestContext context)
+    {
+        var local = new RecycleBinItem(@"E:\$RECYCLE.BIN\SID\$IABC123.bin", @"E:\$RECYCLE.BIN\SID\$RABC123.bin", 10, false);
+        var share = new RecycleBinItem(@"\\server\share\$RECYCLE.BIN\SID\$IABC123.bin", @"\\server\share\$RECYCLE.BIN\SID\$RABC123.bin", 10, false);
+        var shell = new RecycleBinItem(null, @"C:\$RECYCLE.BIN\SID\$RABC123.bin", 10, false, @"C:\a.bin", default);
+
+        Check.Equal(@"E:\", local.VolumeRoot.ToString(), "a local entry's volume is the root of its record");
+        Check.Equal(@"\\server\share", share.VolumeRoot.ToString(), "a share's volume is the share, without a trailing separator");
+        Check.True(shell.VolumeRoot.IsEmpty, "and a Shell entry has no volume, because it has no record");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Warming an entry publishes two values at once, and a caller reading them from another thread must never
+    /// see one of each.
+    /// </summary>
+    /// <remarks>
+    /// Run against one entry shared by every thread rather than one per thread: the fields the threads race for
+    /// are the pair inside the item, and giving each its own would test nothing.
+    /// <para>
+    /// What this is, precisely, is a stress check and not a proof of the ordering: inverting the two statements
+    /// in <c>LoadDetails</c> — publishing before filling, rather than filling before publishing — leaves this
+    /// green, because the window between them is a handful of instructions wide. The ordering rests on the
+    /// release/acquire pairing documented there and on the fact that the entry's two values only ever change
+    /// once. What this does catch is the coarse failures: an entry whose pair is never written, or one whose
+    /// fields are read from two different places.
+    /// </para>
+    /// </remarks>
+    private static Task LoadDetailsStaysConsistentWhenManyThreadsRaceIt(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var (contents, items, indexPaths) = SyntheticListing(1, detailsAlreadyRead: false);
+        var item = items[0];
+        var indexPath = indexPaths[0];
+
+        Check.True(NativeIndexFile.TryRead(indexPath, out var record), "the record is readable to compare against");
+        var expectedPath = record.OriginalPath;
+        var expectedTime = new DateTimeOffset(record.DeletedAtUtc.ToLocalTime());
+
+        const int Threads = 10;
+        const int Rounds = 200;
+
+        using var stop = new CancellationTokenSource();
+
+        var workers = new Thread[Threads];
+        for (var t = 0; t < Threads; t++)
+        {
+            workers[t] = new Thread(() =>
+            {
+                for (var round = 0; round < Rounds && !stop.IsCancellationRequested; round++)
+                {
+                    item.LoadDetails(out _);
+                    _ = item.OriginalPath;
+                    _ = item.DeletedAt;
+                }
+            });
+            workers[t].Start();
+        }
+
+        foreach (var worker in workers)
+        {
+            if (!worker.Join(TimeSpan.FromSeconds(30)))
+            {
+                stop.Cancel();
+                throw new CheckFailedException("a thread warming the same entry did not finish; the entry's fields disagree with themselves");
+            }
+        }
+
+        stop.Cancel();
+
+        Check.Equal(expectedPath, item.OriginalPath, "the path is the record's own after ten threads warmed the entry");
+        Check.Equal(expectedTime, item.DeletedAt, "and the time is the same record's, not another entry's");
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// A listing over entries this case made inside the scratch root, and the bin they live in.

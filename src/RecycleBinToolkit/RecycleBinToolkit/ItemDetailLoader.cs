@@ -62,8 +62,8 @@ internal static class ItemDetailLoader
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var item = items[i];
-            if (!item.IsDetailsLoaded && item.VolumeRoot is not null)
+var item = items[i];
+            if (!item.IsDetailsLoaded && !item.VolumeRoot.IsEmpty)
             {
                 return true;
             }
@@ -85,21 +85,28 @@ internal static class ItemDetailLoader
     {
         var groups = new Dictionary<string, List<RecycleBinItem>>(StringComparer.OrdinalIgnoreCase);
 
+        // Probed with a span so that the common case — one entry after another on the same volume — allocates
+        // no key at all. A root is materialised only when a volume is seen for the first time, which on a
+        // listing that spans one volume is once, and on one that spans four is four.
+        var lookup = groups.GetAlternateLookup<ReadOnlySpan<char>>();
+
         for (var i = 0; i < items.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             var item = items[i];
+            var root = item.VolumeRoot;
 
-            if (item.IsDetailsLoaded || item.VolumeRoot is not { } root)
+            if (item.IsDetailsLoaded || root.IsEmpty)
             {
                 continue;
             }
 
-            if (!groups.TryGetValue(root, out var group))
+            if (!lookup.TryGetValue(root, out var group))
             {
                 group = new List<RecycleBinItem>();
-                groups.Add(root, group);
+                groups.Add(root.ToString(), group);
+                lookup = groups.GetAlternateLookup<ReadOnlySpan<char>>();
             }
 
             group.Add(item);
@@ -131,10 +138,20 @@ internal static class ItemDetailLoader
 
         // Index-addressed rather than a shared collection, because the reads are the parallel part and a
         // collection they had to lock would put the lock on the work the threading exists to speed up.
+        //
+        // The token is also tested inside the body, not only through ParallelOptions: the options make the loop
+        // stop between chunks, which on a share or a mechanical disk with one degree is still a chunk of work.
+        // Testing it per record is what makes "cancels the work between records" true rather than nearly true.
         Parallel.For(
             0,
             items.Count,
             new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken },
-            index => items[index].LoadDetails(out _));
+            index =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    items[index].LoadDetails(out _);
+                }
+            });
     }
 }

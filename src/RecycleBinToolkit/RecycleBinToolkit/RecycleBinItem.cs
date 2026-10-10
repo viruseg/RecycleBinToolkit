@@ -24,14 +24,24 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// The record still to be read, or <see langword="null"/> once there is nothing left to read.
     /// </summary>
     /// <remarks>
-    /// Written by <see cref="LoadDetails"/> through <see cref="Interlocked.CompareExchange{T}(ref T, T, T)"/>
-    /// rather than by the constructors alone, so it is the one field in the type that is not readonly. It is a
-    /// single reference either way — never half of an item, and never a torn pair of values — and
-    /// <see cref="_resolved"/> beside it stays readonly so the two cannot be seen disagreeing.
+    /// The one field whose value changes after construction, and only in one direction: from a record source to
+    /// nothing. Read with <see cref="Volatile.Read{T}"/> and cleared with an
+    /// <see cref="Interlocked.CompareExchange{T}(ref T, T, T)"/>, which is what pairs the write to
+    /// <see cref="_resolved"/> with the read that observes its absence.
     /// </remarks>
     private Lazy<RecordDetails>? _details;
 
-    private readonly RecordDetails _resolved;
+    /// <summary>
+    /// What a loaded entry answers from, valid exactly when <see cref="_details"/> is
+    /// <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// Not readonly because <see cref="LoadDetails"/> fills it in place. That is what keeps a warmed entry to
+    /// the two field writes it costs a pre-warmed one: the earlier shape swapped in a fresh
+    /// <see cref="Lazy{T}"/>, which for a struct is an object plus a box of it, retained for the life of the
+    /// entry — on a bin of eighteen thousand, thirty-six thousand objects a caller cannot see or reclaim.
+    /// </remarks>
+    private RecordDetails _resolved;
 
     /// <summary>
     /// Creates an entry whose record is read on demand.
@@ -147,7 +157,23 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
         return new RecycleBinItem(indexPath, payloadPath, size, isDirectory, ToDetails(record));
     }
 
-    private RecordDetails Details => _details is null ? _resolved : _details.Value;
+    /// <summary>
+    /// The two fields, from the record still to be read or from what a load already resolved.
+    /// </summary>
+    /// <remarks>
+    /// The <see cref="Volatile.Read{T}"/> is the acquire half of the pair <see cref="LoadDetails"/> publishes
+    /// with: an entry that sees no record source also sees the values written before the source was taken away.
+    /// A plain read would not promise that, and a torn read here is a path from one entry and a time from
+    /// another.
+    /// </remarks>
+    private RecordDetails Details
+    {
+        get
+        {
+            var pending = Volatile.Read(ref _details);
+            return pending is null ? _resolved : pending.Value;
+        }
+    }
 
     /// <summary>
     /// Whether this entry's details are already in memory, whether they were read when it was built or since.
@@ -157,16 +183,24 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// listing: a batch that asks ninety thousand of them pays ninety thousand field reads, not ninety thousand
     /// file reads.
     /// </remarks>
-    internal bool IsDetailsLoaded => _details is null || _details.IsValueCreated;
+    internal bool IsDetailsLoaded => Volatile.Read(ref _details) is null || _details!.IsValueCreated;
 
     /// <summary>
-    /// The volume this entry's record lives on, or <see langword="null"/> where there is no record to live on.
+    /// The volume this entry's record lives on, without allocating.
     /// </summary>
     /// <remarks>
-    /// A batch that loads details reads it once per volume, because two volumes can sit on different hardware
-    /// and one degree of parallelism would be wrong for one of them.
+    /// A batch that loads details asks every pending entry for this once, so a property that allocated would
+    /// leave eighteen thousand identical three-character strings behind per call on the bin this exists for. The
+    /// span is only materialised when a volume is seen for the first time.
+    /// <para>
+    /// A share answers <c>\\server\share</c> without a trailing separator. That is a different string from the
+    /// normalised root the listing itself uses, so the two miss each other in
+    /// <see cref="VolumeSeekPenalty"/>'s cache and it stores both. Nothing changes for the answer, which is one
+    /// thread for a share either way.
+    /// </para>
     /// </remarks>
-    internal string? VolumeRoot => _indexPath is null ? null : Path.GetPathRoot(_indexPath);
+    internal ReadOnlySpan<char> VolumeRoot =>
+        _indexPath is null ? default : Path.GetPathRoot(_indexPath.AsSpan());
 
     /// <summary>
     /// Reads this entry's record now rather than on first access.
@@ -194,7 +228,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// </remarks>
     internal bool LoadDetails(out int hResult)
     {
-        var pending = _details;
+        var pending = Volatile.Read(ref _details);
 
         if (pending is null || pending.IsValueCreated)
         {
@@ -207,9 +241,10 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
             return false;
         }
 
-        // Built already evaluated and over a value rather than a factory, so replacing the source of the read
-        // with the answer cannot leave anything to read on the way out.
-        Interlocked.CompareExchange(ref _details, new Lazy<RecordDetails>(ToDetails(record)), pending);
+        // Written before the source is taken away, and the exchange is what makes the order observable: a
+        // reader that acquires a null out of `_details` acquires the values above with it.
+        _resolved = ToDetails(record);
+        Interlocked.CompareExchange(ref _details, null, pending);
         return true;
     }
 

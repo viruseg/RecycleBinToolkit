@@ -577,26 +577,14 @@ inside a loop that also has to do something else.
 
 `LoadItemDetails` moves that cost into one batch:
 
-```csharp
-using RecycleBinToolkit;
-
-var contents = await RecycleBin.GetItemsAsync();
-
-// Read every item's OriginalPath and DeletedAt up front, in parallel, so the loop below never blocks on I/O.
-contents.LoadItemDetails();
-
-foreach (var item in contents.Items)
-{
-    Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
-}
-```
-
 - Items whose details are already in memory are skipped — every item of a Shell listing, and every item of a
   listing taken with `PreloadItemDetails`. A listing with nothing pending does one pass over its items and no
   file reads. An item whose record has already failed to read is not "already read": it is tried again, because
   the record may be back.
 - Volumes are read one after another, each on as many threads as its own hardware answers for: one for a
-  mechanical disk, more for a solid-state one, one for a share.
+  mechanical disk, up to eight for a solid-state one or one per core, whichever is fewer, one for a share. The
+  same measure governs `PreloadItemDetails` and the native empty, because it is the same answer to the same
+  question about the same disk.
 - An item whose record cannot be read is **left cold**, and still raises `IOException` when a caller asks for
   its details. Nothing here throws for one, and `Failures` does not change — it describes what the listing could
   not do.
@@ -721,6 +709,20 @@ foreach (var item in contents.Items)
 foreach (var failure in contents.Failures)
 {
     Console.Error.WriteLine($"could not read an entry: 0x{failure.HResult:X8}");
+}
+```
+
+### Read every item's details before looping over them
+
+```csharp
+var contents = await RecycleBin.GetItemsAsync();
+
+// Read every item's OriginalPath and DeletedAt up front, in parallel, so the loop below never blocks on I/O.
+contents.LoadItemDetails();
+
+foreach (var item in contents.Items)
+{
+    Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
 }
 ```
 
