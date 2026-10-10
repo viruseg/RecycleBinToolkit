@@ -20,11 +20,6 @@ namespace RecycleBinToolkit.Tests.Suites;
 /// place. <see cref="ClaimRefusesAParentOutsideTheRunRoot"/> is the other half of the same rule: handed
 /// the volume root, the claim creates nothing at all.
 /// <para>
-/// The one other thing that appears in a volume root belongs to the library rather than to any case:
-/// <c>LongPathStager</c> creates its <c>$RCW-</c> directories there, because a staging path has to be
-/// short and the volume root is the shortest place on the right volume.
-/// </para>
-/// <para>
 /// A name written into the source is not something a case may take ownership of either.
 /// <c>Directory.CreateDirectory</c> answers an existing directory with success, so a name from this file
 /// would be adopted and then removed with a recursive delete. The bystanders the cases need are claims of

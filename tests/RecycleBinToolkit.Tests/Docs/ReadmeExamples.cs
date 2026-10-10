@@ -41,13 +41,6 @@ internal static class ReadmeExamples
                 Console.Error.WriteLine(
                     $"{failure.Path}: {failure.Stage} (0x{failure.HResult:X8}) after {failure.Attempts} attempt(s)");
             }
-
-            // Succeeded can also be false with nothing in Failures, when an item was left in a staging
-            // directory. Your data is there, not where you left it, and only this list says so.
-            foreach (var directory in result.LeftoverStagingDirectories)
-            {
-                Console.Error.WriteLine($"still holding your data: {directory}");
-            }
         }
     }
 
@@ -66,11 +59,6 @@ internal static class ReadmeExamples
             {
                 Console.Error.WriteLine($"recycle failed for {failure.Path}: {failure.Stage} 0x{failure.HResult:X8}");
             }
-
-            foreach (var directory in result.LeftoverStagingDirectories)
-            {
-                Console.Error.WriteLine($"recycle left your data here: {directory}");
-            }
         }
     }
 
@@ -84,24 +72,20 @@ internal static class ReadmeExamples
             InitialRetryDelay = TimeSpan.FromMilliseconds(100),
             OverallTimeout = TimeSpan.FromSeconds(5),
             ThrowOnError = false,
-            LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
         };
 
-        // ThrowOnError is the global switch and has the final say over LongPathFailureAction.
-        // 251 recycles and 261 does not, measured on the machine this was developed against.
-        Console.WriteLine(options.MaxShellPathLength);
+        // ThrowOnError is the global switch: with it off a refusal arrives in Failures instead of raising.
+        Console.WriteLine(options.OverallTimeout);
     }
 
     internal static void ReadHResult()
     {
         var failure = new RecycleFailure(@"W:\x.bin", unchecked((int)0x80270027), 1, RecycleFailureStage.Performing);
 
-        // The Shell reports a successful delete as 0x00270008, never as S_OK, so success and failure
-        // are told apart by the severity bit rather than by comparing with zero. On its own that is
-        // not enough: an item can carry a success code and still be a failure, which is why Stage
-        // is read too.
-        bool shellSucceeded = (failure.HResult & unchecked((int)0x80000000)) == 0;
-        Console.WriteLine(shellSucceeded);
+        // Success and failure are told apart by the severity bit rather than by comparing with zero.
+        bool moveSucceeded = (failure.HResult & unchecked((int)0x80000000)) == 0;
+        Console.WriteLine(moveSucceeded);
     }
 
     internal static void ResultMembers()
@@ -111,25 +95,20 @@ internal static class ReadmeExamples
         var result = RecycleBinResult.Create(["a"], [], [], TimeSpan.Zero);
 
         // Succeeded means gone from disk, not necessarily recycled: a file removed permanently under an
-        // explicit policy counts as a success. Check PermanentlyDeletedPaths when that matters. It is
-        // also false when an item was left in a staging directory, so check LeftoverStagingDirectories
-        // too rather than trusting one property to be the whole answer.
+        // explicit policy counts as a success. Check PermanentlyDeletedPaths when that matters.
         Console.WriteLine($"{result.Succeeded} {result.Elapsed} {result.FirstFailure is null}");
     }
 
-    internal static async Task ChooseThePathToTheRecycleBin()
+    internal static async Task RecycleOneFile()
     {
-        // Native writes the Recycle Bin's own files under <volume>$RECYCLE.BIN\<SID>\ and reads them back
-        // with ordinary file calls: no STA thread, no COM, and work that scales across cores on a
-        // solid-state volume. It needs Windows 10 version 1607 (build 14393) or later, because that is the
-        // first Shell that can read the index records it writes; below that the call raises
+        // The library writes the Recycle Bin's own files under <volume>$RECYCLE.BIN\<SID>\ and reads them back
+        // with ordinary file calls. It needs Windows 10 version 1607 (build 14393) or later, because that is the
+        // first build that reads the index records it writes; below that the call raises
         // PlatformNotSupportedException, and ThrowOnError does not suppress that.
-        var native = new RecycleBinOptions { Backend = RecycleBinBackend.Native };
+        await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
 
-        await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip", native);
-
-        var contents = await RecycleBin.GetItemsAsync(@"W:\", native);
-        await RecycleBin.EmptyAsync(@"W:\", native);
+        var contents = await RecycleBin.GetItemsAsync(@"W:\");
+        await RecycleBin.EmptyAsync(@"W:\");
     }
 
     internal static async Task ListTheRecycleBin()
@@ -141,9 +120,9 @@ internal static class ReadmeExamples
             // Size is 0 for a directory — its contents cannot be enumerated without elevation, so
             // IsDirectory is the honest signal that no figure is available.
             //
-            // On the native backend OriginalPath and DeletedAt are read from the entry's record on first
-            // access, which is I/O and can raise IOException if the record was collected meanwhile. The two
-            // come out of one reading, so asking for either gives you both.
+            // OriginalPath and DeletedAt are read from the entry's record on first access, which is I/O
+            // and can raise IOException if the record was collected meanwhile. The two come out of one
+            // reading, so asking for either gives you both.
             Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
         }
 
@@ -157,11 +136,7 @@ internal static class ReadmeExamples
         // enough. A caller that is going to read every entry's path anyway can have the records read during
         // the listing instead of one at a time from its own loop — and an entry whose record cannot be read
         // is reported in Failures rather than raising later.
-        var eager = new RecycleBinOptions
-        {
-            Backend = RecycleBinBackend.Native,
-            PreloadItemDetails = true
-        };
+        var eager = new RecycleBinOptions { PreloadItemDetails = true };
 
         var contents = await RecycleBin.GetItemsAsync(@"W:\", eager);
 
@@ -191,8 +166,7 @@ internal static class ReadmeExamples
 
     internal static async Task ListOneVolumeAndHearAboutUnreadableEntries()
     {
-        // The Recycle Bin is one Shell folder spanning every mounted volume, so this filters an
-        // enumeration that has already happened rather than being a cheaper query.
+        // Each volume's bin is enumerated directly, so this reads exactly the volume named.
         var onW = await RecycleBin.GetItemsAsync(@"W:\");
 
         foreach (var failure in onW.Failures)
@@ -203,12 +177,9 @@ internal static class ReadmeExamples
 
     internal static async Task EmptyAndReportWhatItFreed()
     {
-        // Confirmation, progress window and sound are always suppressed: an unattended library must
-        // never put a dialog on a caller's desktop.
         var emptied = await RecycleBin.EmptyAsync(@"W:\");
 
-        // SHEmptyRecycleBin says nothing about how much it removed, so both figures are measured per
-        // volume before and after. Neither is ever negative.
+        // Both figures are summed from the records being deleted. Neither is ever negative.
         Console.WriteLine($"freed {emptied.BytesFreed} byte(s) from {emptied.ItemsRemoved} item(s)");
 
         foreach (var failure in emptied.Failures)
@@ -248,16 +219,9 @@ internal static class ReadmeExamples
         }
         else
         {
-            // Two things can make this false, and only one of them is a failure.
             foreach (var failure in result.Failures)
             {
-                Console.Error.WriteLine($"{failure.Path} â {failure.Stage}, 0x{failure.HResult:X8}");
-            }
-
-            // A count is not a location. Your data is in one of these directories, not where you left it.
-            foreach (var directory in result.LeftoverStagingDirectories)
-            {
-                Console.Error.WriteLine($"still holding your data: {directory}");
+                Console.Error.WriteLine($"{failure.Path} — {failure.Stage}, 0x{failure.HResult:X8}");
             }
         }
     }
@@ -277,40 +241,25 @@ internal static class ReadmeExamples
 
     internal static async Task LongPathsIntoTheBin()
     {
+        // A path hundreds of characters long recycles with no staging, no policy and no limit: the
+        // destination inside the bin is short whatever the source was.
         IReadOnlyList<string?> paths = [@"W:\Projects\a-very-long-path\build-output"];
-        var options = new RecycleBinOptions
-        {
-            LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle
-        };
+        var result = await FileRecycler.MoveToRecycleBinAsync(paths);
 
-        // Past MAX_PATH the Shell deletes the file for good and reports a success code, so the path is
-        // never handed over. This policy renames the item to a short path on its own volume — a rename,
-        // so it costs nothing regardless of size — and recycles it from there.
-        var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
-
-        // The entry shows the staging path as the original location, not where the file lived. That is
-        // inherent: the Shell records the path it was asked to delete.
-        //
-        // A directory left here still holds an item that could neither be recycled nor moved back. The
-        // item is never deleted in that state, so it is recoverable — the caller has to move it out.
-        // A batch spanning volumes can leave more than one, so read the list when that is possible.
-        foreach (var directory in result.LeftoverStagingDirectories)
-        {
-            Console.Error.WriteLine($"still holding your data: {directory}");
-        }
+        Console.WriteLine($"{result.RecycledPaths.Count} path(s) recycled");
     }
 
-    internal static async Task OptInToPermanentDeletion()
+    internal static async Task OptOutOfARecycleBinRefusal()
     {
-        IReadOnlyList<string?> paths = [@"W:\Projects\a-very-long-path\archive.zip"];
+        IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];
         var options = new RecycleBinOptions
         {
-            LongPathFailureAction = LongPathFailureAction.DeletePermanently
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
         };
 
         var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
 
-        // Only files past MAX_PATH are affected; everything else still goes to the Recycle Bin.
+        // Only paths on volumes that cannot recycle are affected; everything else still goes to the bin.
         if (result.PermanentlyDeletedPaths.Count > 0)
         {
             Console.Error.WriteLine($"{result.PermanentlyDeletedPaths.Count} file(s) were deleted, not recycled.");
@@ -322,8 +271,8 @@ internal static class ReadmeExamples
         IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        // Cancelling stops the wait, not the work: a round already handed to the Shell runs to
-        // completion, so a cancelled call may still recycle its files.
+        // Cancelling stops the batch between paths: a cancelled call stops part way and raises without
+        // returning a result, so which files went is found by reading the bin.
         await FileRecycler.MoveToRecycleBinAsync(paths, cancellationToken: cts.Token);
     }
 
@@ -332,9 +281,9 @@ internal static class ReadmeExamples
         IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];
         var options = new RecycleBinOptions { ThrowOnError = false };
 
-        // The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the Shell removes the
-        // file for good and still reports success, so the path is refused before it ever reaches the
-        // Shell. With ThrowOnError off the refusal comes back as data instead of an exception.
+        // The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the path is refused
+        // before anything is attempted. With ThrowOnError off the refusal comes back as data instead of
+        // an exception.
         var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
 
         foreach (var failure in result.Failures)

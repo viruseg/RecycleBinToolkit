@@ -5,15 +5,15 @@ using RecycleBinToolkit.Tests.Infrastructure;
 namespace RecycleBinToolkit.Tests.Suites;
 
 /// <summary>
-/// Covers <see cref="RecycleBin.GetItemsAsync"/>: what the Shell reports about a recycled item, and
-/// what the listing does with it.
+/// Covers <see cref="RecycleBin.GetItemsAsync"/>: what a listing reports about a recycled item, and
+/// what it does with it.
 /// </summary>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class ListerSuite
 {
     internal static IReadOnlyList<TestCase> Cases =>
     [
-        new TestCase("ListerSuite." + nameof(ListedItemCarriesTheDataTheShellRecorded), ListedItemCarriesTheDataTheShellRecorded),
+        new TestCase("ListerSuite." + nameof(ListedItemCarriesTheRecordedData), ListedItemCarriesTheRecordedData),
         new TestCase("ListerSuite." + nameof(ListedItemReportsItsPhysicalPathInsideTheRecycleBin), ListedItemReportsItsPhysicalPathInsideTheRecycleBin),
         new TestCase("ListerSuite." + nameof(ListedDirectoryIsMarkedAsOne), ListedDirectoryIsMarkedAsOne),
         new TestCase("ListerSuite." + nameof(VolumeFilterKeepsOnlyItemsFromThatVolume), VolumeFilterKeepsOnlyItemsFromThatVolume),
@@ -29,13 +29,13 @@ internal static class ListerSuite
     /// inside the run. A listing that dropped the original path, reported a zero size, or carried a
     /// default timestamp would still look like a listing, so each field is asserted separately.
     /// </summary>
-    private static async Task ListedItemCarriesTheDataTheShellRecorded(TestContext context)
+    private static async Task ListedItemCarriesTheRecordedData(TestContext context)
     {
         const int fileSize = 4096;
 
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
-        ScratchWorkspace.RequireRecycling("an entry in the bin for the Shell to have recorded");
+        ScratchWorkspace.RequireRecycling("an entry in the bin to be recorded");
 
         var files = workspace.CreateRandomFiles(1, fileSize);
 
@@ -84,7 +84,9 @@ internal static class ListerSuite
         Check.NotNull(item, "the recycled file is listed");
         Check.NotNull(item!.PayloadPath, "the physical Recycle Bin path is reported");
         Check.True(
-            RecycleBinReceipt.IsInsideRecycleBin(item.PayloadPath, files[0]),
+            item.PayloadPath.StartsWith(
+                Path.Combine(Path.GetPathRoot(files[0])!, "$RECYCLE.BIN"),
+                StringComparison.OrdinalIgnoreCase),
             $"the physical path is a Recycle Bin location on the item's own volume (got '{item.PayloadPath}')");
         Check.True(File.Exists(item.PayloadPath), $"the physical path is where the bytes actually are (got '{item.PayloadPath}')");
 
@@ -92,8 +94,8 @@ internal static class ListerSuite
     }
 
     /// <summary>
-    /// A recycled directory keeps its contents and therefore its size, but the Shell reports the
-    /// directory itself. Callers filter and total on this flag, so a directory misreported as a file
+    /// A recycled directory keeps its contents and therefore its size, but the record carries zero for
+    /// the directory itself. Callers filter and total on this flag, so a directory misreported as a file
     /// would corrupt both.
     /// </summary>
     private static async Task ListedDirectoryIsMarkedAsOne(TestContext context)
@@ -157,11 +159,11 @@ internal static class ListerSuite
     }
 
     /// <summary>
-    /// The root a caller holds and the spelling the Shell recorded are written by different parties, and
-    /// only one of them is the Shell's answer. Windows writes the drive letter in whichever case it likes
+    /// The root a caller holds and the recorded spelling are written by different parties, and
+    /// only one of them is the library's answer. Windows writes the drive letter in whichever case it likes
     /// and reads every case, the library passes the recorded path through as recorded, and a caller who
-    /// reached for <c>w:\</c> still has to find <c>W:\…</c>. The filter is the library's side of that: a
-    /// listing filtered by a differently written root that comes back empty is a listing the caller cannot
+    /// reached for <c>w:\</c> still has to find <c>W:\…</c>. The volume selection is the library's side of
+    /// that: a listing for a differently written root that comes back empty is a listing the caller cannot
     /// tell apart from an empty Recycle Bin.
     /// </summary>
     /// <remarks>
@@ -185,18 +187,18 @@ internal static class ListerSuite
         var contents = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
 
         var recorded = contents.Items.FirstOrDefault(i => IsSamePath(i, files[0]));
-        Check.NotNull(recorded, $"the recycled file is listed whatever the Shell wrote it as ({contents.Items.Count} item(s) on the machine)");
+        Check.NotNull(recorded, $"the recycled file is listed however it was recorded ({contents.Items.Count} item(s) on the machine)");
 
-        var asTheShellWroteIt = Path.GetPathRoot(recorded!.OriginalPath)!;
-        var differentlyWritten = WithFirstLetterFlipped(asTheShellWroteIt);
+        var asItWasRecorded = Path.GetPathRoot(recorded!.OriginalPath)!;
+        var differentlyWritten = WithFirstLetterFlipped(asItWasRecorded);
 
-        Check.True(Directory.Exists(differentlyWritten), $"\"{differentlyWritten}\" names the same volume as \"{asTheShellWroteIt}\", so a filter against it is asking about a volume and not about nothing");
+        Check.True(Directory.Exists(differentlyWritten), $"\"{differentlyWritten}\" names the same volume as \"{asItWasRecorded}\", so asking about it is asking about a volume and not about nothing");
 
         var filtered = await RecycleBin.GetItemsAsync(differentlyWritten, null, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(
             filtered.Items.Any(i => IsSamePath(i, files[0])),
-            $"the listing keeps the item when the root is written \"{differentlyWritten}\" rather than \"{asTheShellWroteIt}\"");
+            $"the listing keeps the item when the root is written \"{differentlyWritten}\" rather than \"{asItWasRecorded}\"");
 
         workspace.Dispose();
     }
@@ -301,8 +303,8 @@ internal static class ListerSuite
     /// </summary>
     /// <remarks>
     /// Compared without regard to case, because the two sides are not written by the same party: the path
-    /// is the caller's and the listing carries whatever spelling the Shell recorded, and the Shell writes
-    /// the drive letter its own way however the caller passed it. Compared ordinally, this reports a
+    /// is the caller's and the listing carries whatever spelling was recorded, and the drive letter is
+    /// written its own way however the caller passed it. Compared ordinally, this reports a
     /// listing that is correct as missing — on any machine where the caller reached for the volume in the
     /// other case, which is a spelling of the volume Windows accepts without complaint.
     /// </remarks>

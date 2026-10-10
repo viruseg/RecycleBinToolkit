@@ -16,18 +16,18 @@ internal static class FacadeSuite
         new TestCase("FacadeSuite." + nameof(MissingPathDoesNotBlockTheRest), MissingPathDoesNotBlockTheRest),
         new TestCase("FacadeSuite." + nameof(EmptyBatchSucceeds), EmptyBatchSucceeds),
         new TestCase("FacadeSuite." + nameof(DirectoryTargetIsRecycledWithContents), DirectoryTargetIsRecycledWithContents),
-        new TestCase("FacadeSuite." + nameof(LongPathPastTheShellLimitIsRefusedSafely), LongPathPastTheShellLimitIsRefusedSafely),
+        new TestCase("FacadeSuite." + nameof(LongPathRecyclesWithNoStagingNoPolicyNoLimit), LongPathRecyclesWithNoStagingNoPolicyNoLimit),
         new TestCase("FacadeSuite." + nameof(LargeFileIsRecycled), LargeFileIsRecycled),
         new TestCase("FacadeSuite." + nameof(CancellationIsObserved), CancellationIsObserved),
         new TestCase("FacadeSuite." + nameof(CancellationIsObservedWhileABatchIsValidated), CancellationIsObservedWhileABatchIsValidated),
         new TestCase("FacadeSuite." + nameof(SingleMissingPathThrowsFileNotFound), SingleMissingPathThrowsFileNotFound),
-        new TestCase("FacadeSuite." + nameof(SingleLockedPathThrowsWithShellHResult), SingleLockedPathThrowsWithShellHResult),
+        new TestCase("FacadeSuite." + nameof(SingleLockedPathThrowsWithFileSystemHResult), SingleLockedPathThrowsWithFileSystemHResult),
         new TestCase("FacadeSuite." + nameof(ExtendedPrefixOnAShortPathStillReportsSuccess), ExtendedPrefixOnAShortPathStillReportsSuccess),
         new TestCase("FacadeSuite." + nameof(RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff), RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff),
         new TestCase("FacadeSuite." + nameof(RefusedPathRaisesWhenThrowOnErrorIsOn), RefusedPathRaisesWhenThrowOnErrorIsOn),
         new TestCase("FacadeSuite." + nameof(SinglePathOverloadReturnsFalseWhenRefused), SinglePathOverloadReturnsFalseWhenRefused),
         new TestCase("FacadeSuite." + nameof(AMissingPathIsRefusedWithoutAProbe), AMissingPathIsRefusedWithoutAProbe),
-        new TestCase("FacadeSuite." + nameof(NoRecycleBinOptionDecidesWhetherTheShellIsAsked), NoRecycleBinOptionDecidesWhetherTheShellIsAsked),
+        new TestCase("FacadeSuite." + nameof(NoRecycleBinOptionDecidesWhetherThePathIsRecycled), NoRecycleBinOptionDecidesWhetherThePathIsRecycled),
         new TestCase("FacadeSuite." + nameof(OneBadVolumeDoesNotSinkTheBatch), OneBadVolumeDoesNotSinkTheBatch),
         new TestCase("FacadeSuite." + nameof(ARepeatedRefusedPathIsRefusedOnce), ARepeatedRefusedPathIsRefusedOnce),
         new TestCase("FacadeSuite." + nameof(DeletePermanentlyRemovesTheFileAndNamesIt), DeletePermanentlyRemovesTheFileAndNamesIt),
@@ -38,13 +38,11 @@ internal static class FacadeSuite
     ];
 
     /// <summary>
-    /// A volume named by its GUID has no spelling the Shell parses, and none this library can measure,
-    /// empty or report against. Handed over, it was refused by the volume gate as though it were a
-    /// network share — a statement about the wrong thing, about a local volume that recycles perfectly
-    /// well under the spelling the caller did not use.
+    /// A volume named by its GUID has no spelling this library can measure,
+    /// empty or report against.
     /// </summary>
     /// <remarks>
-    /// Refused at the path rather than settled against the Shell, so nothing is spent on it: no volume
+    /// Refused at the path rather than settled against the volume, so nothing is spent on it: no volume
     /// inspection, no round. <see cref="RecycleFailure.Attempts"/> is therefore zero, which is what
     /// "nothing was attempted" means.
     /// <para>
@@ -93,7 +91,7 @@ internal static class FacadeSuite
             "and it is that file, not another one of the same name");
 
         var result = await FileRecycler
-            .MoveToRecycleBinAsync([addressed], TestBackend.Options, cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync([addressed], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.False(result.Succeeded, $"a path nothing above the library can read is not recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
@@ -105,15 +103,14 @@ internal static class FacadeSuite
 
         // The same path written with forward slashes, which Windows and Path.GetFullPath both read as the
         // device form. Checked against the caller's own spelling this is not a volume GUID path at all, so
-        // without the second check it reaches the Shell -- which refuses it -- and is retried once per
-        // attempt the caller asked for before being reported as ShellItemCreation rather than as the
-        // spelling that caused it.
+        // without the second check it is refused as something else and retried once per attempt the caller
+        // asked for.
         var slashed = addressed.Replace('\\', '/');
 
         Check.False(RecycleTarget.IsVolumeGuidPath(slashed), "the caller's own spelling carries no backslashes at all");
 
         var viaSlashes = await FileRecycler
-            .MoveToRecycleBinAsync([slashed], TestBackend.Options, cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync([slashed], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.Equal(1, viaSlashes.Failures.Count, $"the forward-slash spelling is refused too (got {viaSlashes.FirstFailure?.Stage})");
@@ -128,30 +125,21 @@ internal static class FacadeSuite
     }
 
     /// <summary>
-    /// A volume with no Recycle Bin must not lose the file while the library reports a successful
-    /// recycle, so the path is refused before the Shell is asked and the failure carries the Shell's own
-    /// error code.
+    /// A volume with no Recycle Bin must not lose the file, so the path is refused before anything is
+    /// attempted and the failure carries no code.
     /// </summary>
     /// <remarks>
-    /// The Shell removes a file handed to it on a volume with no Recycle Bin for good and still reports
-    /// success, which is what makes the refusal this case is about necessary rather than cautious.
-    /// Nothing here is asserted about the Shell's behaviour on the volume — only about what this library
-    /// did with the answer, which is why the file is asserted to be untouched.
+    /// Nothing here is asserted about the volume beyond what this library did with the answer, which is
+    /// why the file is asserted to be untouched.
     /// <para>
     /// The file lives on the volume <c>--scratch</c> named, and this case needs that volume to have no
     /// Recycle Bin, so <see cref="ScratchWorkspace.RequireNonRecycling"/> decides whether it runs at all:
     /// a machine with a bin reports this one as not run rather than failing it.
     /// </para>
     /// <para>
-    /// <c>HResult</c> is pinned against an independent read of the same volume rather than against a
-    /// literal, and only on the branch where there is a code to pin. Which branch that is follows from
-    /// <see cref="ScratchWorkspace.Reason"/>: a volume whose bin the Shell itself could not find carries
-    /// the Shell's code, while a reason settled from configuration — a policy, a per-volume setting, a
-    /// volume type that never had a bin — carries <c>0</c>, because the Shell was never asked and has
-    /// nothing to report. What matters on the first branch is that the volume's own code came through
-    /// unchanged instead of being normalised to zero or standing in as a constant. The severity bit is
-    /// checked there as well, because it is the check a caller is told to make in the README and it would
-    /// not notice a substituted constant.
+    /// <c>HResult</c> is pinned to <c>0</c>: the refusal is settled from configuration, so there is no
+    /// code to carry. What matters is that the volume's own name came through unchanged instead of being
+    /// normalised to something else, and that the failure names the volume rather than anything else.
     /// </para>
     /// </remarks>
     private static async Task RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff(TestContext context)
@@ -164,7 +152,7 @@ internal static class FacadeSuite
         var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
 
-        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
+        var options = new RecycleBinOptions { ThrowOnError = false };
 
         var result = await FileRecycler
             .MoveToRecycleBinAsync([file], options, context.CancellationToken)
@@ -172,28 +160,10 @@ internal static class FacadeSuite
 
         Check.False(result.Succeeded, $"a volume with no Recycle Bin cannot report success (recycled {result.RecycledPaths.Count})");
         Check.Equal(1, result.Failures.Count, "the refused path is the only failure reported");
-        Check.Equal(RecycleFailureStage.NoRecycleBinOnVolume, result.FirstFailure!.Stage, "the failure names the volume, not the Shell's doing");
+        Check.Equal(RecycleFailureStage.NoRecycleBinOnVolume, result.FirstFailure!.Stage, "the failure names the volume");
         Check.Equal(file, result.FirstFailure.Path, "the failure names the caller's path");
         Check.Equal(0, result.FirstFailure.Attempts, "nothing was attempted, because nothing was handed over");
-
-        if (ScratchWorkspace.Reason is RecycleBinAvailabilityReason.NoRecycleBinOnVolume)
-        {
-            Check.Equal(
-                RecycleBinVolume.Measure(ScratchWorkspace.VolumeRoot).HResult,
-                result.FirstFailure.HResult,
-                $"the Shell stated this refusal itself, so its own code comes through unchanged (got 0x{result.FirstFailure.HResult:X8})");
-            Check.NotEqual(0, result.FirstFailure.HResult, "the Shell's own error code came through rather than a zero");
-            Check.True(
-                (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
-                $"the carried code is a refusal (got 0x{result.FirstFailure.HResult:X8})");
-        }
-        else
-        {
-            Check.Equal(
-                0,
-                result.FirstFailure.HResult,
-                $"the reason was settled from configuration, so there is no code of the Shell's to carry (got 0x{result.FirstFailure.HResult:X8})");
-        }
+        Check.Equal(0, result.FirstFailure.HResult, "the refusal is settled from configuration, so it carries no code");
 
         Check.Equal(0, result.PermanentlyDeletedPaths.Count, "nothing was removed permanently either");
         Check.Equal(0, result.RecycledPaths.Count, "a refused path is not reported as recycled");
@@ -203,25 +173,17 @@ internal static class FacadeSuite
     }
 
     /// <summary>
-    /// The same refusal raises under <see cref="RecycleBinOptions.ThrowOnError"/>, carrying the probe's
-    /// error code, and the file is still there when the exception surfaces.
+    /// The same refusal raises under <see cref="RecycleBinOptions.ThrowOnError"/>, and the file is still
+    /// there when the exception surfaces.
     /// </summary>
     /// <remarks>
     /// <see cref="IOException"/> rather than a new exception type: the single-path overload already
-    /// documents a refusal as an <see cref="IOException"/> whose <see cref="Exception.HResult"/> carries
-    /// the Shell code, and this is one. The file assertion is inside the same call's aftermath, so a
-    /// caller that catches the exception and then looks at the path learns the truth.
+    /// documents a refusal as an <see cref="IOException"/>. The file assertion is inside the same call's
+    /// aftermath, so a caller that catches the exception and then looks at the path learns the truth.
     /// <para>
     /// The file lives on the volume <c>--scratch</c> named and the case needs that volume to have no
     /// Recycle Bin, so it runs where <see cref="ScratchWorkspace.RequireNonRecycling"/> allows and is a
     /// skip rather than a failure elsewhere.
-    /// </para>
-    /// <para>
-    /// The code is pinned against an independent read of the same volume, on the branch where the reason
-    /// leaves the Shell a code to report, for the reason given on
-    /// <see cref="RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff"/>: a constant or a normalised zero would
-    /// satisfy the severity bit alone, and this overload is the one a caller who sets
-    /// <see cref="RecycleBinOptions.ThrowOnError"/> actually reads.
     /// </para>
     /// </remarks>
     private static async Task RefusedPathRaisesWhenThrowOnErrorIsOn(TestContext context)
@@ -236,30 +198,13 @@ internal static class FacadeSuite
 
         var thrown = await Check
             .ThrowsAsync<IOException>(
-                () => FileRecycler.MoveToRecycleBinAsync(file, TestBackend.Options, cancellationToken: context.CancellationToken),
+                () => FileRecycler.MoveToRecycleBinAsync(file, RecycleBinOptions.Default, cancellationToken: context.CancellationToken),
                 "a refused volume raises on the single-path overload when ThrowOnError is on")
             .ConfigureAwait(false);
 
-        if (ScratchWorkspace.Reason is RecycleBinAvailabilityReason.NoRecycleBinOnVolume)
-        {
-            Check.Equal(
-                RecycleBinVolume.Measure(ScratchWorkspace.VolumeRoot).HResult,
-                thrown.HResult,
-                $"the Shell stated this refusal itself, so its own code comes through unchanged (got 0x{thrown.HResult:X8})");
-            Check.NotEqual(0, thrown.HResult, "the exception carries a real error code");
-            Check.True(
-                (thrown.HResult & unchecked((int)0x80000000)) != 0,
-                $"the carried code is a refusal (got 0x{thrown.HResult:X8})");
-        }
-        else
-        {
-            Check.Equal(
-                0,
-                thrown.HResult,
-                $"the reason was settled from configuration, so there is no code of the Shell's to carry (got 0x{thrown.HResult:X8})");
-        }
+        Check.Equal(0, thrown.HResult, "the refusal is settled from configuration, so it carries no code");
 
-        Check.True(File.Exists(file), "the file survived the exception, because the Shell was never asked");
+        Check.True(File.Exists(file), "the file survived the exception, because nothing was attempted");
 
         workspace.Dispose();
     }
@@ -286,7 +231,7 @@ internal static class FacadeSuite
         var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
 
-        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
+        var options = new RecycleBinOptions { ThrowOnError = false };
 
         var removed = await FileRecycler.MoveToRecycleBinAsync(file, options, context.CancellationToken).ConfigureAwait(false);
 
@@ -314,7 +259,7 @@ internal static class FacadeSuite
         workspace.Recreate();
 
         var missing = Path.Combine(ScratchWorkspace.Root, $"definitely-absent-{Environment.ProcessId}.bin");
-        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
+        var options = new RecycleBinOptions { ThrowOnError = false };
 
         var result = await FileRecycler
             .MoveToRecycleBinAsync([missing], options, cancellationToken: context.CancellationToken)
@@ -325,23 +270,24 @@ internal static class FacadeSuite
         Check.Equal(missing, result.FirstFailure!.Path, "naming the path the caller passed");
         Check.Equal(RecycleFailureStage.PathValidation, result.FirstFailure.Stage, "and it fails at validation, not at the volume that holds it");
         Check.Equal(0, result.FirstFailure.Attempts, "nothing was handed over, because there was nothing to hand over");
-        Check.Equal(0, result.FirstFailure.HResult, "no Shell code is involved when the Shell was never asked");
+        Check.Equal(0, result.FirstFailure.HResult, "no code is involved when nothing was ever asked");
 
         workspace.Dispose();
     }
 
     /// <summary>
-    /// <see cref="NoRecycleBinAction.AllowIndeterminate"/> is what lets a caller hand the Shell a path on
+    /// <see cref="NoRecycleBinAction.AllowIndeterminate"/> is what lets a caller recycle a path on
     /// a volume whose answer was neither <see cref="RecycleBinAvailabilityReason.Enabled"/> nor one of the
     /// confirmed refusals.
     /// </summary>
     /// <remarks>
     /// This is the only case here that watches a file leave the disk, and deliberately so: the option
-    /// says the caller accepts being wrong about the bin, so the Shell is asked anyway and reports its
-    /// own success. What the case proves is that the option reaches the pipeline at all — a gate that
-    /// refused regardless of the setting would fail it — and that a passing path is reported as recycled.
+    /// says the caller accepts being wrong about the bin, so the path is recycled anyway and the outcome
+    /// is reported as recycled. What the case proves is that the option reaches the pipeline at all — a
+    /// gate that refused regardless of the setting would fail it — and that a passing path is reported as
+    /// recycled.
     /// <para>
-    /// The Shell only behaves that way on a volume with no Recycle Bin, so the file is written on the
+    /// The option only changes the outcome on a volume with no Recycle Bin, so the file is written on the
     /// volume <c>--scratch</c> named and the case is a skip on a volume that recycles, where the option
     /// would be a no-op and would prove nothing.
     /// </para>
@@ -369,7 +315,7 @@ internal static class FacadeSuite
     /// reading on all three confirmed reasons; narrowing it would have taken their coverage with it.
     /// </para>
     /// </remarks>
-    private static async Task NoRecycleBinOptionDecidesWhetherTheShellIsAsked(TestContext context)
+    private static async Task NoRecycleBinOptionDecidesWhetherThePathIsRecycled(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
@@ -385,17 +331,16 @@ internal static class FacadeSuite
         var file = Path.Combine(ScratchWorkspace.Root, $"allowed-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
 
-        // On the native backend this case is not only an assertion: it is the one thing in the suite that
-        // creates a Recycle Bin on a volume that had none, because AllowIndeterminate hands the path over
-        // and the native backend's answer is to make somewhere for it rather than destroy it. That is the
-        // documented behaviour and the case is what pins it — but a case that leaves the operator's volume
-        // configured differently than it found it is a bad neighbour, so what it caused is put back.
+        // This case is not only an assertion: it is the one thing in the suite that creates a Recycle Bin
+        // on a volume that had none, because AllowIndeterminate recycles the path anyway and the answer is
+        // to make somewhere for it rather than destroy it. That is the documented behaviour and the case is
+        // what pins it — but a case that leaves the operator's volume configured differently than it found
+        // it is a bad neighbour, so what it caused is put back.
         var binDirectory = Path.Combine(ScratchWorkspace.VolumeRoot, "$RECYCLE.BIN", NativeBinLayout.CurrentSid);
         var binExisted = Directory.Exists(binDirectory);
 
         var options = new RecycleBinOptions
         {
-            Backend = (RecycleBinBackend)TestBackend.Kind,
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.AllowIndeterminate,
         };
@@ -408,16 +353,16 @@ internal static class FacadeSuite
 
             Check.True(
                 result.Succeeded,
-                $"AllowIndeterminate hands the path over and the backend reports success (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
-            Check.Equal(1, result.RecycledPaths.Count, "the path comes back as recycled, because the backend said so");
+                $"AllowIndeterminate recycles the path anyway (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+            Check.Equal(1, result.RecycledPaths.Count, "the path comes back as recycled");
             Check.Equal(file, result.RecycledPaths[0], "in the spelling the caller supplied");
             Check.Equal(0, result.Failures.Count, "the volume's answer did not become a failure");
             Check.False(File.Exists(file), "the file is gone from disk, which is the risk the caller accepted");
 
-            if (!binExisted && TestBackend.IsNative)
+            if (!binExisted)
             {
                 Check.True(Directory.Exists(binDirectory),
-                    $"the native backend made somewhere for the file rather than destroying it, so it created {binDirectory}");
+                    $"somewhere was made for the file rather than destroying it, so it created {binDirectory}");
             }
         }
         finally
@@ -446,7 +391,7 @@ internal static class FacadeSuite
         try
         {
             await RecycleBin
-                .EmptyAsync(ScratchWorkspace.VolumeRoot, new RecycleBinOptions { Backend = RecycleBinBackend.Native, ThrowOnError = false })
+                .EmptyAsync(ScratchWorkspace.VolumeRoot, new RecycleBinOptions { ThrowOnError = false })
                 .ConfigureAwait(false);
 
             Directory.Delete(binDirectory);
@@ -508,7 +453,7 @@ internal static class FacadeSuite
         var healthy = workspace.CreateRandomFiles(1, 4096)[0];
         var refused = Path.Combine(AbsentVolume.RootOf(letter), "on-a-volume-that-is-not-there.bin");
 
-        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
+        var options = new RecycleBinOptions { ThrowOnError = false };
         var batch = new List<string?> { refused, healthy };
 
         var result = await FileRecycler
@@ -527,15 +472,13 @@ internal static class FacadeSuite
     }
 
     /// <summary>
-    /// A path listed twice on a volume that cannot recycle is refused once, which is what the same batch
-    /// would have done had it reached the Shell.
+    /// A path listed twice on a volume that cannot recycle is refused once.
     /// </summary>
     /// <remarks>
-    /// The gate answers before <see cref="RecycleOperationRunner.CollapseEquivalentPaths"/> gets a chance
+    /// The gate answers before <see cref="RecycleTarget.CollapseEquivalent"/> gets a chance
     /// to, so without collapsing here a caller who listed one path twice would read two failures for one
-    /// file — the outcome <c>RunnerSuite.DuplicatePathsAreNotReportedAsFailures</c> pins as wrong for the
-    /// ordinary path. Both spellings stay in the batch on purpose: what is being checked is the gate's
-    /// bookkeeping, not the runner's.
+    /// file. Both spellings stay in the batch on purpose: what is being checked is the gate's
+    /// bookkeeping, not the collapse.
     /// <para>
     /// The gate the bookkeeping belongs to needs a volume with no Recycle Bin, so the file is written on
     /// the volume <c>--scratch</c> named and the case is a skip on a volume that recycles.
@@ -551,7 +494,7 @@ internal static class FacadeSuite
         var file = Path.Combine(ScratchWorkspace.Root, $"refused-{Environment.ProcessId}.bin");
         File.WriteAllBytes(file, new byte[4096]);
 
-        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
+        var options = new RecycleBinOptions { ThrowOnError = false };
 
         var result = await FileRecycler
             .MoveToRecycleBinAsync([file, file], options, context.CancellationToken)
@@ -560,7 +503,7 @@ internal static class FacadeSuite
         Check.False(result.Succeeded, "the refused path still fails the operation");
         Check.Equal(1, result.Failures.Count, "one path is refused once, however many times it was listed");
         Check.Equal(file, result.FirstFailure!.Path, "and the failure names the caller's spelling");
-        Check.Equal(0, result.RecycledPaths.Count, "nothing reached the Shell, so nothing was recycled");
+        Check.Equal(0, result.RecycledPaths.Count, "nothing was attempted, so nothing was recycled");
         Check.True(File.Exists(file), "the file is untouched");
 
         workspace.Dispose();
@@ -595,7 +538,6 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions
         {
-            Backend = (RecycleBinBackend)TestBackend.Kind,
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
@@ -642,7 +584,6 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions
         {
-            Backend = (RecycleBinBackend)TestBackend.Kind,
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
@@ -689,7 +630,6 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions
         {
-            Backend = (RecycleBinBackend)TestBackend.Kind,
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
@@ -710,7 +650,7 @@ internal static class FacadeSuite
             Check.Equal(
                 0,
                 result.FirstFailure.Attempts,
-                "nothing was recorded as attempted, because the removal is this library's own and does not go through the Shell's rounds");
+                "nothing was recorded as attempted, because the removal is this library's own");
             Check.NotEqual(0, result.FirstFailure.HResult, "the file system's own error code came through");
             Check.True(
                 (result.FirstFailure.HResult & unchecked((int)0x80000000)) != 0,
@@ -757,7 +697,6 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions
         {
-            Backend = (RecycleBinBackend)TestBackend.Kind,
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
@@ -789,10 +728,9 @@ internal static class FacadeSuite
     /// reported as an ordinary recycle.
     /// </summary>
     /// <remarks>
-    /// The receipt check compares the volume the item came from against the volume the Shell reported the
-    /// new entry on. Those two strings differ in form: the caller's keeps the <c>\\?\</c> prefix and the
-    /// Shell never emits one. Comparing the roots without settling that first makes every such path look
-    /// like it was deleted outside the Recycle Bin, which reports a successful recycle as a failure.
+    /// The caller's spelling keeps the <c>\\?\</c> prefix while the normalised paths the pipeline
+    /// compares do not. The volume comparison settles that first, so every prefixed path reads as the
+    /// volume it names rather than as a volume that is not there.
     /// </remarks>
     private static async Task ExtendedPrefixOnAShortPathStillReportsSuccess(TestContext context)
     {
@@ -808,7 +746,7 @@ internal static class FacadeSuite
 
         var (_, sizeBefore) = RecycleBinProbe.MeasureOrFail(volumeRoot, "the baseline size");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync([extended], TestBackend.Options, cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync([extended], RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         Check.True(
             result.Succeeded,
@@ -829,7 +767,7 @@ internal static class FacadeSuite
 
         var thrown = Check.Throws<FileNotFoundException>(
             () => FileRecycler.MoveToRecycleBinAsync(missing).GetAwaiter().GetResult(),
-            "a missing path on the single-path overload reports the path, not a Shell failure");
+            "a missing path on the single-path overload reports the path, not a move failure");
 
         Check.True(
             thrown.Message.Contains(missing, StringComparison.OrdinalIgnoreCase),
@@ -839,16 +777,16 @@ internal static class FacadeSuite
         return Task.CompletedTask;
     }
 
-    private static async Task SingleLockedPathThrowsWithShellHResult(TestContext context)
+    private static async Task SingleLockedPathThrowsWithFileSystemHResult(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        // The claim is about the code the Shell itself gave. A volume whose recycling is settled from
-        // configuration — a share, or one the Shell has never been asked about — is refused before it is
-        // reached, and such a refusal carries HResult 0 because there is no Shell code to report, which is
-        // what RecycleFailure.HResult documents. Guarded ahead of the file so a skip leaves nothing behind.
-        ScratchWorkspace.RequireRecycling("a Shell refusal to carry the Shell's own error code");
+        // The claim is about the code the file system itself gave. A volume whose recycling is settled from
+        // configuration is refused before it is reached, and such a refusal carries HResult 0 because there
+        // is no file-system code to report, which is what RecycleFailure.HResult documents. Guarded ahead of
+        // the file so a skip leaves nothing behind.
+        ScratchWorkspace.RequireRecycling("a file-system refusal to carry the file system's own error code");
 
         var files = workspace.CreateRandomFiles(1, 4096);
 
@@ -857,7 +795,6 @@ internal static class FacadeSuite
         {
             var options = new RecycleBinOptions
             {
-                Backend = (RecycleBinBackend)TestBackend.Kind,
                 MaxAttempts = 1,
                 InitialRetryDelay = TimeSpan.Zero,
                 OverallTimeout = TimeSpan.FromSeconds(5)
@@ -868,12 +805,12 @@ internal static class FacadeSuite
 
             thrown = Check.Throws<IOException>(
                 () => FileRecycler.MoveToRecycleBinAsync(files[0], cancellationToken: context.CancellationToken).GetAwaiter().GetResult(),
-                "a Shell refusal on the single-path overload raises IOException");
+                "a file-system refusal on the single-path overload raises IOException");
         }
 
-        Check.True((thrown.HResult & unchecked((int)0x80000000)) != 0, $"the exception carries the Shell error code (got 0x{thrown.HResult:X8})");
-        Check.True(thrown.InnerException is not null, "the Shell code is also available as an inner exception");
-        Check.True(File.Exists(files[0]), "the file is still there, since the Shell refused it");
+        Check.True((thrown.HResult & unchecked((int)0x80000000)) != 0, $"the exception carries the file-system error code (got 0x{thrown.HResult:X8})");
+        Check.True(thrown.InnerException is not null, "the code is also available as an inner exception");
+        Check.True(File.Exists(files[0]), "the file is still there, since the move was refused");
 
         workspace.Dispose();
     }
@@ -908,7 +845,7 @@ internal static class FacadeSuite
         var files = workspace.CreateFixtureSet();
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync(files, TestBackend.Options, cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"every generated file is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8} {result.FirstFailure?.Path})");
         Check.Equal(files.Count, result.RecycledPaths.Count, "every generated file is reported as recycled");
@@ -942,7 +879,7 @@ internal static class FacadeSuite
         // Throwing off, stated rather than inherited: the single-path overload decides between raising and
         // returning false on exactly this flag, and a case named for it that relied on the default was
         // asserting the opposite of what it said.
-        var options = new RecycleBinOptions { ThrowOnError = false, Backend = (RecycleBinBackend)TestBackend.Kind };
+        var options = new RecycleBinOptions { ThrowOnError = false };
 
         Check.False(
             await FileRecycler.MoveToRecycleBinAsync((string?)null, options, context.CancellationToken).ConfigureAwait(false),
@@ -959,7 +896,7 @@ internal static class FacadeSuite
         Check.False(result.Succeeded, "a null path without throwOnError reports failure instead of throwing");
         Check.Equal(1, result.Failures.Count, "exactly one failure is reported");
         Check.Equal(RecycleFailureStage.PathValidation, result.Failures[0].Stage, "the failure is a path validation failure");
-        Check.Equal(0, result.Failures[0].HResult, "no Shell code is involved in a validation failure");
+        Check.Equal(0, result.Failures[0].HResult, "no code is involved in a validation failure");
         Check.Equal(0, result.RecycledPaths.Count, "nothing was recycled");
     }
 
@@ -974,7 +911,7 @@ internal static class FacadeSuite
         var batch = new List<string?> { missing };
         batch.AddRange(files);
 
-        var result = await FileRecycler.MoveToRecycleBinAsync(batch, TestBackend.Options, cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync(batch, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         Check.False(result.Succeeded, "the missing path makes the batch report failure");
         Check.Equal(1, result.Failures.Count, "only the missing path is reported");
@@ -1011,7 +948,7 @@ internal static class FacadeSuite
         File.WriteAllText(Path.Combine(ScratchWorkspace.Root, "tree", "b.txt"), "world");
 
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
-        var result = await FileRecycler.MoveToRecycleBinAsync([directory], TestBackend.Options, cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync([directory], RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"a directory is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
         Check.False(Directory.Exists(directory), "the directory tree is gone from disk");
@@ -1020,11 +957,15 @@ internal static class FacadeSuite
         workspace.Dispose();
     }
 
-    private static async Task LongPathPastTheShellLimitIsRefusedSafely(TestContext context)
+    /// <summary>
+    /// A path hundreds of characters long recycles under default options: no staging, no policy, no
+    /// limit. The destination inside the bin is short whatever the source was.
+    /// </summary>
+    private static async Task LongPathRecyclesWithNoStagingNoPolicyNoLimit(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
-        ScratchWorkspace.RequireRecycling("a long path refused by the Shell limit rather than by the volume gate");
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for a long path to land in");
 
         var deep = Path.Combine(ScratchWorkspace.Root, new string('d', 120));
         Directory.CreateDirectory(deep);
@@ -1037,41 +978,17 @@ internal static class FacadeSuite
 
         Check.True(file.Length > 260, $"the test path is genuinely long ({file.Length} chars)");
 
-        // Past the Shell's recycling limit a file is removed permanently while the operation still
-        // reports success, so the path must be refused with the file intact. LongPathSuite covers the
-        // Shell-facing side of this; here the point is only that the facade surfaces the refusal rather
-        // than claiming success.
-        //
-        // The native backend has no such limit: the record is written with the whole path in it and the
-        // payload moves to a short destination, so the same path is simply recycled there. That is the
-        // whole difference between the two backends, and it is asserted here rather than left to the
-        // native suite alone, so that a regression on either side is caught on both.
-        var result = await FileRecycler.MoveToRecycleBinAsync([file], TestBackend.Options, cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
-        if (TestBackend.IsNative)
-        {
-            Check.True(result.Succeeded, "the native backend recycles a path the Shell refuses");
-            Check.Equal(0, result.PermanentlyDeletedPaths.Count, "and never removes it for good on the way");
-            Check.False(File.Exists(file), "so the file is in the Recycle Bin rather than left where it was");
-            Check.Equal(1, result.RecycledPaths.Count, "and is named as recycled");
+        Check.True(result.Succeeded, $"a long path is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.Equal(1, result.RecycledPaths.Count, "and is named as recycled");
+        Check.Equal(0, result.PermanentlyDeletedPaths.Count, "and never removed for good on the way");
+        Check.False(File.Exists(file), "so the file is in the Recycle Bin rather than left where it was");
 
-            workspace.Dispose();
-            return;
-        }
-
-        // Where the volume issues 8.3 names, this path is recycled rather than refused, and the assertions
-        // below would be about the other outcome. Skipping is the honest result on such a volume, and it is
-        // what the sibling long-path cases already do. The check sits after the native branch because the
-        // native backend has no length limit for 8.3 names to shorten.
-        if (ShortPathResolver.TryResolveShort(file) is not null)
-        {
-            workspace.Dispose();
-            Check.Skip("this volume issues 8.3 names, so a long path is recycled rather than refused");
-        }
-
-        Check.False(result.Succeeded, "a path past the Shell limit is refused rather than silently deleted");
-        Check.Equal(RecycleFailureStage.LongPathNotRecyclable, result.FirstFailure!.Stage, "the refusal names the long-path limitation");
-        Check.True(File.Exists(file), "the file survives, because it was never handed to the Shell");
+        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken);
+        Check.True(
+            contents.Items.Any(item => string.Equals(item.OriginalPath, file, StringComparison.OrdinalIgnoreCase)),
+            "the entry carries the whole original path, however long it was");
 
         workspace.Dispose();
     }

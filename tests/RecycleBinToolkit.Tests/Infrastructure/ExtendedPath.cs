@@ -5,16 +5,12 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 /// </summary>
 /// <remarks>
 /// For a case that needs the prefix on a path that is <em>not</em> long, because the prefix is what the
-/// case is about: a volume root written in that form, a short path handed over that way. Neither can ask
-/// <c>LongPathStager.PathForIo</c> for it, since that method prefixes what is already past the Shell's limit
-/// and hands a short path straight back — the right answer for the cases that reach for a long file, and the
-/// wrong one for these.
+/// case is about: a volume root written in that form, a short path handed over that way.
 /// <para>
-/// The rule is the library's own, restated rather than called: a drive path takes <c>\\?\</c>, a share takes
+/// The rule is restated rather than called: a drive path takes <c>\\?\</c>, a share takes
 /// <c>\\?\UNC\</c>. Putting the drive prefix on a UNC path instead gives <c>\\?\\server\share\</c>, which is
 /// not a path at all — <see cref="Path"/> reads its root as <c>\</c>, a location on the current drive, and the
-/// file APIs refuse it. <c>LongPathStager.PathForIo</c> is internal to the library, so a second statement of
-/// the rule is the only way to write these cases against it.
+/// file APIs refuse it.
 /// </para>
 /// </remarks>
 internal static class ExtendedPath

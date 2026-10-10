@@ -196,7 +196,7 @@ internal sealed class ScratchDirectory
             return;
         }
 
-        var target = LongPathStager.PathForIo(FullPath.TrimEnd(System.IO.Path.DirectorySeparatorChar));
+        var target = ExtendedPath.For(FullPath.TrimEnd(System.IO.Path.DirectorySeparatorChar));
 
         for (var attempt = 1; ; attempt++)
         {

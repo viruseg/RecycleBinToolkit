@@ -9,7 +9,7 @@ internal static class WorkflowSuite
     private const int SliceBytes = 4096;
     private const int AppendBytes = 1024;
 
-    /// <summary>How many touched files the load case moves through the Shell.</summary>
+    /// <summary>How many touched files the load case moves.</summary>
     private const int LoadFileCount = 20;
 
     /// <summary>
@@ -80,7 +80,7 @@ internal static class WorkflowSuite
 
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync(paths, TestBackend.Options, cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync(paths, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
         var (after, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the count after the workflow");
         var gained = after - before;
 

@@ -95,7 +95,7 @@ namespace RecycleBinToolkit.Tests.Suites;
         var files = workspace.CreateRandomFiles(fileCount, fileSize);
         var (countBefore, sizeBefore) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline bytes");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync(files, TestBackend.Options, cancellationToken: context.CancellationToken);
+        var result = await FileRecycler.MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         var (countAfter, sizeAfter) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the bytes after the batches");
 

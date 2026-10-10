@@ -29,24 +29,13 @@ internal static class EmptySuite
     ];
 
     /// <summary>
-    /// <c>SHEmptyRecycleBin</c> reads a null root as every volume on the machine. Naming one volume has to
-    /// reach it as that volume, so a caller who mistyped a root cannot have every Recycle Bin emptied under
-    /// a result that reports one volume.
+    /// Naming one volume has to empty that volume, so a caller who mistyped a root cannot have every
+    /// Recycle Bin emptied under a result that reports one volume.
     /// </summary>
     /// <remarks>
-    /// The root handed to the Shell is not the caller's spelling, it is the normalised one the measurement
-    /// and the report are both taken against. Asserting on the exact string the caller wrote would pass
-    /// against the wrong spelling being handed over; asserting on the normalised root catches that too.
-    /// <para>
-    /// What this cannot decide, and why, is the one-root-versus-all-roots distinction itself. An empty
-    /// Recycle Bin is emptied successfully, so a result naming one volume comes back identically whether
-    /// the Shell was handed that volume or handed <c>null</c> — the check that would tell them apart needs
-    /// a second volume with something in its bin, and arranging that means either writing into a volume
-    /// the caller did not name or emptying one. So the decision is pinned as a pure function in
-    /// <see cref="ContractSuite.TheShellIsOnlyEverAskedAboutVolumesThatWereMeasured"/>, where it can be,
-    /// and this case covers what only the public API can reach: that a named volume is emptied and
-    /// measured, after the decision moved.
-    /// </para>
+    /// The volume acted on is not the caller's spelling, it is the normalised one the report is taken
+    /// against. Asserting on the exact string the caller wrote would pass against the wrong volume being
+    /// acted on; asserting on the normalised root catches that too.
     /// </remarks>
     private static async Task NamingOneVolumeEmptiesThatVolume(TestContext context)
     {
@@ -61,13 +50,13 @@ internal static class EmptySuite
         // Recycled first, so the empty has something to remove. An already-empty bin reports a success
         // either way, which is what makes this case vacuous without them.
         var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, TestBackend.Options, cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.True(recycled.Succeeded, $"the files reached the volume's Recycle Bin (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
         Check.Equal(files.Count, recycled.RecycledPaths.Count, "all of them did");
 
-        var emptied = await RecycleBin.EmptyAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(1, emptied.VolumesEmptied.Count, $"naming one volume covers one volume (got {string.Join(", ", emptied.VolumesEmptied)})");
         Check.Equal(volumeRoot, emptied.VolumesEmptied[0], "and it is that volume");
@@ -84,10 +73,8 @@ internal static class EmptySuite
     /// nothing in particular.
     /// </summary>
     /// <remarks>
-    /// The refusal has to happen before the Shell is reached. An empty string reduced to a root is
-    /// <c>"\</c>, and handing that to <c>SHEmptyRecycleBin</c> is a question about a volume that does not
-    /// exist — or, worse, about no volume at all. A refusal cannot do that, so the path is checked before
-    /// the Shell is asked anything.
+    /// The refusal has to happen before anything is attempted. An empty string reduced to a root is
+    /// <c>"\</c>, which names no volume at all. A refusal cannot act on that, so the path is checked first.
     /// <para>
     /// <see cref="RecycleBin.GetStatusAsync"/> throws on the same string rather than refusing it, because
     /// it takes no <see langword="null"/> to mean "everything"; that difference is its own and predates
@@ -100,14 +87,14 @@ internal static class EmptySuite
             RecycleBinVolumeState.IsVolumeRoot(string.Empty),
             "an empty string is not a volume root, however it is reduced");
 
-        var result = await RecycleBin.EmptyAsync(string.Empty, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var result = await RecycleBin.EmptyAsync(string.Empty, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, result.VolumesEmptied.Count, "no volume is emptied in answer to an empty path");
         Check.Equal(0, result.ItemsRemoved, "and nothing is removed");
         Check.Equal(1, result.Failures.Count, "the caller is told the path was not one");
 
         var failure = result.Failures[0];
-        Check.Equal(RecycleFailureStage.PathValidation, failure.Stage, "as a path that was not a volume root, before the Shell was asked");
+        Check.Equal(RecycleFailureStage.PathValidation, failure.Stage, "as a path that was not a volume root");
         Check.Equal(string.Empty, failure.Path, "naming the path the caller passed");
     }
 
@@ -122,13 +109,10 @@ internal static class EmptySuite
     /// which is what it is. The two public methods used to reduce differently, and one of them refused
     /// this string while the other answered for <c>W:\</c>.
     /// <para>
-    /// This is the guard for that duplication on a local drive. <c>\\?\W:\</c> is not: the Shell hands
-    /// that spelling back as its own root, so both predicates read it as a root and
-    /// <see cref="AnExtendedLengthRootIsTheVolumeToEmpty"/> cannot tell them apart. A share root is the one
-    /// shape that would, because <c>Path.GetPathRoot</c> spells it in backslashes whichever way the caller
-    /// wrote it while a reduced comparison reads the two spellings as different roots. No case here makes
-    /// that comparison, and the limit is known rather than worked around: the empty hands an accepted share
-    /// to the Shell, and this suite does not reach for the network to get at one.
+    /// This is the guard for that duplication on a local drive. A share root is the one
+    /// shape that would show a disagreement, because <c>Path.GetPathRoot</c> spells it in backslashes
+    /// whichever way the caller wrote it while a reduced comparison reads the two spellings as different
+    /// roots. No case here makes that comparison, and the limit is known rather than worked around.
     /// </para>
     /// </remarks>
     private static async Task AForwardSlashSpellingIsTheVolumeToEmpty(TestContext context)
@@ -142,14 +126,14 @@ internal static class EmptySuite
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
         var forwardSlash = volumeRoot.Replace('\\', '/');
 
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], TestBackend.Options, cancellationToken: context.CancellationToken)
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
 
-        var status = await RecycleBin.GetStatusAsync(forwardSlash, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(forwardSlash, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
         Check.Equal(volumeRoot, status.VolumeRoot, "the status reads a forward-slash root as the volume it is");
 
-        var result = await RecycleBin.EmptyAsync(forwardSlash, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var result = await RecycleBin.EmptyAsync(forwardSlash, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(
             0,
@@ -167,7 +151,7 @@ internal static class EmptySuite
     /// <summary>
     /// A bare drive letter names its volume, and so does the same root written with its separator.
     /// Both spellings have to empty the same volume, and both have to say so in what they report —
-    /// an entry that claims a volume was emptied, having asked the Shell for something else, is worse
+    /// an entry that claims a volume was emptied, having acted on something else, is worse
     /// than a refusal because nothing looks wrong.
     /// </summary>
     /// <remarks>
@@ -186,12 +170,12 @@ internal static class EmptySuite
         var file = workspace.CreateRandomFile(4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], TestBackend.Options, cancellationToken: context.CancellationToken)
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
 
         var bare = volumeRoot.TrimEnd(Path.DirectorySeparatorChar);
-        var result = await RecycleBin.EmptyAsync(bare, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var result = await RecycleBin.EmptyAsync(bare, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(
             0,
@@ -236,14 +220,14 @@ internal static class EmptySuite
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
         var prefixed = ExtendedPath.For(volumeRoot);
 
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], TestBackend.Options, cancellationToken: context.CancellationToken)
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
 
-        var status = await RecycleBin.GetStatusAsync(prefixed, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(prefixed, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
         Check.Equal(volumeRoot, status.VolumeRoot, "the status names the plain volume, so there is one volume to act on");
 
-        var result = await RecycleBin.EmptyAsync(prefixed, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var result = await RecycleBin.EmptyAsync(prefixed, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(
             0,
@@ -277,13 +261,13 @@ internal static class EmptySuite
         var file = workspace.CreateRandomFile(4096);
 
         // Something on the volume, so a silent widening would have something to destroy.
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], TestBackend.Options, cancellationToken: context.CancellationToken)
+        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is an entry on the volume for the check to be about");
 
         var (countBefore, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
-        var result = await RecycleBin.EmptyAsync(ScratchWorkspace.Root, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var result = await RecycleBin.EmptyAsync(ScratchWorkspace.Root, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, result.VolumesEmptied.Count, "a directory inside a volume is not a volume that got emptied");
         Check.Equal(0, result.ItemsRemoved, "and nothing was removed in answer to it");
@@ -300,19 +284,13 @@ internal static class EmptySuite
     }
 
     /// <summary>
-    /// Every operation queues behind one Shell worker, so time spent waiting for it is part of what the
-    /// caller waited. Elapsed has to say so, and say the same thing as a listing's does.
+    /// Elapsed has to say what the caller waited, and say the same thing as a listing's does: measured
+    /// around the work, real, bounded by the call, and not zero.
     /// </summary>
     /// <remarks>
-    /// The work runs on the worker thread, so a stopwatch started there reports only the Shell's share and
-    /// omits the queueing entirely. That is the larger half whenever the worker is busy with another
-    /// batch, and it is invisible to the caller precisely because it happened before their call reached
-    /// the Shell.
-    /// <para>
     /// The assertion is that the reported time is not smaller than the time the call itself took, which is
     /// the only direction that can be checked from outside — and the only one that matters: an elapsed
     /// time that understates the wait is worse than one that overstates it.
-    /// </para>
     /// </remarks>
     private static async Task ElapsedCoversTheWaitAsWellAsTheEmpty(TestContext context)
     {
@@ -322,54 +300,18 @@ internal static class EmptySuite
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
         await FileRecycler
-            .MoveToRecycleBinAsync(files, TestBackend.Options, cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
-        // Occupy the worker first, so the empty cannot start until this finishes. Without that the queueing
-        // is indistinguishable from no queueing, and the assertion below would be satisfied by a worker-side
-        // measurement too — which is the whole question.
-        var blocking = RecycleBinWorker.RunAsync(
-            () =>
-            {
-                Thread.Sleep(WorkerOccupation);
-                return true;
-            },
-            context.CancellationToken);
-
         var stopwatch = Stopwatch.StartNew();
-        var emptied = await RecycleBin.EmptyAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
         stopwatch.Stop();
 
-        await blocking.ConfigureAwait(false);
-
-        // On the Shell path the queue is the whole point of this case. The native backend has no worker and
-        // no queue: it starts on a pool thread as soon as the pool has one, so there is no wait for it to
-        // measure. What still has to hold on that path is the other half — that the reported time is real,
-        // bounded by the call, and not zero.
-        if (TestBackend.IsNative)
-        {
-            Check.True(emptied.Elapsed > TimeSpan.Zero, $"the reported time is measured rather than left at zero ({emptied.Elapsed})");
-            Check.True(
-                emptied.Elapsed <= stopwatch.Elapsed,
-                $"and it still cannot exceed the time the call itself took (reported {emptied.Elapsed.TotalMilliseconds:F0} ms, call took {stopwatch.Elapsed.TotalMilliseconds:F0} ms)");
-
-            return;
-        }
-
-        Check.True(
-            emptied.Elapsed >= WorkerOccupation - Slack,
-            $"the reported time includes waiting for the worker, not just the empty (reported {emptied.Elapsed.TotalMilliseconds:F0} ms, worker was occupied for {WorkerOccupation.TotalMilliseconds:F0} ms)");
-
+        Check.True(emptied.Elapsed > TimeSpan.Zero, $"the reported time is measured rather than left at zero ({emptied.Elapsed})");
         Check.True(
             emptied.Elapsed <= stopwatch.Elapsed,
             $"and it still cannot exceed the time the call itself took (reported {emptied.Elapsed.TotalMilliseconds:F0} ms, call took {stopwatch.Elapsed.TotalMilliseconds:F0} ms)");
     }
-
-    /// <summary>How long the worker is held before the empty is issued.</summary>
-    private static readonly TimeSpan WorkerOccupation = TimeSpan.FromMilliseconds(1500);
-
-    /// <summary>Slack for the sleep overshooting its own duration.</summary>
-    private static readonly TimeSpan Slack = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// The claim a caller depends on: after emptying, the entry is gone from the Recycle Bin, not
@@ -395,7 +337,7 @@ internal static class EmptySuite
         var (countBefore, _) = RecycleBinProbe.MeasureOrFail(volumeRoot, "the baseline count");
 
         var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, TestBackend.Options, cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the file was recycled");
 
@@ -403,9 +345,9 @@ internal static class EmptySuite
             RecycleBinProbe.Measure(volumeRoot).Items - countBefore >= 1,
             "the file reached the Recycle Bin before emptying");
 
-        var emptied = await RecycleBin.EmptyAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
-        var after = await RecycleBin.GetItemsAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var after = await RecycleBin.GetItemsAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
         Check.False(
             after.Items.Any(i => string.Equals(i.OriginalPath, files[0], StringComparison.OrdinalIgnoreCase)),
             "the file is no longer in the Recycle Bin");
@@ -416,8 +358,8 @@ internal static class EmptySuite
     }
 
     /// <summary>
-    /// The counters are the reason the Shell API is wrapped rather than called: it removes items
-    /// without saying how many. Both counts are checked against the size of what was deleted, because
+    /// The counters are the reason the empty reports what it removed: it deletes entries
+    /// without the file system saying how many. Both counts are checked against the size of what was deleted, because
     /// a result that reports zero while the caller watched the bytes disappear is worse than no
     /// result.
     /// </summary>
@@ -434,11 +376,11 @@ internal static class EmptySuite
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
         var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, TestBackend.Options, cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the files were recycled");
 
-        var emptied = await RecycleBin.EmptyAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(emptied.ItemsRemoved >= fileCount, $"the removed item count covers the batch (got {emptied.ItemsRemoved}, expected at least {fileCount})");
         Check.True(emptied.BytesFreed >= fileCount * (long)fileSize, $"the freed byte count covers the batch (got {emptied.BytesFreed}, expected at least {fileCount * fileSize})");
@@ -464,7 +406,7 @@ internal static class EmptySuite
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
         var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, TestBackend.Options, cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         // The premise of the case is a Recycle Bin that was not empty, so the run has to establish one
@@ -473,12 +415,12 @@ internal static class EmptySuite
         Check.True(recycled.Succeeded, $"the file reached the bin before the empty (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
         Check.Equal(files.Count, recycled.RecycledPaths.Count, "so the volume's Recycle Bin was not empty to begin with");
 
-        var first = await RecycleBin.EmptyAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var first = await RecycleBin.EmptyAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, first.Failures.Count, $"the first empty reached the volume (failures: {string.Join(", ", first.Failures.Select(f => $"{f.Stage} 0x{f.HResult:X8}"))})");
         Check.True(first.ItemsRemoved >= files.Count, $"and it removed what was in it (got {first.ItemsRemoved})");
 
-        var second = await RecycleBin.EmptyAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var second = await RecycleBin.EmptyAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, second.Failures.Count, "emptying an empty volume is not a failure");
         Check.Equal(0, second.ItemsRemoved, "nothing was removed, so nothing is reported removed");
@@ -495,7 +437,7 @@ internal static class EmptySuite
     {
         var letter = AbsentVolume.Letter();
         AbsentVolume.RequireAbsent(letter, "emptying a volume that is not there");
-        var emptied = await RecycleBin.EmptyAsync(AbsentVolume.RootOf(letter), TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(AbsentVolume.RootOf(letter), RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, emptied.ItemsRemoved, "an absent volume removes nothing");
         Check.Equal(0, emptied.BytesFreed, "an absent volume frees nothing");

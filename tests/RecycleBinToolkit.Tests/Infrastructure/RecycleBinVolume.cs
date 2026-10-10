@@ -1,19 +1,24 @@
-using System.Runtime.InteropServices;
+using RecycleBinToolkit;
 
 namespace RecycleBinToolkit.Tests.Infrastructure;
 
 /// <summary>
-/// Independent read of the Recycle Bin of a volume. Enumerating <c>$Recycle.Bin</c> directly is
-/// not an option: the SYSTEM SID subdirectory throws <see cref="UnauthorizedAccessException"/> for
-/// a normal user, so item counts come from the Shell instead.
+/// Independent read of the Recycle Bin of a volume: a second walk of the bin directory that shares
+/// nothing with the library's listing but the record reader.
 /// </summary>
-internal static partial class RecycleBinVolume
+/// <remarks>
+/// Enumerating <c>$Recycle.Bin</c> at the volume root is not an option: the SYSTEM SID subdirectory
+/// throws <see cref="UnauthorizedAccessException"/> for a normal user, so only the current user's bin
+/// directory is walked. A volume another account's entries sit on is counted without them, the same
+/// way the library counts it.
+/// </remarks>
+internal static class RecycleBinVolume
 {
     /// <summary>
     /// Number of items currently tracked in the Recycle Bin of the given volume.
     /// </summary>
     /// <param name="rootPath">Volume root, for example <c>"W:\\"</c>. A missing trailing separator is added.</param>
-    /// <returns>The item count, or <c>-1</c> when the Shell query failed.</returns>
+    /// <returns>The item count, or <c>-1</c> when the query failed.</returns>
     public static long QueryItemCount(string rootPath) =>
         TryQuery(rootPath, out var items, out _, out _) ? items : -1;
 
@@ -21,17 +26,17 @@ internal static partial class RecycleBinVolume
     /// Total size in bytes of the Recycle Bin contents of the given volume.
     /// </summary>
     /// <param name="rootPath">Volume root, for example <c>"W:\\"</c>. A missing trailing separator is added.</param>
-    /// <returns>The size in bytes, or <c>-1</c> when the Shell query failed.</returns>
+    /// <returns>The size in bytes, or <c>-1</c> when the query failed.</returns>
     public static long QuerySize(string rootPath) =>
         TryQuery(rootPath, out _, out var size, out _) ? size : -1;
 
     /// <summary>
-    /// Both quantities from one query, with the failure code kept for a readable assertion.
+    /// Both quantities from one walk, with the failure code kept for a readable assertion.
     /// </summary>
     /// <param name="rootPath">Volume root, for example <c>"W:\\"</c>. A missing trailing separator is added.</param>
     /// <returns>
-    /// The entry count and size in bytes, both <c>-1</c> when the query failed, and the Shell's error
-    /// code so a failing assertion can name it.
+    /// The entry count and size in bytes, both <c>-1</c> when the query failed, and the file system's
+    /// error code so a failing assertion can name it.
     /// </returns>
     public static (long Items, long Bytes, int HResult, bool Ok) Measure(string rootPath)
     {
@@ -49,44 +54,46 @@ internal static partial class RecycleBinVolume
             ? rootPath
             : rootPath + Path.DirectorySeparatorChar;
 
-        var info = new ShQueryRbInfo { SizeOfSelf = Marshal.SizeOf<ShQueryRbInfo>() };
+        items = -1;
+        size = -1;
+        hrResult = 0;
 
-        hrResult = SHQueryRecycleBin(root, ref info);
-        if (hrResult < 0)
+        if (!Directory.Exists(root))
         {
-            items = -1;
-            size = -1;
             return false;
         }
 
-        items = info.NumItems;
-        size = info.Size;
-        return true;
-    }
+        var binDirectory = Path.Combine(root, "$RECYCLE.BIN", NativeBinLayout.CurrentSid);
 
-    [LibraryImport("shell32.dll", EntryPoint = "SHQueryRecycleBinW", StringMarshalling = StringMarshalling.Utf16)]
-    private static partial int SHQueryRecycleBin(string rootPath, ref ShQueryRbInfo info);
+        if (!Directory.Exists(binDirectory))
+        {
+            items = 0;
+            size = 0;
+            return true;
+        }
 
-    /// <summary>
-    /// Native <c>SHQUERYRBINFO</c>.
-    /// </summary>
-    /// <remarks>
-    /// The two 64-bit fields are adjacent and the same width, and the byte total sits before the
-    /// item count. Declaration order is therefore spelled out with explicit offsets instead of being
-    /// left to the layout rules: swapping the two silently turns every delta assertion into a
-    /// comparison of the wrong quantity. <c>ShellSuite.RecycleBinVolumeTracksCountAndSizeSeparately</c>
-    /// pins the mapping.
-    /// </remarks>
-    [StructLayout(LayoutKind.Explicit)]
-    private struct ShQueryRbInfo
-    {
-        [FieldOffset(0)]
-        public int SizeOfSelf;
+        try
+        {
+            items = 0;
+            size = 0;
 
-        [FieldOffset(8)]
-        public long Size;
+            foreach (var entry in NativeBinEntries.Collect(binDirectory, CancellationToken.None))
+            {
+                if (entry.IndexPath is null || entry.PayloadPath is null)
+                {
+                    continue;
+                }
 
-        [FieldOffset(16)]
-        public long NumItems;
+                items++;
+                size += entry.PayloadIsDirectory ? 0 : entry.PayloadLength;
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            hrResult = ex.HResult;
+            return false;
+        }
     }
 }

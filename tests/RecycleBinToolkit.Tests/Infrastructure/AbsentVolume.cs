@@ -57,7 +57,7 @@ internal static class AbsentVolume
     }
 
     /// <summary>
-    /// The volume root <paramref name="letter"/> names, spelled the way the library and the Shell want it.
+    /// The volume root <paramref name="letter"/> names, spelled the way the library wants it.
     /// </summary>
     /// <param name="letter">A drive letter, as returned by <see cref="Letter"/>.</param>
     /// <returns>The root with its trailing separator.</returns>

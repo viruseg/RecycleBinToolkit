@@ -50,8 +50,8 @@ internal sealed class ScratchWorkspace : IDisposable
     /// <summary>
     /// The parent of this run's own claim, with a trailing separator — which is the volume root
     /// <c>--scratch</c> named, because that claim is the one taken outside the run's directory. Every case
-    /// that asks a question of the Shell asks it about this string rather than about a drive letter
-    /// written into the source, which is what lets the whole suite run on a volume the caller named.
+    /// works on this string rather than on a drive letter written into the source, which is what lets the
+    /// whole suite run on a volume the caller named.
     /// </summary>
     public static string VolumeRoot => _runRoot?.Parent ?? throw new InvalidOperationException(
         $"{nameof(Configure)} has not run, so no volume has been named. Pass --scratch <root> on the command line.");
@@ -66,10 +66,8 @@ internal sealed class ScratchWorkspace : IDisposable
     /// skips or runs on it rather than deciding for itself.
     /// Windows records recycling per volume under
     /// <c>BitBucket\Volume\{GUID}\NukeOnDelete=0</c>, which is what
-    /// <see cref="RecycleBinAvailabilityReason.Enabled"/> rests on; a volume with no such key is answered by
-    /// asking the Shell whether it has a bin at all, and the reasons that come back from that are
-    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> or
-    /// <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/> rather than enabled. So a run on a
+    /// <see cref="RecycleBinAvailabilityReason.Enabled"/> rests on; a volume with no such key answers
+    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> rather than enabled. So a run on a
     /// flash drive, a share, or a machine whose policy turns the bin off is a run that works, and a case
     /// that cannot make its claim there is expected to say so through
     /// <see cref="RequireNonRecycling"/> rather than fail on it.
@@ -80,8 +78,8 @@ internal sealed class ScratchWorkspace : IDisposable
     /// <c>VolumeSuite.TheScratchVolumeReasonIsWhatTheLibraryReports</c> asserts and all it asserts.
     /// </para>
     /// <para>
-    /// Cached for the life of the claim because the answer does not change under a run and the probe is a
-    /// Shell round trip on a path the case count does not justify repeating. What keeps the cache from
+    /// Cached for the life of the claim because the answer does not change under a run and the registry
+    /// reads are on a path the case count does not justify repeating. What keeps the cache from
     /// answering about a volume the run has left is not the clearing but an invariant: this value is
     /// written in one place, that place reads <see cref="VolumeRoot"/>, and <see cref="VolumeRoot"/> throws
     /// while no run root is held — so a cached answer exists only while a run root does, and no path here
@@ -139,7 +137,7 @@ internal sealed class ScratchWorkspace : IDisposable
     /// </param>
     /// <remarks>
     /// A case that recycles a file and reads the bin back cannot produce its answer on a volume with no bin:
-    /// the file is refused before it reaches the Shell, and the counter has nothing to count. Without this
+    /// the file is refused before anything is attempted, and the counter has nothing to count. Without this
     /// guard such a case goes red on a flash drive or a share, and a run of forty identical failures buries
     /// the cases that did prove something. A skip is the honest reading there — the volume could not answer
     /// the question, so the case did not run — and it leaves the run's exit code describing coverage that
@@ -174,7 +172,7 @@ internal sealed class ScratchWorkspace : IDisposable
     public static string Root => PathUnder("scratch");
 
     /// <summary>
-    /// Absolute path of the root for cases that build <em>directories</em> past the Shell's length
+    /// Absolute path of the root for cases that build <em>directories</em> past the
     /// limit, always with a trailing separator.
     /// </summary>
     /// <remarks>
@@ -318,9 +316,7 @@ internal sealed class ScratchWorkspace : IDisposable
     }
 
     /// <summary>
-    /// Creates generated files in the scratch root, named <c>(1).jpg</c> upward. The parenthesised names
-    /// and the image extension are kept from the sample files this suite used to commit, because a Shell
-    /// rename has to cope with exactly those names.
+    /// Creates generated files in the scratch root, named <c>(1).jpg</c> upward.
     /// </summary>
     /// <param name="count">
     /// How many to create, starting at <c>(1).jpg</c>. Defaults to the whole standard set.
@@ -401,13 +397,8 @@ internal sealed class ScratchWorkspace : IDisposable
 
         // The extended-length prefix is what makes the standard file APIs work on a path the tests
         // deliberately build past MAX_PATH. Without it, cleanup throws and the deep tree is left
-        // behind, where a workspace file listing trips over paths it cannot enumerate. LongPathStager's
-        // own spelling of the prefix is used rather than a second copy of it here, because that one also
-        // knows a share is written \\?\UNC\... and not \\?\\server\share\... -- the second is a path that
-        // begins with a separator, resolves against the current drive, and would raise
-        // DirectoryNotFoundException, which Remove reads as "already gone". The run would then leave its
-        // whole tree on the share it was pointed at and report success.
-        var root = LongPathStager.PathForIo(ScratchWorkspace.Root.TrimEnd(Path.DirectorySeparatorChar));
+        // behind, where a workspace file listing trips over paths it cannot enumerate.
+        var root = ExtendedPath.For(ScratchWorkspace.Root.TrimEnd(Path.DirectorySeparatorChar));
 
         for (var attempt = 1; ; attempt++)
         {

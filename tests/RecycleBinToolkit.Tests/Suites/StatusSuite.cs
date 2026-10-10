@@ -23,7 +23,7 @@ internal static class StatusSuite
         new TestCase("StatusSuite." + nameof(StatusAgreesWhateverSpellingOfTheRootItIsGiven), StatusAgreesWhateverSpellingOfTheRootItIsGiven),
         new TestCase("StatusSuite." + nameof(ExtendedLengthSpellingOfTheRootIsTheSameVolume), ExtendedLengthSpellingOfTheRootIsTheSameVolume),
         new TestCase("StatusSuite." + nameof(TheVolumeKeyIsNamedTheWayWindowsNamesIt), TheVolumeKeyIsNamedTheWayWindowsNamesIt),
-        new TestCase("StatusSuite." + nameof(NoRecycleBinVolumeIsNamedNotIndeterminate), NoRecycleBinVolumeIsNamedNotIndeterminate),
+        new TestCase("StatusSuite." + nameof(AnUnconfiguredVolumeIsIndeterminateNotNamed), AnUnconfiguredVolumeIsIndeterminateNotNamed),
         new TestCase("StatusSuite." + nameof(AMissingPerVolumeKeyIsNotAnEnabledVolume), AMissingPerVolumeKeyIsNotAnEnabledVolume),
         new TestCase("StatusSuite." + nameof(OneShareHasOneSpelling), OneShareHasOneSpelling),
         new TestCase("StatusSuite." + nameof(AnUncRootIsRecognised), AnUncRootIsRecognised),
@@ -86,19 +86,15 @@ internal static class StatusSuite
     }
 
     /// <summary>
-    /// A volume the Shell reports no Recycle Bin for is named as such, not left as Indeterminate. The
-    /// two are different problems for the caller, because only one of them says the next delete on that
-    /// volume is a permanent deletion.
+    /// A volume nothing was recorded for answers <see cref="RecycleBinAvailabilityReason.Indeterminate"/>,
+    /// not <see cref="RecycleBinAvailabilityReason.NoRecycleBinOnVolume"/>. Unproven is not enabled, and
+    /// it is not a statement about a missing bin either: nothing walks the bin to check.
     /// </summary>
     /// <remarks>
-    /// The volume is the one <c>--scratch</c> named, asked about rather than built. This case used to
-    /// manufacture one — a <c>subst</c> mapping of the scratch root, which reported a drive type that
-    /// supports a bin while having no GUID and no bin — so that it ran on every machine. Nothing builds a
-    /// volume now: a run is told what its volume is once
-    /// (<see cref="ScratchWorkspace.Reason"/>) and a case that cannot make its claim on it says it did
-    /// not run. What is given up is an assertion about a DOS device of this library's own making; what is
-    /// gained is that the reason asserted is one a caller is actually handed — a flash drive, or a share,
-    /// rather than a stand-in for one.
+    /// The volume is the one <c>--scratch</c> named, asked about rather than built. What is given up is
+    /// an assertion about a DOS device of this library's own making; what is gained is that the reason
+    /// asserted is one a caller is actually handed — a flash drive, or a share, rather than a stand-in
+    /// for one.
     /// <para>
     /// The gate is coarser than the claim, and the third assertion is what makes up the difference.
     /// <see cref="ScratchWorkspace.RequireNonRecycling"/> skips on every reason but
@@ -107,18 +103,8 @@ internal static class StatusSuite
     /// setting turns recycling off (<see cref="RecycleBinAvailabilityReason.DisabledByUserPreference"/>)
     /// — both of which are decided, and both of which the case is right to pass on. It also lets it run on
     /// a volume whose type could not be read at all
-    /// (<see cref="RecycleBinAvailabilityReason.Indeterminate"/>), and there the three original
-    /// assertions all held without witnessing anything: an undecided reason is not enabled, and it matches
-    /// the run's own cached copy of itself. A reason that is not
-    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/> is one the library committed to, and that
-    /// commitment is the whole difference between "this volume has no bin" and "this run does not know".
-    /// </para>
-    /// So a volume the library declines to describe goes red here rather than passing quietly, and that is
-    /// the intended reading. It is the one condition under which a case of this name has run and not
-    /// witnessed its claim, which is what a red is for. A skip would record a machine the library cannot
-    /// read as merely not applicable, while every other case gated on
-    /// <see cref="ScratchWorkspace.Reason"/> skipped beside it for the same reason without one of them
-    /// saying so.
+    /// (<see cref="RecycleBinAvailabilityReason.Indeterminate"/>), and there the assertions hold without
+    /// witnessing anything beyond the undecided reason itself.
     /// </para>
     /// <para>
     /// The last assertion pins the two readings of the volume together — the run's cached
@@ -126,18 +112,23 @@ internal static class StatusSuite
     /// answer every other case in this run gates on no longer describes its own volume.
     /// </para>
     /// </remarks>
-    private static async Task NoRecycleBinVolumeIsNamedNotIndeterminate(TestContext context)
+    private static async Task AnUnconfiguredVolumeIsIndeterminateNotNamed(TestContext context)
     {
-        ScratchWorkspace.RequireNonRecycling("a volume the Shell reports no bin for");
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
 
-        var status = await RecycleBin.GetStatusAsync(ScratchWorkspace.VolumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(ScratchWorkspace.VolumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(ScratchWorkspace.VolumeRoot, status.VolumeRoot, "the answer names the volume it was asked about");
         Check.False(status.IsEnabled, $"a volume with no Recycle Bin is not an enabled Recycle Bin (got {status.Reason})");
-        Check.NotEqual(
-            RecycleBinAvailabilityReason.Indeterminate,
-            status.Reason,
-            "a volume the Shell reports no bin for is named, rather than the volume being left undecided");
+
+        if (status.Reason is not RecycleBinAvailabilityReason.Indeterminate)
+        {
+            Check.NotEqual(
+                RecycleBinAvailabilityReason.NoRecycleBinOnVolume,
+                status.Reason,
+                "a decided reason is one the library committed to, not a guess about a missing bin");
+        }
+
         Check.Equal(
             status.Reason,
             ScratchWorkspace.Reason,
@@ -163,11 +154,8 @@ internal static class StatusSuite
     /// and nothing asserts that shape either — this is not a claim that is covered elsewhere.
     /// <see cref="RecycleBinRegistry.ReadNukeOnDelete"/>'s null-key-name branch is now reached by no case
     /// in this repository, so a regression that gave a GUID-less volume any answer other than Unknown would
-    /// be caught by neither this case nor any other.
-    /// <see cref="NoRecycleBinVolumeIsNamedNotIndeterminate"/> does not reach it either: a bin-less volume
-    /// that has a GUID of its own is settled by the Shell's report rather than by a missing key name. The
-    /// gap is recorded here rather than closed, because closing it needs a volume with no GUID and nothing
-    /// in this repository makes one.
+    /// be caught by neither this case nor any other. The gap is recorded here rather than closed, because
+    /// closing it needs a volume with no GUID and nothing in this repository makes one.
     /// </para>
     /// <para>
     /// The last assertion pins that the unknown cannot be honoured anywhere downstream of the reader.
@@ -230,9 +218,8 @@ internal static class StatusSuite
 
     /// <summary>
     /// An extended-length root names the same volume as its plain spelling, so it has to produce the
-    /// same answer. The Shell does not accept the prefixed form and <see cref="DriveInfo"/> refuses it
-    /// outright, so without stripping the answer collapses to Indeterminate for a volume that is
-    /// plainly there.
+    /// same answer. <see cref="DriveInfo"/> refuses the prefixed form outright, so without stripping the
+    /// answer collapses to Indeterminate for a volume that is plainly there.
     /// </summary>
     private static async Task ExtendedLengthSpellingOfTheRootIsTheSameVolume(TestContext context)
     {
@@ -240,8 +227,8 @@ internal static class StatusSuite
         workspace.Recreate();
 
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
-        var plain = await RecycleBin.GetStatusAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
-        var extended = await RecycleBin.GetStatusAsync(ExtendedPath.For(volumeRoot), TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var plain = await RecycleBin.GetStatusAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var extended = await RecycleBin.GetStatusAsync(ExtendedPath.For(volumeRoot), RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(plain.VolumeRoot, extended.VolumeRoot, "both spellings name the same volume root");
         Check.Equal(plain.DriveType, extended.DriveType, "and the same drive type, so the volume is not unreadable");
@@ -275,8 +262,8 @@ internal static class StatusSuite
     {
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        var withSeparator = await RecycleBin.GetStatusAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
-        var bare = await RecycleBin.GetStatusAsync(volumeRoot.TrimEnd(Path.DirectorySeparatorChar), TestBackend.Options, context.CancellationToken)
+        var withSeparator = await RecycleBin.GetStatusAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var bare = await RecycleBin.GetStatusAsync(volumeRoot.TrimEnd(Path.DirectorySeparatorChar), RecycleBinOptions.Default, context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.Equal(withSeparator.VolumeRoot, bare.VolumeRoot, "both spellings report the same volume root");
@@ -287,7 +274,7 @@ internal static class StatusSuite
     /// <summary>
     /// The registry can say one thing while the volume does another, so the answer is checked against
     /// observed behaviour: a volume that accepted a delete into the Recycle Bin cannot be reported as
-    /// disabled. This is the test that would catch the policy paths disagreeing with the Shell.
+    /// disabled. This is the test that would catch the policy paths disagreeing with the volume.
     /// </summary>
     private static async Task StatusAgreesWithAVolumeThatJustAcceptedADelete(TestContext context)
     {
@@ -298,11 +285,11 @@ internal static class StatusSuite
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
         var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, TestBackend.Options, cancellationToken: context.CancellationToken)
+            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the file was recycled, so the volume demonstrably uses the Recycle Bin");
 
-        var status = await RecycleBin.GetStatusAsync(volumeRoot, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(status.IsEnabled, $"a volume that just accepted a recycle is enabled (got {status.Reason})");
         Check.Equal(RecycleBinAvailabilityReason.Enabled, status.Reason, "the reason is the plain enabled one");
@@ -320,7 +307,7 @@ internal static class StatusSuite
         var letter = AbsentVolume.Letter();
         AbsentVolume.RequireAbsent(letter, "asking about a volume that is not there");
 
-        var status = await RecycleBin.GetStatusAsync(AbsentVolume.RootOf(letter), TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(AbsentVolume.RootOf(letter), RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.False(status.IsEnabled, "a volume that is not mounted is not an enabled Recycle Bin");
         Check.Equal(RecycleBinAvailabilityReason.VolumeNotFound, status.Reason, "the reason is that the volume does not exist");
@@ -335,7 +322,7 @@ internal static class StatusSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        var status = await RecycleBin.GetStatusAsync(ScratchWorkspace.Root, TestBackend.Options, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(ScratchWorkspace.Root, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.False(status.IsEnabled, "a path that is not a volume root has no Recycle Bin of its own");
         Check.Equal(RecycleBinAvailabilityReason.VolumeNotFound, status.Reason, "the reason is that it is not a volume root");

@@ -3,37 +3,23 @@ using RecycleBinToolkit.Tests.Host;
 namespace RecycleBinToolkit.Tests.Infrastructure;
 
 /// <summary>
-/// Reads a volume's Recycle Bin occupancy through the library's own counting path, so the delta
+/// Reads a volume's Recycle Bin occupancy by walking its bin directory, so the delta
 /// assertions across the suites are stated against what a caller would see.
 /// </summary>
 /// <remarks>
-/// The count and the size come from one query, and the <c>-1</c> sentinel keeps its meaning: a
+/// The count and the size come from one walk, and the <c>-1</c> sentinel keeps its meaning: a
 /// volume that cannot be read reports failure rather than an empty Recycle Bin, because the two are
 /// indistinguishable once they are both zero.
 /// <para>
-/// This asks <c>SHQueryRecycleBin</c>, not the listing. Answering "did the count go up by one" does not
-/// need the entries, and a listing costs six COM round trips and a stat per entry: with ninety thousand
-/// files in the bin a single listing call took over thirteen minutes, against about eleven seconds for
-/// the counter. Seventy times cheaper is not the same as free — the Shell walks the bin's metadata to
-/// produce these two numbers, so the cost still grows with how full the bin is and nothing in this
-/// library can change that. It does mean the suites are not paying for the part they were not asking
-/// for.
+/// This walks the bin directory rather than listing the bin. Answering "did the count go up by one"
+/// does not need the entries, and a listing reads every record it is asked about afterwards: with
+/// ninety thousand files in the bin that is work the count question never needed.
 /// </para>
 /// <para>
-/// What this probe no longer covers is the enumeration. It shares <c>SHQueryRecycleBin</c> with
-/// <see cref="RecycleBinVolume"/>, so it cannot disagree with the Shell about a count or a size; the one
-/// thing it still proves is that the library's own struct is laid out correctly. The listing reaches the
-/// Shell by a different route and could disagree with both,
-/// <see cref="Suites.ShellSuite.RecycleBinListingAgreesWithTheShellOracle"/> is what checks it, and it
-/// reads the listing for that purpose alone.
-/// </para>
-/// <para>
-/// The listing is still covered, and still pinned against this counter:
-/// <see cref="Suites.ListerSuite"/> is what exercises it, and
-/// <see cref="Suites.ShellSuite.RecycleBinListingAgreesWithTheShellOracle"/> is what asserts the two
-/// views agree. <see cref="RecycleBinVolume"/> remains the independent oracle, so an assertion that
-/// checks the library against itself proves nothing; the agreement is asserted once and the rest of the
-/// suites build on it.
+/// What this probe no longer covers is an independent view of the bin. It walks the same directory
+/// the library's own listing walks, so it cannot disagree with the library about what is there; the
+/// one thing it still proves is that the walk and the record reader agree with the filesystem about
+/// counts and sizes. Deltas are what the suites assert, not absolute agreement with anything else.
 /// </para>
 /// </remarks>
 internal static class RecycleBinProbe
@@ -53,14 +39,49 @@ internal static class RecycleBinProbe
     public static long QuerySize(string volumeRoot) => Measure(volumeRoot).Bytes;
 
     /// <summary>
-    /// Both quantities from a single query, for assertions that need them together.
+    /// Both quantities from a single walk, for assertions that need them together.
     /// </summary>
     /// <param name="volumeRoot">Volume root, for example <c>"W:\\"</c>.</param>
     /// <returns>The entry count and size in bytes, each <c>-1</c> when the volume could not be read.</returns>
-    public static (long Items, long Bytes) Measure(string volumeRoot) =>
-        RecycleBinCounter.TryQuery(WithSeparator(volumeRoot), out var items, out var bytes)
-            ? (items, bytes)
-            : (-1, -1);
+    public static (long Items, long Bytes) Measure(string volumeRoot)
+    {
+        var root = WithSeparator(volumeRoot);
+
+        if (!Directory.Exists(root))
+        {
+            return (-1, -1);
+        }
+
+        var binDirectory = Path.Combine(root, "$RECYCLE.BIN", CurrentSid());
+
+        if (!Directory.Exists(binDirectory))
+        {
+            return (0, 0);
+        }
+
+        try
+        {
+            long items = 0;
+            long bytes = 0;
+
+            foreach (var entry in NativeBinEntries.Collect(binDirectory, CancellationToken.None))
+            {
+                if (entry.IndexPath is null || entry.PayloadPath is null)
+                {
+                    continue;
+                }
+
+                items++;
+                bytes += entry.PayloadIsDirectory ? 0 : entry.PayloadLength;
+            }
+
+            return (items, bytes);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (-1, -1);
+        }
+    }
 
     /// <summary>
     /// Both quantities, refusing to answer at all when the volume could not be read.
@@ -87,8 +108,10 @@ internal static class RecycleBinProbe
         return (items, bytes);
     }
 
+    private static string CurrentSid() => NativeBinLayout.CurrentSid;
+
     /// <summary>
-    /// The Shell requires a root with its trailing separator, whatever the caller passed.
+    /// The bin directory is addressed from a root with its trailing separator, whatever the caller passed.
     /// </summary>
     private static string WithSeparator(string volumeRoot) =>
         volumeRoot.EndsWith(Path.DirectorySeparatorChar) || volumeRoot.EndsWith(Path.AltDirectorySeparatorChar)

@@ -35,6 +35,15 @@ internal sealed class TestRunner
     /// </returns>
     internal static async Task<int> RunAsync(string[] args, IReadOnlyList<TestCase> cases)
     {
+        if (IsRemovedFlagPresent(args))
+        {
+            Console.Error.WriteLine(
+                "--backend chose which Recycle Bin path a run measured. There is one path now, so the flag " +
+                "was removed rather than kept as a silent no-op: a run that accepted it would report coverage " +
+                "its command line did not ask for.");
+            return 2;
+        }
+
         if (!TryParseScratchRoot(args, out var scratchRoot, out var scratchProblem))
         {
             Console.Error.WriteLine(
@@ -57,21 +66,6 @@ internal sealed class TestRunner
             return 2;
         }
 
-        var backend = TestBackend.Read(args, out var backendProblem);
-
-        if (backendProblem.Length > 0)
-        {
-            Console.Error.WriteLine(
-                "--backend takes the Recycle Bin path this run measures, such as --backend winapi or --backend native. " +
-                "It is refused rather than guessed at, because a run that measured a path its command line did not name " +
-                "would report coverage it does not have. Native writes the Recycle Bin's own files and needs Windows 10 " +
-                "build 14393 or later; the Shell path needs no particular build and is what a run measures by default.");
-            Console.Error.WriteLine($"        {backendProblem}");
-            return 2;
-        }
-
-        TestBackend.Configure(backend);
-
         var group = SelectGroup(args);
 
         // The run's own directory is claimed from here on, so everything below runs inside the try whose
@@ -91,7 +85,6 @@ internal sealed class TestRunner
             }
 
             Console.WriteLine($"scratch root {ScratchWorkspace.RunRoot}");
-            Console.WriteLine($"backend {Describe(backend)}");
             Console.WriteLine($"running {selected.Length} of {cases.Count} test(s)");
 
             DescribeDeferred(cases, group, filter);
@@ -255,9 +248,20 @@ internal sealed class TestRunner
         return $"no test case matches '{filter}'";
     }
 
+    /// <summary>
+    /// Whether the command line names the removed <c>--backend</c> flag, which chose which Recycle Bin
+    /// path a run measured. Refused rather than ignored, the way <c>--scratch</c> refuses a root nobody
+    /// has: a flag that used to decide which code a whole run exercised must never read as accepted.
+    /// </summary>
+    /// <param name="args">The command line as it was given.</param>
+    internal static bool IsRemovedFlagPresent(string[] args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+
+        return args.Contains("--backend", StringComparer.Ordinal);
+    }
+
     /// <summary>The word a group's cases are counted in.</summary>
-    /// <summary>The word a backend is counted in, so a report always says which path it measured.</summary>
-    private static string Describe(TestBackendKind backend) => backend == TestBackendKind.Native ? "native" : "winapi";
 
     private static string Name(TestKind kind) => kind switch
     {

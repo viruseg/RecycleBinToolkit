@@ -22,18 +22,17 @@ internal static class VolumeSuite
     ];
 
     /// <summary>
-    /// A delta assertion needs two numbers, not the entries behind them, so the probe must not enumerate.
+    /// A delta assertion needs two numbers, not the entries behind them, so the probe must not read records.
     /// </summary>
     /// <remarks>
-    /// The probe used to answer "did the count go up" by listing the Recycle Bin, which costs six COM
-    /// round trips and a stat per entry. With ninety thousand files in the bin that made one query take
-    /// over thirteen minutes, and the suites ask for it twice per test — the whole run was gated on how
-    /// full the caller's bin happened to be. The counter brings that to about eleven seconds, because the
-    /// Shell still walks the bin's metadata but nothing here walks it twice.
+    /// The probe answers "did the count go up" by walking the bin directory, which costs one walk rather
+    /// than one record read per entry. With ninety thousand files in the bin that is the difference
+    /// between a fast count and a listing's worth of reads, and the suites ask for it twice per test —
+    /// the whole run must not be gated on how full the caller's bin happened to be.
     /// <para>
     /// The elapsed check below is the guard against going back. The bound is nowhere near what the
-    /// counter costs: it separates two answers that differ by seventy times and is not trying to measure
-    /// the counter, so nothing this machine produces from one lands in the wrong place. It cannot be
+    /// walk costs: it separates two answers that differ by an order of magnitude and is not trying to
+    /// measure the walk, so nothing this machine produces from one lands in the wrong place. It cannot be
     /// tightened without turning the test into a timing test.
     /// </para>
     /// </remarks>
@@ -45,7 +44,7 @@ internal static class VolumeSuite
 
         var (items, size) = RecycleBinProbe.Measure(volumeRoot);
 
-        // The Shell counts only items it tracks, so an empty or partially purged bin is a normal
+        // A walk counts what is there, so an empty or partially purged bin is a normal
         // state and the count cannot be asserted to be positive. What must hold is that the query
         // succeeds, is repeatable, and never reports a negative value.
         Check.True(items >= 0, $"item count is non-negative (got {items})");
@@ -59,7 +58,7 @@ internal static class VolumeSuite
         Check.Equal(size, repeated.Bytes, "repeated query returns the same size");
         Check.True(
             stopwatch.ElapsedMilliseconds < CounterBudgetMs,
-            $"reading the counter does not enumerate the bin (took {stopwatch.ElapsedMilliseconds} ms, budget {CounterBudgetMs} ms)");
+            $"reading the count does not read records (took {stopwatch.ElapsedMilliseconds} ms, budget {CounterBudgetMs} ms)");
 
         Console.WriteLine($"        {volumeRoot} tracked items: {items}, {size} byte(s), query {stopwatch.ElapsedMilliseconds} ms");
 
@@ -69,7 +68,7 @@ internal static class VolumeSuite
     private static Task RecycleBinQueryReportsFailureForMissingVolume(TestContext context)
     {
         // Guards the -1 sentinel: without it a failed query would be indistinguishable from an
-        // empty bin, and every receipt assertion downstream would silently pass.
+        // empty bin, and every delta assertion downstream would silently pass.
         var letter = AbsentVolume.Letter();
         AbsentVolume.RequireAbsent(letter, "querying a volume that is not there");
 
@@ -116,7 +115,7 @@ internal static class VolumeSuite
         return Task.CompletedTask;
     }
 
-    /// <summary>Separates the counter from a listing, which is a difference of about seventy times here.</summary>
+    /// <summary>Separates the count from a listing, which is a difference of an order of magnitude here.</summary>
     private const int CounterBudgetMs = 120_000;
 
     /// <summary>
