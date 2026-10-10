@@ -60,11 +60,50 @@ internal static class VolumeSeekPenalty
     private const int CacheLimit = 64;
 
     /// <summary>
-    /// The most threads a solid-state volume's Recycle Bin is read on. Reading a batch of records is
-    /// seek-bound rather than CPU-bound, and past this many threads the measurements on this machine stopped
-    /// improving — so a wider machine gains nothing from the extra ones.
+    /// The most threads a solid-state volume's Recycle Bin records are read on. Reading a batch of records is
+    /// bound by per-file work the operating system does rather than by bandwidth, and past this many
+    /// threads the measurements on this machine stopped improving — so a wider machine gains nothing
+    /// from the extra ones.
     /// </summary>
-    internal const int ReadDegreeCap = 8;
+    /// <remarks>
+    /// Measured over 36,009 records warm on a solid-state volume: 1892 ms on one thread, 496 ms on eight,
+    /// 457 ms on sixteen, and 498 ms again on twenty-four. It is flat from eight and it stops paying at
+    /// that figure, so the cap is one per core.
+    /// </remarks>
+    internal const int SolidStateReadDegreeCap = 8;
+
+    /// <summary>
+    /// The most threads a mechanical volume's Recycle Bin records are read on.
+    /// </summary>
+    /// <remarks>
+    /// Eight, and this is the figure a cold sweep put it at. Reading 30,010 records cold on a mechanical
+    /// volume, with the cache dropped and ten seconds of settling before each pass:
+    /// <list type="bullet">
+    /// <item><description>1 thread 73.1 s, 2 threads 23.7 s, 3 threads 13.6 s, 4 threads 12.4 s</description></item>
+    /// <item><description>6 threads 4.8 / 12.1 / 8.2 s, 8 threads 6.6 / 7.7 / 8.3 s, 16 threads 9.6 / 9.4 / 10.2 s</description></item>
+    /// </list>
+    /// Past eight it gets worse, and worse consistently: three passes each at eight averaged 7.7 s against
+    /// 9.6 s at sixteen. Those requests are seeks, and past this many in flight the head stops gaining.
+    /// <para>
+    /// Sixteen was here before this sweep and was taken from a warm measurement, where it won by seven
+    /// percent against eight. Cold is what a caller's first read does — the cache is empty — and it pays
+    /// twenty percent for that seven. Eight is the better trade on the measurement rather than on the
+    /// argument, and the argument that made one thread safe has turned out to have been right in kind and
+    /// wrong in degree.
+    /// </para>
+    /// </remarks>
+    internal const int MechanicalReadDegreeCap = 8;
+
+    /// <summary>
+    /// The fewest threads a local volume is read on, however the driver answered.
+    /// </summary>
+    /// <remarks>
+    /// Below four the cold measurements are still steeply improving: on a mechanical volume they went
+    /// 73.1, 23.7 and 13.6 s for one, two and three threads. Four is the floor rather than a claim that
+    /// fewer would be worse — it is the smallest figure this machine was measured at, and a wider one
+    /// should re-measure before moving it.
+    /// </remarks>
+    internal const int ReadDegreeFloor = 4;
 
     private static readonly ConcurrentDictionary<string, VolumeStorageKind> Cache =
         new(StringComparer.OrdinalIgnoreCase);
@@ -104,21 +143,46 @@ internal static class VolumeSeekPenalty
     /// </summary>
     /// <param name="volumeRoot">Volume root, such as <c>"X:\\"</c>.</param>
     /// <returns>
-    /// Eight threads for a solid-state volume, or every core on a machine with fewer, and one for anything
-    /// else. The cap is the figure the measurements stopped improving at, so a wider machine reads no faster.
+    /// How many threads read this volume's bin: one per core for a solid-state volume, two per core for a
+    /// mechanical one, each capped where a cold sweep stopped improving, and one for a share.
     /// </returns>
     /// <remarks>
-    /// One is the answer for a mechanical disk because the alternative is not slower, it is harmful: a head
-    /// that is asked for four hundred files at once thrashes between them and turns a hundred and eighty
-    /// operations per second into five or fifteen. It is the answer for an unknown volume too, because the
-    /// two guesses are not symmetric — guessing "solid-state" when the drive is mechanical costs a
-    /// thrashing disk, and guessing "mechanical" when it is not costs a little concurrency nobody was
-    /// promised.
+    /// Every answer but a share's is above one, and that is the point of the change. The rule this replaces
+    /// read one thread off a mechanical disk — which is right when the work is <em>writing</em> a bin, where
+    /// every record lands in one directory — and applied it to reading one as well. Measured over 30,010
+    /// records cold on a mechanical volume, one thread took 73.1 s where eight take 7.7 s: a factor of nine
+    /// and a half, given away by the rule.
+    /// <para>
+    /// The two kinds scale differently, and this is where the driver's answer is still worth having. On a
+    /// solid-state volume the curve keeps improving to eight threads and is flat after it — 18.0 s at six,
+    /// 16.1 s at eight, 16.1 s at sixteen. On a mechanical one it peaks at eight and then falls away, because
+    /// each further request in flight is another seek for the head to interleave. Sixteen measured 9.6 s
+    /// against 7.7 s at eight over three passes each, so the two caps differ in why they exist rather than
+    /// in what they are.
+    /// </para>
+    /// <para>
+    /// A share is still one. Its cost is network latency, which multiplying does not reduce, and
+    /// <see cref="Classify"/> never asked it anything.
+    /// </para>
     /// </remarks>
-    internal static int DegreeOfParallelism(string volumeRoot) =>
-        Classify(volumeRoot) == VolumeStorageKind.SolidState
-            ? Math.Min(Environment.ProcessorCount, ReadDegreeCap)
-            : 1;
+    internal static int DegreeOfParallelism(string volumeRoot)
+    {
+        var cores = Environment.ProcessorCount;
+
+        var (cap, scaled) = Classify(volumeRoot) switch
+        {
+            VolumeStorageKind.SolidState => (SolidStateReadDegreeCap, cores),
+            VolumeStorageKind.Mechanical => (MechanicalReadDegreeCap, cores * 2),
+            _ => (1, 1)
+        };
+
+        if (scaled < ReadDegreeFloor)
+        {
+            return cap < ReadDegreeFloor ? cap : ReadDegreeFloor;
+        }
+
+        return scaled > cap ? cap : scaled;
+    }
 
     private static unsafe VolumeStorageKind Query(string volumeRoot)
     {

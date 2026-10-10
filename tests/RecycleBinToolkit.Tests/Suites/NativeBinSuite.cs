@@ -678,16 +678,23 @@ internal static class NativeBinSuite
             kind is VolumeStorageKind.Unknown or VolumeStorageKind.Mechanical or VolumeStorageKind.SolidState,
             $"the classifier answers with one of its three kinds rather than something else ({kind})");
 
-        var expected = kind == VolumeStorageKind.SolidState
-            ? Math.Min(Environment.ProcessorCount, VolumeSeekPenalty.ReadDegreeCap)
-            : 1;
+        var cores = Environment.ProcessorCount;
+
+        var expected = kind switch
+        {
+            VolumeStorageKind.SolidState => Math.Min(cores, VolumeSeekPenalty.SolidStateReadDegreeCap),
+            VolumeStorageKind.Mechanical => Math.Min(cores * 2, VolumeSeekPenalty.MechanicalReadDegreeCap),
+            _ => 1
+        };
 
         Check.Equal(
             expected,
             VolumeSeekPenalty.DegreeOfParallelism(root),
             kind == VolumeStorageKind.SolidState
-                ? "a solid-state volume is read on every core up to the cap, because reading is what concurrency helps and past eight threads it stopped improving"
-                : "anything else is read on one thread, because concurrent requests make a mechanical head seek between them and a driver that never answered may be either");
+                ? "a solid-state volume is read on one thread per core, capped where a cold sweep stopped improving — measured 18.0 s at six threads, 16.1 s at eight, and 16.1 s again at sixteen"
+                : kind == VolumeStorageKind.Mechanical
+                    ? "a mechanical volume is read on two threads per core, but capped at eight rather than sixteen: past eight the curve falls away, because each further request in flight is another seek — measured 7.7 s at eight against 9.6 s at sixteen over three passes each"
+                    : "a volume nothing answered for is read on one thread, because its cost is network latency and multiplying that does not reduce it");
 
         Check.Equal(kind, VolumeSeekPenalty.Classify(root), "and the answer is the same when asked twice, because the hardware does not change under a run");
 

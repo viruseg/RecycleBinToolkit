@@ -461,10 +461,13 @@ inside a loop that also has to do something else.
   `PreloadItemDetails`. A listing with nothing pending does one pass over its items and no
   file reads. An item whose record has already failed to read is not "already read": it is tried again, because
   the record may be back.
-- Volumes are read one after another, each on as many threads as its own hardware answers for: one for a
-  mechanical disk, up to eight for a solid-state one or one per core, whichever is fewer, one for a share. The
-  same measure governs `PreloadItemDetails` and the empty, because it is the same answer to the same
-  question about the same disk.
+- Volumes are read one after another, each on as many threads as its own hardware answers for: one per core
+  on a solid-state disk, two per core on a mechanical one, each capped at eight, and one for a share. The same
+  measure governs `PreloadItemDetails` and the empty, because it is the same answer to the same question about
+  the same disk. A mechanical volume is not held to one thread: that rule came from writing a bin, where every
+  record lands in one directory, and reading thirty thousand records is thirty thousand independent opens of
+  files nobody is writing to. Measured cold, which is what a first read does, it is the difference between
+  **50.7 s and 7.9 s** over 30,010 records on a mechanical volume, and **1.65 s and 0.49 s** warm.
 - An item whose record cannot be read is **left cold**, and still raises `IOException` when a caller asks for
   its details. Nothing here throws for one, and `Failures` does not change — it describes what the listing could
   not do.
@@ -763,14 +766,22 @@ on a solid-state one — the cost is filesystem round trips, not bandwidth. Four
 at 583 and 662, within the run-to-run spread, so the file size is not part of the cost either. Every
 figure is the median of three runs.
 
-Reading scales: it changes nothing about the directory it reads, so eight threads finish four and a
-half times sooner. Writing does not, and the reason is a directory — a Recycle Bin has exactly one per
-volume, and every record written and every payload moved lands in it. The same recycling measured
-542 files/s on one thread and 189 on eight, on a solid-state volume, so paths move one at a time on
-purpose. Reading a bin in parallel is where the concurrency is; putting files into one is not. What
-makes a recycle fast is the number of round trips per file — three: one `FileInfo` query in
-validation, one create-and-write for the record, one move — not the number of threads, which is why
-that is what the code optimises.
+Reading scales, on either kind of disk: it changes nothing about the directory it reads. Reading 30,010
+records cold on a mechanical volume took 73.1 s on one thread and 7.7 s on eight; the same sweep on a
+solid-state volume over 36,009 records took 92.0 s and 16.1 s. Warm, the same two volumes took 1550 ms and
+351 ms against 1892 ms and 457 ms. Writing does not scale, and the reason is a directory — a Recycle Bin
+has exactly one per volume, and every record written and every payload moved lands in it. The same
+recycling measured 542 files/s on one thread and 189 on eight, on a solid-state volume, so paths move one
+at a time on purpose. Reading a bin in parallel is where the concurrency is; putting files into one is
+not. What makes a recycle fast is the number of round trips per file — three: one `FileInfo` query in
+validation, one create-and-write for the record, one move — not the number of threads, which is why that
+is what the code optimises.
+
+A warm read costs about 47 microseconds per record, and that figure is the same on a solid-state volume
+and on a mechanical one — the cache has the bytes, so what is being measured is what the filesystem
+charges per file rather than bandwidth. Turning the bytes into a path and a timestamp costs about a
+tenth of a microsecond, two parts in a thousand of it. That is why reading is one loop rather than a
+pipeline: there is nothing to overlap.
 
 **The version requirement is a refusal, not a warning.** Windows 10 build 14393 is the first build
 that reads a version 2 index record. An older build does not reject one — it reads it as something it
@@ -813,7 +824,9 @@ the others would repeat work that already succeeded. Only the items that failed 
 **One thread to write, many to read.** Every record written and every payload moved lands in one
 directory per volume, and a directory is the one thing a file system cannot take concurrent writers
 on — so paths move one at a time on purpose. Reading changes nothing, so records are read in
-parallel at each volume's own degree of parallelism.
+parallel at each volume's own degree of parallelism: one thread per core on a solid-state volume, two
+on a mechanical one, because each of those requests is a seek and a second one in flight covers the
+mechanism's dead time. That is thirty thousand independent reads, not thirty thousand writers.
 
 **The per-volume bin is the unit.** Each volume's `$RECYCLE.BIN\<SID>\` is walked directly, so naming
 a volume selects which directories to read and to empty — never a filter over an enumeration that

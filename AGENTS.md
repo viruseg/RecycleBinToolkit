@@ -93,6 +93,107 @@ taken after the allocation work that followed. The table's claim is the shape �
 loses, both on a solid-state volume — and that shape is a property of a directory rather than of this
 library's speed. Read the two tables as different moments rather than as one run.
 
+### Reading a full bin: the degree of parallelism is per drive type
+
+The table above is a solid-state volume. **A mechanical volume reads the same way, and that is the
+whole of the change** — it used to get one thread, and it now gets up to eight.
+
+| read N records back, warm cache | 1 thread | 4 | 8 | 16 | 32 |
+| --- | --- | --- | --- | --- | --- |
+| `E:` mechanical, 30,010 records | 1550 ms | 508 | 377 | **351** | 349 |
+| `C:` solid-state, 36,009 records | 1892 ms | 658 | 496 | **457** | 458 |
+
+`VolumeSeekPenalty.DegreeOfParallelism` answers one thread per core for a solid-state volume and two per
+core for a mechanical one, both capped at eight. A share is still one thread.
+
+**The reason a mechanical volume was single-threaded was about writing, and it does not transfer.**
+A head asked for four hundred files at once thrashes between them — but that is a property of one
+directory taking concurrent writers, which is what `NativeRecycleRunner` does and still does on
+purpose. A *read* of a Recycle Bin has thirty thousand independent opens of files nobody is writing to.
+
+### The cold path decides the cap, and it is not the warm one
+
+A user's first read of a listing is cold — the cache is empty — so the cold curve is the one that
+matters. Measured with the cache dropped before every pass and ten seconds of settling after it:
+
+| threads | 1 | 2 | 3 | 4 | 6 | 8 | 16 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `E:` mechanical, 30,010 records | 73.1 s | 23.7 s | 13.6 s | 12.4 s | 4.8 s | **7.7 s** | 9.6 s |
+| `C:` solid-state, 36,009 records | 92.0 s | 43.1 s | 28.1 s | 23.2 s | 18.0 s | **16.1 s** | 16.1 s |
+
+**The mechanical curve peaks at eight and then falls away** — three passes each averaged 7.7 s at eight
+against 9.6 s at sixteen, because each further request in flight is another seek for the head to
+interleave. Sixteen was in the code before this sweep and came from a warm measurement, where it won by
+seven percent; it costs twenty percent on the path that runs every time. `MechanicalReadDegreeCap` is
+eight on the cold evidence.
+
+**Removing the one-thread rule is where most of the gain came from**, and it holds cold: one thread on
+`E:` is 73 s against 7.7 s at eight, a factor of nine and a half. Measured end to end against the code as
+it stood, same session, alternating passes:
+
+| | cold, before → after | warm, before → after |
+| --- | --- | --- |
+| `E:` mechanical | 50.7 s → **7.9 s** | 1.650 s → **0.491 s** |
+| `C:` solid-state | 17.1 s → 16.7 s | 0.591 s → 0.548 s |
+
+**A result that is not reproduced here, and is worth knowing:** cold on the mechanical volume comes out
+**faster than cold on the solid-state one** — 7.7 s for 30,010 records against 16.1 s for 36,009 — and the
+two are read on the same eight threads, so it is not a difference in concurrency. A cold read of a small
+record is mostly metadata, and `C:` is the Windows system volume while `E:` is not, so background reads
+competing for `C:` is the obvious candidate. **That is a hypothesis and it has not been tested.** Anyone
+proposing an explanation for it should measure first.
+
+**Do not read these as a licence to make the recycle path parallel.** Writing a bin and reading one are
+different work and the tables above are why they get different answers.
+
+### What a read actually costs, and what does not
+
+Measured warm over 5,000 records, one thread, on both volumes:
+
+| | `E:` mechanical | `C:` solid-state |
+| --- | --- | --- |
+| `File.Exists` (metadata only) | 26 µs | 26 µs |
+| open and close | 32 µs | 32 µs |
+| open, read, close | **47 µs** | **47 µs |
+| parse the path and the time | 0.10 µs | 0.10 µs |
+
+Two things follow, and both were measured rather than reasoned into.
+
+**A warm read is identical on a solid-state and a mechanical volume.** The cache has the bytes, so the
+cost is what the operating system charges per file and not bandwidth at all. Anything proposed on the
+theory that a fast disk needs less concurrency is answering the wrong question.
+
+**The parse is 0.2 % of the work.** A read is three system calls; the rest is arithmetic and one string
+allocation. This is what makes the next section a list of things not to do.
+
+### Reading is not worth a pipeline
+
+Splitting the reads from the parsing — across a `System.Threading.Channels` channel, and across a
+`BlockingCollection` pipeline over dedicated threads — was built and measured on both volumes, and
+**lost to one `Parallel.For` loop in every configuration**:
+
+| `E:` mechanical, 30,010 records | time |
+| --- | --- |
+| one `Parallel.For`, 16 threads | **351 ms** |
+| channel, 16 readers + 1 parser | 395 ms |
+| channel, 8 readers + 2 parsers | 575 ms |
+| `BlockingCollection` pipeline, in the library | 598–641 ms |
+| overlapped async reads, 16 × 2 | 599 ms |
+
+On `C:` the same comparison was 420 ms for the loop against 426 ms for the channel. There is nothing to
+overlap when the parse is two parts in a thousand of the work; the queue and the extra threads cost more
+than they save.
+
+**A caveat that produced a wrong number once.** An earlier sweep appeared to show the channel winning by
+8 %, and it was an artefact: the channel variant used a `CreateFileW` P/Invoke while the loop used
+`File.OpenHandle`. Comparing two shapes means both must do the same I/O. It also produced a
+`GetAwaiter().GetResult()` in a synchronous public API, which is sync-over-async and does not belong
+there. The two mistakes were found by measuring the pipeline inside the library rather than beside it.
+
+**Overlapped reads are worse than synchronous ones** on both volumes (599 vs 351 ms, and 563 vs 467 ms).
+A 92-byte read from cache is dominated by the cost of the open, and an overlapped open has to hand the
+work to the completion port and wait to be told it finished.
+
 Two measurements that are worth not re-deriving:
 
 - **The same operation is faster on an SSD by about nothing.** Recycling 3,000 files ran at 616 files/s
