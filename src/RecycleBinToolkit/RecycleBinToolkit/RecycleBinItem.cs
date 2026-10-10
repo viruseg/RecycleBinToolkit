@@ -172,8 +172,9 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// Reads this entry's record now rather than on first access.
     /// </summary>
     /// <param name="hResult">
-    /// Receives the code the filesystem raised, or <c>0</c> when the file was readable and simply was not a
-    /// record. Meaningless when this method returns <see langword="true"/> for an entry with nothing to read.
+    /// Receives the code the filesystem raised, or <c>0</c> when the record was readable, or when it was
+    /// readable and simply was not a record — the same distinction the record reader draws, for the same
+    /// reason. Meaningless when this method returns <see langword="true"/> for an entry with nothing to read.
     /// </param>
     /// <returns>
     /// <see langword="true"/> when there is nothing left to read — this entry is now loaded. Otherwise whether

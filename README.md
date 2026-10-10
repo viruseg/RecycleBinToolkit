@@ -559,7 +559,7 @@ comparison of the same pair reports a correct listing as empty.
 
 ### `RecycleBinContents`
 
-The outcome of a listing. Immutable.
+The outcome of a listing. Its properties never change; `LoadItemDetails` fills in the items themselves.
 
 | Member | Type | Description |
 | --- | --- | --- |
@@ -593,7 +593,8 @@ foreach (var item in contents.Items)
 
 - Items whose details are already in memory are skipped — every item of a Shell listing, and every item of a
   listing taken with `PreloadItemDetails`. A listing with nothing pending does one pass over its items and no
-  file reads.
+  file reads. An item whose record has already failed to read is not "already read": it is tried again, because
+  the record may be back.
 - Volumes are read one after another, each on as many threads as its own hardware answers for: one for a
   mechanical disk, more for a solid-state one, one for a share.
 - An item whose record cannot be read is **left cold**, and still raises `IOException` when a caller asks for
@@ -601,6 +602,9 @@ foreach (var item in contents.Items)
   not do.
 - The items themselves are the same objects the listing returned, so `TotalSize` and any reference you already
   hold stay valid.
+- **It blocks the calling thread.** Every other entry point here hands its work to a pool thread; this one runs
+  the batch inline, because there is nothing to await. Do not call it on a UI thread — on a bin of eighteen
+  thousand records on a cold mechanical disk it is tens of seconds of frozen UI.
 
 Raising `OperationCanceledException` is the one thing it does throw, when the token is cancelled part way; items
 read before that point stay read.
@@ -978,8 +982,10 @@ FileRecycler          validates, normalises, de-duplicates, dispatches
        ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
        ├─ NativeRecycleRunner     record first, then the move, then the receipt
        ├─ NativeBinLister         pairs from the walk; records only under PreloadItemDetails, in parallel
-       ├─ ItemDetailLoader        warms a listing after the fact, one volume at a time
        └─ NativeBinEmptier        payload first, then the record, counted from the walk
+
+RecycleBinContents.LoadItemDetails  warms a listing after the fact
+  └─ ItemDetailLoader        one volume at a time, at that volume's own degree of parallelism
 
 RecycleBin            validates, filters, reports
   ├─ RecycleBinVolumeSet   which volumes an operation covers

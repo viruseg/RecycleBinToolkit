@@ -1428,22 +1428,12 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
-        ScratchWorkspace.RequireRecycling("a Recycle Bin for an entry to be listed with its details read");
 
-        var path = CreateFile("preloaded.bin");
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
-        Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+        var (contents, items, indexPaths) = SyntheticListing(1, detailsAlreadyRead: true);
+        var item = items[0];
+        Check.True(item.IsDetailsLoaded, "an entry that came pre-read has nothing pending");
 
-        var preload = new RecycleBinOptions { Backend = RecycleBinBackend.Native, PreloadItemDetails = true };
-        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, preload, context.CancellationToken).ConfigureAwait(false);
-
-        // Any entry of the listing will do: what is under test is what a preloaded listing leaves behind, and
-        // a bin can hold entries from other cases, so picking "the one this case recycled" would need a scan
-        // of every record in the bin to find it.
-        var item = contents.Items[0];
-        Check.True(item.IsDetailsLoaded, "a listing that read its records leaves nothing pending");
-
-        File.Delete(RecordOf(item));
+        File.Delete(indexPaths[0]);
 
         Check.True(item.OriginalPath.Length > 0, "the path is still answerable after its record is gone");
         Check.True(item.DeletedAt > DateTimeOffset.Now.AddHours(-1), $"and so is the deletion time (got {item.DeletedAt:O})");
@@ -1466,36 +1456,24 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
     /// </remarks>
     private static async Task NativeLazyDetailsAreBothAnsweredByTheFirstAccess(TestContext context)
     {
-        using var workspace = new ScratchWorkspace();
+using var workspace = new ScratchWorkspace();
         workspace.Recreate();
-        ScratchWorkspace.RequireRecycling("a Recycle Bin for entries whose details are read");
 
-        var pathFirstFile = CreateFile("lazy-path-first.bin");
-        var dateFirstFile = CreateFile("lazy-date-first.bin");
-
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync([pathFirstFile, dateFirstFile], Native, context.CancellationToken)
-            .ConfigureAwait(false);
-        Check.True(recycled.Succeeded, $"both are recycled (first failure: {Describe(recycled.FirstFailure)})");
-
-        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
+        var (contents, items, indexPaths) = SyntheticListing(2, detailsAlreadyRead: false);
 
         // Two entries, so that each order gets a first access of its own — one item cannot be asked to be the
-        // first twice. Neither is found by its original path: that reading is what the case is about.
-        var pending = contents.Items.Where(i => !i.IsDetailsLoaded).Take(2).ToArray();
-        Check.Equal(2, pending.Length, "there are two entries left to read");
-
-        var pathFirst = pending[0];
-        var dateFirst = pending[1];
+        // first twice.
+        var pathFirst = items[0];
+        var dateFirst = items[1];
 
         Check.True(pathFirst.OriginalPath.Length > 0, "asking for the path answers it");
-        File.Delete(RecordOf(pathFirst));
+        File.Delete(indexPaths[0]);
         Check.True(
             pathFirst.DeletedAt > DateTimeOffset.Now.AddHours(-1),
             $"and the time is still answerable afterwards, from the same reading (got {pathFirst.DeletedAt:O})");
 
         Check.True(dateFirst.DeletedAt > DateTimeOffset.Now.AddHours(-1), $"asking for the time answers it ({dateFirst.DeletedAt:O})");
-        File.Delete(RecordOf(dateFirst));
+        File.Delete(indexPaths[1]);
         Check.True(
             dateFirst.OriginalPath.Length > 0,
             "and the path is still answerable afterwards, from the same reading");
@@ -1514,17 +1492,10 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for an entry to lose its record under the caller");
 
-        var path = CreateFile("vanishing-record.bin");
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
-        Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+        var (contents, items, indexPaths) = SyntheticListing(1, detailsAlreadyRead: false);
+        var item = items[0];
 
-        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
-
-        // Found by what has not been read yet: asking an entry for its original path is the reading this case
-        // is about, and an entry found that way would already be warm before its record is taken away.
-        var item = FirstPendingItem(contents, "there is a cold entry to take its record away from");
-
-        File.Delete(RecordOf(item));
+        File.Delete(indexPaths[0]);
 
         var first = Check.Throws<IOException>(() => _ = item.OriginalPath, "reading a path whose record is gone raises");
         Check.True(
@@ -1723,14 +1694,10 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for an entry to lose its record under the caller");
 
-        var path = CreateFile("code-bearing.bin");
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
-        Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+        var (contents, items, indexPaths) = SyntheticListing(1, detailsAlreadyRead: false);
+        var item = items[0];
 
-        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
-        var item = FirstPendingItem(contents, "there is a cold entry to take its record away from");
-
-        File.Delete(RecordOf(item));
+        File.Delete(indexPaths[0]);
 
         var raised = Check.Throws<IOException>(() => _ = item.OriginalPath, "reading a path whose record is gone raises");
 
@@ -1758,9 +1725,12 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
-        ScratchWorkspace.RequireRecycling("a Recycle Bin to write a mixed-case pair into");
 
-        var bin = NativeBinLayout.EnsureBinDirectory(ScratchWorkspace.VolumeRoot);
+        // A bin of the case's own inside the scratch root: the entries are written by hand rather than
+        // recycled, because neither the native backend nor the Shell can be asked to disagree with itself
+        // about the case of the marker letter on demand.
+        var root = Path.Combine(ScratchWorkspace.Root, "case-volume") + Path.DirectorySeparatorChar;
+        var bin = NativeBinLayout.EnsureBinDirectory(root);
 
         var lowercaseRecord = Path.Combine(bin, "$ilower" + RunTag + ".bin");
         var lowercasePayload = Path.Combine(bin, "$rlower" + RunTag + ".bin");
@@ -1769,8 +1739,8 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
 
         File.WriteAllBytes(lowercasePayload, Content);
         File.WriteAllBytes(upperPayload, Content);
-        NativeIndexFile.Write(lowercaseRecord, ScratchWorkspace.Root + "\\lower.bin", Content.LongLength, DateTime.UtcNow);
-        NativeIndexFile.Write(upperRecord, ScratchWorkspace.Root + "\\upper.bin", Content.LongLength, DateTime.UtcNow);
+        NativeIndexFile.Write(lowercaseRecord, root + "lower-" + RunTag + ".bin", Content.LongLength, DateTime.UtcNow);
+        NativeIndexFile.Write(upperRecord, root + "upper-" + RunTag + ".bin", Content.LongLength, DateTime.UtcNow);
 
         var entries = NativeBinEntries.Collect(bin, context.CancellationToken);
 
@@ -1794,17 +1764,17 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         workspace.Dispose();
     }
 
-    /// <summary>
-    /// A recycled directory is reported as zero bytes. The size a directory's own directory entry carries is
-    /// the size of the directory record, which is not what the entry occupied and is not a figure any caller
-    /// can act on — so the walk's answer is discarded and the flag beside it is what says why.
+/// <summary>
+    /// A recycled directory is reported as zero bytes, and the enumeration that builds the item says so before
+    /// any listing exists.
     /// </summary>
     /// <remarks>
-    /// This pins the contract rather than the guard that enforces it: on NTFS <c>FindFirstFile</c> reports zero
-    /// for a directory anyway, so on this machine removing the <c>IsDirectory</c> check would not turn this red.
-    /// The test is here because the figure is part of what a listing promises, and because it is the case where
-    /// the two backends differ most easily — the Shell measures the entry's own file and the native path does
-    /// not.
+    /// This pins <see cref="NativeBinEntry"/>'s own contract rather than repeating what
+    /// <c>NativeListingReportsARecycledDirectoryAsADirectory</c> already asserts about the listing. It cannot
+    /// show that the <c>IsDirectory</c> guard in the walk is load-bearing either: NTFS
+    /// <c>FindFirstFile</c> reports zero for a directory regardless, so removing that guard would leave this
+    /// green. The guard stays as defensiveness, and this is here because the figure is part of what the type
+    /// promises.
     /// </remarks>
     private static async Task NativeListingReportsAZeroSizeForARecycledDirectory(TestContext context)
     {
@@ -1819,16 +1789,16 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         var recycled = await FileRecycler.MoveToRecycleBinAsync([directory], Native, context.CancellationToken).ConfigureAwait(false);
         Check.True(recycled.Succeeded, $"the directory is recycled (first failure: {Describe(recycled.FirstFailure)})");
 
-        var entries = NativeBinEntries.Collect(BinDirectory, context.CancellationToken);
         var directoryIndex = RecordOf(directory);
-        var enumerated = entries.Single(e => SamePath(e.IndexPath ?? string.Empty, directoryIndex));
+        var entries = NativeBinEntries.Collect(BinDirectory, context.CancellationToken);
+        var enumerated = entries.SingleOrDefault(e => SamePath(e.IndexPath ?? string.Empty, directoryIndex));
 
-        Check.True(enumerated.PayloadIsDirectory, "the enumeration reports the payload as a directory");
+        Check.NotNull(enumerated, $"the enumeration pairs the directory's record ({entries.Count} pair(s) in the bin)");
+        Check.True(enumerated!.PayloadIsDirectory, "the enumeration reports the payload as a directory");
         Check.Equal(0, enumerated.PayloadLength, "with no size of its own for the directory record to carry");
 
         var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken), directory);
-        Check.True(item.IsDirectory, "and the listing agrees it is a directory");
-        Check.Equal(0, item.Size, "with the same zero size, whatever the walk said about the directory itself");
+        Check.Equal(0, item.Size, "and the listing reports the same zero size");
 
         workspace.Dispose();
     }
@@ -1844,25 +1814,13 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for entries to load details from");
 
-        var files = new[]
-        {
-            CreateFile("load-1.bin"),
-            CreateFile("load-2.bin"),
-            CreateFile("load-3.bin")
-        };
-
-        var recycled = await FileRecycler.MoveToRecycleBinAsync(files, Native, context.CancellationToken).ConfigureAwait(false);
-        Check.True(recycled.Succeeded, $"all three are recycled (first failure: {Describe(recycled.FirstFailure)})");
-
-        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
-        var items = contents.Items.Take(3).ToArray();
-        Check.Equal(3, items.Length, "there are three entries to load");
+        var (contents, items, indexPaths) = SyntheticListing(3, detailsAlreadyRead: false);
 
         contents.LoadItemDetails(context.CancellationToken);
 
-        foreach (var item in items)
+        foreach (var indexPath in indexPaths)
         {
-            File.Delete(RecordOf(item));
+            File.Delete(indexPath);
         }
 
         foreach (var item in items)
@@ -1885,22 +1843,19 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for an entry the listing already read");
 
-        var path = CreateFile("already-loaded.bin");
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
-        Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+        // Already read, which is what a listing taken with PreloadItemDetails leaves behind — built here
+        // rather than by asking the backend for one, because this case then has to take a record away and it
+        // must be one of its own.
+        var (contents, items, indexPaths) = SyntheticListing(1, detailsAlreadyRead: true);
 
-        var preload = new RecycleBinOptions { Backend = RecycleBinBackend.Native, PreloadItemDetails = true };
-        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, preload, context.CancellationToken).ConfigureAwait(false);
+        Check.True(items[0].IsDetailsLoaded, "an entry that came pre-read has nothing pending");
 
-        var item = contents.Items[0];
-        Check.True(item.IsDetailsLoaded, "a listing that read its records leaves nothing pending");
-
-        File.Delete(RecordOf(item));
+        File.Delete(indexPaths[0]);
 
         contents.LoadItemDetails(context.CancellationToken);
 
-        Check.True(item.OriginalPath.Length > 0, "an already-loaded entry is skipped, and answers from what it had");
-        Check.True(item.DeletedAt > DateTimeOffset.Now.AddHours(-1), $"with its time too ({item.DeletedAt:O})");
+        Check.True(items[0].OriginalPath.Length > 0, "an already-loaded entry is skipped, and answers from what it had");
+        Check.True(items[0].DeletedAt > DateTimeOffset.Now.AddHours(-1), $"with its time too ({items[0].DeletedAt:O})");
 
         workspace.Dispose();
     }
@@ -1916,19 +1871,14 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for an entry to lose its record before the load");
 
-        var path = CreateFile("unreadable-load.bin");
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([path], Native, context.CancellationToken).ConfigureAwait(false);
-        Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+        var (contents, items, indexPaths) = SyntheticListing(1, detailsAlreadyRead: false);
 
-        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, Native, context.CancellationToken).ConfigureAwait(false);
-        var item = FirstPendingItem(contents, "there is an entry whose record is about to be taken away");
-
-        File.Delete(RecordOf(item));
+        File.Delete(indexPaths[0]);
 
         contents.LoadItemDetails(context.CancellationToken);
 
         Check.Throws<IOException>(
-            () => _ = item.OriginalPath,
+            () => _ = items[0].OriginalPath,
             "the entry is still cold, so the caller still hears about it at the point of asking");
 
         workspace.Dispose();
@@ -1971,17 +1921,47 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
     private static string RecordOf(RecycleBinItem item) => NativeBinLayout.ToIndexPath(item.PayloadPath);
 
     /// <summary>
-    /// The first entry of a listing whose details have not been read yet.
+    /// A listing over entries this case made inside the scratch root, and the bin they live in.
     /// </summary>
     /// <remarks>
-    /// Choosing by that rather than by a path is deliberate: a case about laziness must not read an entry's
-    /// path to find it, because reading the path is the very thing that would warm it. Choosing an item whose
-    /// original path is some particular file would need a scan of the bin for that file's record, which costs a
-    /// read per record in it.
+    /// Built by hand rather than by listing a volume, because a case that has to take a record away has to take
+    /// away one of its own. A real bin may hold entries from other cases and from previous runs; deleting the
+    /// record of any of those leaves its payload in the user's Recycle Bin with nothing that will ever collect
+    /// it, and a run repeated often enough fills their bin with orphans of files they once recycled.
+    /// <para>
+    /// The whole bin lives under <see cref="ScratchWorkspace.Root"/>, which the run removes at the end, so a
+    /// case can leave litter behind without leaving it behind.
+    /// </para>
     /// </remarks>
-    private static RecycleBinItem FirstPendingItem(RecycleBinContents contents, string because) =>
-        contents.Items.FirstOrDefault(i => !i.IsDetailsLoaded)
-        ?? throw new CheckFailedException($"the listing holds no entry left to load: {because}");
+    private static (RecycleBinContents Contents, RecycleBinItem[] Items, IReadOnlyList<string> IndexPaths) SyntheticListing(
+        int count,
+        bool detailsAlreadyRead)
+    {
+        var root = Path.Combine(ScratchWorkspace.Root, "synthetic-volume") + Path.DirectorySeparatorChar;
+        var bin = NativeBinLayout.EnsureBinDirectory(root);
+
+        var deleted = DateTime.UtcNow;
+        var items = new RecycleBinItem[count];
+        var indexPaths = new string[count];
+
+        for (var i = 0; i < count; i++)
+        {
+            var stem = $"SYN{i}D" + RunTag;
+            var indexPath = NativeBinLayout.IndexPath(bin, stem, ".bin");
+            var payloadPath = NativeBinLayout.PayloadPath(bin, stem, ".bin");
+            var originalPath = $"{root}synthetic-{i}-{RunTag}.bin";
+
+            File.WriteAllBytes(payloadPath, Content);
+            NativeIndexFile.Write(indexPath, originalPath, Content.LongLength, deleted);
+
+            indexPaths[i] = indexPath;
+            items[i] = detailsAlreadyRead
+                ? new RecycleBinItem(indexPath, payloadPath, Content.LongLength, false, originalPath, new DateTimeOffset(deleted.ToLocalTime()))
+                : new RecycleBinItem(indexPath, payloadPath, Content.LongLength, false);
+        }
+
+        return (new RecycleBinContents(items, [], TimeSpan.Zero), items, indexPaths);
+    }
 
     /// <summary>
     /// Whether a listed entry was deleted from <paramref name="path"/>, without regard to case.
