@@ -119,6 +119,30 @@ public sealed class RecycleBinOptions
     public RecycleBinBackend Backend { get; init; } = RecycleBinBackend.WinApi;
 
     /// <summary>
+    /// Whether a listing reads every Recycle Bin record up front instead of reading one when a caller
+    /// first asks for its details. The default is <c>false</c>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RecycleBinItem.OriginalPath"/> and <see cref="RecycleBinItem.DeletedAt"/> come from an
+    /// entry's <c>$I</c> record, and a bin of eighteen thousand entries is eighteen thousand reads — about
+    /// five seconds warm and thirty cold on a mechanical volume. Left off, a listing pays nothing for
+    /// details nobody asks for. Turned on, they are read during the listing, in parallel, and an entry
+    /// whose record cannot be read is reported in <see cref="RecycleBinContents.Failures"/> instead of
+    /// being returned.
+    /// <para>
+    /// A caller that reads every item's path — to display them, to match them against its own paths —
+    /// pays the same cost either way, spread over the listing rather than over its own loop.
+    /// </para>
+    /// <para>
+    /// It applies to <see cref="RecycleBinBackend.Native"/>, which is the only backend with records to
+    /// read. The Shell reports both fields during enumeration whatever this is set to, so there the
+    /// property changes nothing. It says nothing about <see cref="RecycleBin.EmptyAsync"/>, which does not
+    /// read records for entries whose payload is present.
+    /// </para>
+    /// </remarks>
+    public bool PreloadItemDetails { get; init; }
+
+    /// <summary>
     /// Longest path the Shell can be asked to recycle, in characters. Measured on this machine: a
     /// 251-character path recycles, a 261-character path is removed permanently while the operation
     /// still reports success.
@@ -142,7 +166,8 @@ public sealed class RecycleBinOptions
         LongPathFailureAction = LongPathFailureAction,
         NoRecycleBinAction = NoRecycleBinAction,
         MaxShellPathLength = Math.Max(1, MaxShellPathLength),
-        Backend = Backend
+        Backend = Backend,
+        PreloadItemDetails = PreloadItemDetails
     };
 
     /// <summary>
