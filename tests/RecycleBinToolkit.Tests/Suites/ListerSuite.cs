@@ -47,8 +47,8 @@ internal static class ListerSuite
         var deletedAfter = DateTimeOffset.Now.AddMinutes(-1);
         var contents = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
 
-        var item = contents.Items.FirstOrDefault(i => IsSamePath(i, files[0]));
-        Check.NotNull(item, $"the recycled file is listed under the path it was deleted from ({contents.Items.Count} item(s) on the machine)");
+        var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, files[0]));
+        Check.NotNull(item, $"the recycled file is listed under the path it was deleted from ({Listing.Flat(contents).Count} item(s) on the machine)");
         Check.Equal(
             Path.GetFileName(files[0]),
             Path.GetFileName(item!.OriginalPath),
@@ -80,7 +80,7 @@ internal static class ListerSuite
 
         var contents = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
 
-        var item = contents.Items.FirstOrDefault(i => IsSamePath(i, files[0]));
+        var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, files[0]));
         Check.NotNull(item, "the recycled file is listed");
         Check.NotNull(item!.PayloadPath, "the physical Recycle Bin path is reported");
         Check.True(
@@ -116,7 +116,7 @@ internal static class ListerSuite
 
         var contents = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
 
-        var item = contents.Items.FirstOrDefault(i => IsSamePath(i, directory));
+        var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, directory));
         Check.NotNull(item, "the recycled directory is listed under its original path");
         Check.True(item!.IsDirectory, "a recycled directory is reported as a directory");
 
@@ -144,15 +144,16 @@ internal static class ListerSuite
 
         var all = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
         var filtered = await RecycleBin.GetItemsAsync(volumeRoot, null, context.CancellationToken).ConfigureAwait(false);
+        var onVolume = Listing.OnlyEntries(filtered, volumeRoot);
 
         Check.True(
-            all.Items.Any(i => IsSamePath(i, files[0])),
+            Listing.Flat(all).Any(i => IsSamePath(i, files[0])),
             "the unfiltered listing spans the machine and holds the item");
         Check.True(
-            filtered.Items.Any(i => IsSamePath(i, files[0])),
+            onVolume.Any(i => IsSamePath(i, files[0])),
             $"the filtered listing still holds the item from {volumeRoot}");
         Check.True(
-            filtered.Items.All(i => string.Equals(Path.GetPathRoot(i.OriginalPath), volumeRoot, StringComparison.OrdinalIgnoreCase)),
+            onVolume.All(i => string.Equals(Path.GetPathRoot(i.OriginalPath), volumeRoot, StringComparison.OrdinalIgnoreCase)),
             $"every filtered item comes from {volumeRoot}");
 
         workspace.Dispose();
@@ -186,8 +187,8 @@ internal static class ListerSuite
 
         var contents = await RecycleBin.GetItemsAsync(cancellationToken: context.CancellationToken).ConfigureAwait(false);
 
-        var recorded = contents.Items.FirstOrDefault(i => IsSamePath(i, files[0]));
-        Check.NotNull(recorded, $"the recycled file is listed however it was recorded ({contents.Items.Count} item(s) on the machine)");
+        var recorded = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, files[0]));
+        Check.NotNull(recorded, $"the recycled file is listed however it was recorded ({Listing.Flat(contents).Count} item(s) on the machine)");
 
         var asItWasRecorded = Path.GetPathRoot(recorded!.OriginalPath)!;
         var differentlyWritten = WithFirstLetterFlipped(asItWasRecorded);
@@ -197,7 +198,7 @@ internal static class ListerSuite
         var filtered = await RecycleBin.GetItemsAsync(differentlyWritten, null, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(
-            filtered.Items.Any(i => IsSamePath(i, files[0])),
+            Listing.Flat(filtered).Any(i => IsSamePath(i, files[0])),
             $"the listing keeps the item when the root is written \"{differentlyWritten}\" rather than \"{asItWasRecorded}\"");
 
         workspace.Dispose();
@@ -214,8 +215,10 @@ internal static class ListerSuite
         AbsentVolume.RequireAbsent(letter, "listing a volume that is not there");
 
         var contents = await RecycleBin.GetItemsAsync(AbsentVolume.RootOf(letter), null, context.CancellationToken).ConfigureAwait(false);
+        var groups = Listing.GroupsOf(contents, AbsentVolume.RootOf(letter));
 
-        Check.True(contents.Items.Count == 0, "nothing is reported for a volume that is not mounted");
+        Check.Equal(1, groups.Count, $"the volume asked about is answered, even though it is not mounted ({contents.Items.Count} group(s))");
+        Check.Equal(0, groups[0].Items.Count, "with nothing in it: a volume that is not mounted has no bin and so holds no entry");
         Check.Equal(0, contents.Failures.Count, $"a filter for an absent volume is not an enumeration failure (got {contents.Failures.Count})");
     }
 
@@ -275,16 +278,20 @@ internal static class ListerSuite
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the batch was recycled");
 
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
         var contents = await RecycleBin.GetItemsAsync(
-            Path.GetPathRoot(ScratchWorkspace.Root), null,
+            volumeRoot, null,
             context.CancellationToken).ConfigureAwait(false);
+
+        var onVolume = Listing.OnlyEntries(contents, volumeRoot);
 
         foreach (var file in files)
         {
-            Check.True(contents.Items.Any(i => IsSamePath(i, file)), $"{file} is listed");
+            Check.True(onVolume.Any(i => IsSamePath(i, file)), $"{file} is listed");
         }
 
-        var listed = contents.Items.Where(i => files.Any(file => IsSamePath(i, file))).ToArray();
+        var listed = onVolume.Where(i => files.Any(file => IsSamePath(i, file))).ToArray();
         Check.True(listed.Length >= fileCount, $"every path is accounted for, allowing for repeat deletions (got {listed.Length} for {fileCount} path(s))");
 
         // Summed over the batch's own entries rather than over the listing. contents is the whole of the

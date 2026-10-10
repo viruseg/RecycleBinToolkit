@@ -50,6 +50,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeListingFindsAnEntryNativeRecycleRecorded), NativeListingFindsAnEntryNativeRecycleRecorded),
         new TestCase("NativeBinSuite." + nameof(NativeListingReportsARecycledDirectoryAsADirectory), NativeListingReportsARecycledDirectoryAsADirectory),
         new TestCase("NativeBinSuite." + nameof(NativeListingOfAVolumeWithNoBinDirectoryIsEmpty), NativeListingOfAVolumeWithNoBinDirectoryIsEmpty),
+        new TestCase("NativeBinSuite." + nameof(NativeListingGroupsEveryVolumeAndKeepsTheirOrder), NativeListingGroupsEveryVolumeAndKeepsTheirOrder),
         new TestCase("NativeBinSuite." + nameof(NativeListingHidesAnIndexWhosePayloadIsGone), NativeListingHidesAnIndexWhosePayloadIsGone),
         new TestCase("NativeBinSuite." + nameof(NativeListingIsUndisturbedByARecordItCannotRead), NativeListingIsUndisturbedByARecordItCannotRead),
         new TestCase("NativeBinSuite." + nameof(ADriveIsClassifiedFromItsOwnSeekPenaltyAnswer), ADriveIsClassifiedFromItsOwnSeekPenaltyAnswer),
@@ -585,8 +586,55 @@ internal static class NativeBinSuite
             .Run(() => NativeBinLister.TryEnumerate([root], RecycleBinOptions.Default, context.CancellationToken), context.CancellationToken)
             .ConfigureAwait(false);
 
-        Check.Equal(0, contents.Items.Count, "a volume with no bin yields no items");
+        Check.Equal(1, contents.Items.Count, "a volume is answered even when its bin holds nothing");
+        Check.Equal(root, contents.Items[0].VolumeRoot, "the group names the volume it was read from");
+        Check.Equal(0, contents.Items[0].Items.Count, "and its bin is an empty group rather than an absent one");
         Check.Equal(0, contents.Failures.Count, "and no failures, because an empty bin is an answer rather than a problem");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Volumes are read in parallel, and a listing answers one group per volume in the order it was asked
+    /// for them.
+    /// </summary>
+    /// <remarks>
+    /// The read of a volume is the parallel part — every disk's bin directory is walked on its own thread,
+    /// and a machine with three volumes with a bin does three walks at once rather than in a row. What that
+    /// must not do is decide the answer's shape: a caller comparing two listings, or a caller matching a
+    /// group to the volume it asked about, cannot have the order depend on which thread finished first. Each
+    /// volume writes into a slot taken by its position in the list that was handed in, and the groups are
+    /// flattened in that same order once every walk is done.
+    /// </remarks>
+    private static async Task NativeListingGroupsEveryVolumeAndKeepsTheirOrder(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the entries to reach");
+
+        // Two roots that are not volumes at all, standing in for disks that are not there. Each answers with
+        // an empty group rather than being refused, because the resolution that produced them already
+        // decided they were volumes and refusing here would be a second, different answer to one question.
+        var roots = new List<string>
+        {
+            Path.Combine(ScratchWorkspace.Root, "volume-one") + Path.DirectorySeparatorChar,
+            Path.Combine(ScratchWorkspace.Root, "volume-two") + Path.DirectorySeparatorChar,
+            Path.Combine(ScratchWorkspace.Root, "volume-three") + Path.DirectorySeparatorChar
+        };
+
+        var contents = await Task
+            .Run(() => NativeBinLister.TryEnumerate(roots, RecycleBinOptions.Default, context.CancellationToken), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(roots.Count, contents.Items.Count, "every volume asked about is answered, whether or not it had a bin");
+
+        for (var i = 0; i < roots.Count; i++)
+        {
+            Check.Equal(
+                roots[i],
+                contents.Items[i].VolumeRoot,
+                $"the group at position {i} is the volume that was asked about at position {i}, and not whichever walk finished first");
+        }
 
         workspace.Dispose();
     }
@@ -620,7 +668,7 @@ internal static class NativeBinSuite
         var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.False(
-            contents.Items.Any(i => string.Equals(i.OriginalPath, path, StringComparison.OrdinalIgnoreCase)),
+            Listing.OnlyEntries(contents, ScratchWorkspace.VolumeRoot).Any(i => string.Equals(i.OriginalPath, path, StringComparison.OrdinalIgnoreCase)),
             "the entry is not listed, because there is no payload left to say what it is");
         Check.Equal(0, contents.Failures.Count, "and an entry with nothing behind it is not a failure either");
         Check.True(File.Exists(indexPath), "while its record is still on the volume, for the next empty to collect");
@@ -646,7 +694,7 @@ internal static class NativeBinSuite
         Check.True(recycled.Succeeded, $"both are recycled (first failure: {Describe(recycled.FirstFailure)})");
 
         var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
-        var baseline = contents.Items.Count;
+        var baseline = Listing.OnlyEntries(contents, ScratchWorkspace.VolumeRoot).Count;
 
         using (new FileStream(RecordOf(locked), FileMode.Open, FileAccess.Read, FileShare.None))
         {
@@ -654,7 +702,7 @@ internal static class NativeBinSuite
         }
 
         Check.Equal(0, contents.Failures.Count, "no record is opened, so none of them can be unreadable");
-        Check.Equal(baseline, contents.Items.Count, "and every entry is returned, the locked one included");
+        Check.Equal(baseline, Listing.OnlyEntries(contents, ScratchWorkspace.VolumeRoot).Count, "and every entry is returned, the locked one included");
 
         workspace.Dispose();
     }
@@ -1180,11 +1228,12 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
     private static RecycleBinItem FindListed(Task<RecycleBinContents> listing, string originalPath)
     {
         var contents = listing.GetAwaiter().GetResult();
-        var matches = contents.Items
+        var listed = Listing.OnlyEntries(contents, ScratchWorkspace.VolumeRoot);
+        var matches = listed
             .Where(i => string.Equals(i.OriginalPath, originalPath, StringComparison.OrdinalIgnoreCase))
             .ToArray();
 
-        Check.Equal(1, matches.Length, $"exactly one listed entry names {originalPath} (found {matches.Length} of {contents.Items.Count})");
+        Check.Equal(1, matches.Length, $"exactly one listed entry names {originalPath} (found {matches.Length} of {listed.Count})");
 
         return matches[0];
     }
@@ -1281,7 +1330,7 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
 
             // Found by its payload rather than by its original path, because asking every entry for its path
             // is the very reading this case says the listing does not do.
-            var item = contents.Items.FirstOrDefault(i => SamePath(i.PayloadPath, payloadPath));
+            var item = Listing.OnlyEntries(contents, ScratchWorkspace.VolumeRoot).FirstOrDefault(i => SamePath(i.PayloadPath, payloadPath));
             Check.NotNull(item, "the entry is listed even though its record is held open");
             Check.Equal(size, item!.Size, "with the size the walk gave, which never needed the record");
             Check.False(item.IsDirectory, "and it is reported as a file");
@@ -1320,7 +1369,7 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
 
         Check.Equal(1, contents.Failures.Count, "exactly one entry is reported as unreadable");
         Check.Equal(RecycleFailureStage.Enumeration, contents.Failures[0].Stage, "at the stage where a listing reports what it could not read");
-        Check.Equal(baseline.Items.Count - 1, contents.Items.Count, "and every other entry is still returned");
+        Check.Equal(Listing.Flat(baseline).Count - 1, Listing.Flat(contents).Count, "and every other entry is still returned");
 
         workspace.Dispose();
     }
@@ -1436,7 +1485,7 @@ using var workspace = new ScratchWorkspace();
             var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
             Check.False(
-                contents.Items.Any(i => SamePath(i.PayloadPath, stray)),
+                Listing.OnlyEntries(contents, ScratchWorkspace.VolumeRoot).Any(i => SamePath(i.PayloadPath, stray)),
                 "an entry with no record is not listed, because it has no original path to answer with");
             Check.Equal(0, contents.Failures.Count, "and it is not a failure: it is a state the bin is briefly in");
 
@@ -1574,7 +1623,7 @@ using var workspace = new ScratchWorkspace();
         try
         {
             var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
-            var item = contents.Items.First(i => SamePath(i.PayloadPath, payloadPath));
+            var item = Listing.OnlyEntries(contents, ScratchWorkspace.VolumeRoot).First(i => SamePath(i.PayloadPath, payloadPath));
 
             var raised = Check.Throws<IOException>(() => _ = item.OriginalPath, "a file that is not a record has no path to answer with");
 
@@ -1934,7 +1983,7 @@ using var workspace = new ScratchWorkspace();
                 : new RecycleBinItem(indexPath, payloadPath, Content.LongLength, false);
         }
 
-        return (new RecycleBinContents(items, [], TimeSpan.Zero), items, indexPaths);
+        return (new RecycleBinContents([new RecycleBinVolumeContents(root, items)], [], TimeSpan.Zero), items, indexPaths);
     }
 
     /// <summary>

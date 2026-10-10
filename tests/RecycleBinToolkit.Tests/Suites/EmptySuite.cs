@@ -348,10 +348,12 @@ internal static class EmptySuite
         var emptied = await RecycleBin.EmptyAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         var after = await RecycleBin.GetItemsAsync(volumeRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var left = Listing.OnlyEntries(after, volumeRoot);
+
         Check.False(
-            after.Items.Any(i => string.Equals(i.OriginalPath, files[0], StringComparison.OrdinalIgnoreCase)),
+            left.Any(i => string.Equals(i.OriginalPath, files[0], StringComparison.OrdinalIgnoreCase)),
             "the file is no longer in the Recycle Bin");
-        Check.Equal(0, after.Items.Count, $"the volume holds no recycled item afterwards ({after.Items.Count} left)");
+        Check.Equal(0, left.Count, $"the volume holds no recycled item afterwards ({left.Count} left)");
         Check.Equal(0, emptied.Failures.Count, $"emptying the volume reports no failure ({string.Join(", ", emptied.Failures.Select(f => f.Path + " 0x" + f.HResult.ToString("X8")))})");
 
         workspace.Dispose();

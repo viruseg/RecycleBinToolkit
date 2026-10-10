@@ -146,6 +146,46 @@ proposing an explanation for it should measure first.
 **Do not read these as a licence to make the recycle path parallel.** Writing a bin and reading one are
 different work and the tables above are why they get different answers.
 
+### Listing several volumes: the volumes are read together
+
+A listing walks each volume's bin directory, and a Recycle Bin is one directory per volume — so two volumes
+are two directories on two devices, and nothing about them contends. One disk waiting on its head does not
+hold up another, so `NativeBinLister.TryEnumerate` reads every volume at once, one thread per volume. That is
+a different axis from everything measured above: the tables are about *how many threads one volume's records
+are read on*, and this is about *how many volumes are read at the same time*. `VolumeSeekPenalty.
+DegreeOfParallelism` does not answer it and is not consulted for it, because the listing's per-volume work is
+one `FileSystemEnumerable` walk of a flat directory — the same walk however the disk underneath answers.
+
+Three things about it are settled by what the code has to preserve, and two are not measured at all.
+
+Settled:
+
+- **The order of the answer does not follow the threads.** Each volume writes into a slot taken by its
+  position in the list handed in, and the slots are flattened in that order once every walk is done. Two
+  listings of the same machine are comparable and `Items[i]` is the volume that was asked about at `i`.
+- **A volume read with nothing in it keeps its group**, holding an empty list. This is also why the answer
+  is grouped at all: a caller that asked about `E:\` and found no group for it could not tell an empty bin
+  from a volume that was never reached.
+- **A single volume skips `Parallel.For` entirely.** One volume has nothing to be parallel with, and the
+  caller has already asked for a thread of its own. That is the ordinary case — every listing a caller takes
+  of one volume — and nesting a second parallel loop inside the pool thread the caller is already on buys
+  nothing.
+
+**Not measured: the gain.** No figure for "a listing of three volumes before → after" exists, on either
+volume, and nothing above should be read as implying one. A machine with one volume holding a bin sees no
+change at all and is the common case. Anyone quoting a speed-up here is quoting something that was not
+measured.
+
+**Not measured: the oversubscription.** With `MaxDegreeOfParallelism = volumeRoots.Count` at the volume level
+and `DegreeOfParallelism` up to eight inside `Preload`, four volumes asked for with `PreloadItemDetails` on
+can put thirty-two threads in flight. That the pool copes is the only evidence there is; it was not measured
+under that combination. It is the shape to measure before changing either figure.
+
+**Do not extend this to the empty.** `NativeBinEmptier` is still sequential across volumes, and unlike a
+listing, an empty deletes: running several over one machine is a different question with different answers
+about interleaving and about what a partial failure means. Changing it is its own piece of work with its own
+measurements.
+
 ### What a read actually costs, and what does not
 
 Measured warm over 5,000 records, one thread, on both volumes:

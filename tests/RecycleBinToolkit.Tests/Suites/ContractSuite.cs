@@ -23,6 +23,7 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(IndeterminateRefusesExactlyLikeNoRecycleBinOnVolume), IndeterminateRefusesExactlyLikeNoRecycleBinOnVolume),
         new TestCase("ContractSuite." + nameof(ATargetCostsNoAllocationOfItsOwn), ATargetCostsNoAllocationOfItsOwn),
         new TestCase("ContractSuite." + nameof(ContentsTotalIsDerivedNotDeclared), ContentsTotalIsDerivedNotDeclared),
+        new TestCase("ContractSuite." + nameof(ContentsKeepsOneGroupPerVolumeWithItsRoot), ContentsKeepsOneGroupPerVolumeWithItsRoot),
         new TestCase("ContractSuite." + nameof(FailureHResultIsNotClobberedByTheSeverityBitTest), FailureHResultIsNotClobberedByTheSeverityBitTest),
         new TestCase("ContractSuite." + nameof(PathsThatResolveToOneItemRecycleOnce), PathsThatResolveToOneItemRecycleOnce),
         new TestCase("ContractSuite." + nameof(EveryReasonAndActionPairIsPinned), EveryReasonAndActionPairIsPinned),
@@ -212,14 +213,54 @@ internal static class ContractSuite
             new RecycleBinItem(@"W:\$Recycle.Bin\S\$IB.bin", @"W:\$Recycle.Bin\S\$RB.bin", 1024, false, @"W:\b.bin", default)
         };
 
-        var contents = new RecycleBinContents(items, [], TimeSpan.FromMilliseconds(5));
+        var contents = new RecycleBinContents(
+            [new RecycleBinVolumeContents(@"W:\", items)],
+            [],
+            TimeSpan.FromMilliseconds(5));
 
         Check.Equal(5120L, contents.TotalSize, "the total is the sum of the items' sizes");
-        Check.Equal(2, contents.Items.Count, "the items are carried through");
+        Check.Equal(1, contents.Items.Count, "the volume is carried through");
+        Check.Equal(2, contents.Items[0].Items.Count, "the items are carried through");
         Check.Equal(TimeSpan.FromMilliseconds(5), contents.Elapsed, "the elapsed time is carried through");
 
         var empty = new RecycleBinContents([], [], TimeSpan.Zero);
         Check.Equal(0L, empty.TotalSize, "a listing with no items totals nothing rather than claiming a default");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A listing answers one group per volume, each naming the volume it belongs to, and a volume whose bin
+    /// is empty is still one of them.
+    /// </summary>
+    /// <remarks>
+    /// Volumes are read in parallel, so the grouping is what keeps a caller able to tell which disk an
+    /// entry came from. A volume read with nothing in it keeps its place with an empty group rather than
+    /// dropping out: a caller that asked about <c>E:\</c> and found no group for it could not tell an empty
+    /// bin from a volume that was never reached, which is the same reason a root naming no volume is answered
+    /// as a failure rather than as an empty result.
+    /// </remarks>
+    private static Task ContentsKeepsOneGroupPerVolumeWithItsRoot(TestContext context)
+    {
+        var populated = new[]
+        {
+            new RecycleBinItem(@"W:\$Recycle.Bin\S\$IA.bin", @"W:\$Recycle.Bin\S\$RA.bin", 4096, false, @"W:\a.bin", default)
+        };
+
+        var contents = new RecycleBinContents(
+            [
+                new RecycleBinVolumeContents(@"W:\", populated),
+                new RecycleBinVolumeContents(@"E:\", [])
+            ],
+            [],
+            TimeSpan.Zero);
+
+        Check.Equal(2, contents.Items.Count, "both volumes are answered, the empty one included");
+        Check.Equal(@"W:\", contents.Items[0].VolumeRoot, "a group's volume root is the root it was read from");
+        Check.Equal(1, contents.Items[0].Items.Count, "the populated volume keeps its entry");
+        Check.Equal(0, contents.Items[1].Items.Count, "a volume read with nothing in it is an empty group rather than an absent one");
+        Check.Equal(@"E:\", contents.Items[1].VolumeRoot, "the empty group still names its volume");
+        Check.Equal(4096L, contents.TotalSize, "the total spans every volume's groups");
 
         return Task.CompletedTask;
     }

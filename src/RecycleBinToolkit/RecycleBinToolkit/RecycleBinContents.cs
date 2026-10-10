@@ -4,17 +4,19 @@ namespace RecycleBinToolkit;
 
 /// <summary>
 /// The Recycle Bin contents returned by <see cref="RecycleBin.GetItemsAsync"/>: the entries that were
-/// read, the ones that were not, and the total size of what was.
+/// read, grouped by the volume they came from, the ones that were not, and the total size of what was.
 /// </summary>
 [SupportedOSPlatform("windows6.0.6000")]
 public sealed class RecycleBinContents
 {
     /// <summary>Creates a listing, deriving its total from the items.</summary>
-    /// <param name="items">The items that were read.</param>
+    /// <param name="items">
+    /// The groups that were read, one per volume, in the order the volumes were asked about.
+    /// </param>
     /// <param name="failures">Items or volumes that could not be read.</param>
     /// <param name="elapsed">Wall-clock time spent enumerating.</param>
     public RecycleBinContents(
-        IReadOnlyList<RecycleBinItem> items,
+        IReadOnlyList<RecycleBinVolumeContents> items,
         IReadOnlyList<RecycleFailure> failures,
         TimeSpan elapsed)
     {
@@ -23,16 +25,32 @@ public sealed class RecycleBinContents
         Elapsed = elapsed;
 
         long total = 0;
-        foreach (var item in items)
+        foreach (var volume in items)
         {
-            total += item.Size;
+            foreach (var item in volume.Items)
+            {
+                total += item.Size;
+            }
         }
 
         TotalSize = total;
     }
 
-    /// <summary>The items that were read.</summary>
-    public IReadOnlyList<RecycleBinItem> Items { get; }
+    /// <summary>
+    /// One group per volume that was read, in the order the volumes were asked about. A volume whose bin is
+    /// empty is one of the groups, holding nothing.
+    /// </summary>
+    /// <remarks>
+    /// Volumes are read in parallel, and the grouping is what keeps a caller able to tell which disk an entry
+    /// came from: the order does not depend on which volume's walk finished first.
+    /// <para>
+    /// A volume read with nothing in it keeps its place rather than dropping out, because a caller that
+    /// asked about <c>E:\</c> and found no group for it could not tell an empty bin from a volume that was
+    /// never reached — the same reason a root naming no volume is answered as a failure rather than as an
+    /// empty result.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<RecycleBinVolumeContents> Items { get; }
 
     /// <summary>Items or volumes that could not be read.</summary>
     public IReadOnlyList<RecycleFailure> Failures { get; }
@@ -40,7 +58,7 @@ public sealed class RecycleBinContents
     /// <summary>Wall-clock time spent enumerating.</summary>
     public TimeSpan Elapsed { get; }
 
-    /// <summary>Sum of <see cref="RecycleBinItem.Size"/> over <see cref="Items"/>, derived when the listing was built.</summary>
+    /// <summary>Sum of <see cref="RecycleBinItem.Size"/> over every group's items, derived when the listing was built.</summary>
     public long TotalSize { get; }
 
     /// <summary>
@@ -65,8 +83,11 @@ public sealed class RecycleBinContents
     /// call could not.
     /// </para>
     /// <para>
-    /// Volumes are read one after another, and each on as many threads as its own hardware answers for: one for a
-    /// mechanical disk, more for a solid-state one, one for a share.
+    /// Every volume's groups are flattened into one list first, and the volumes are then read one after
+    /// another, and each on as many threads as its own hardware answers for: one for a
+    /// mechanical disk, more for a solid-state one, one for a share. Reading the listing itself does not
+    /// work that way — it reads the volumes together — but this warms what the listing left cold, and
+    /// warming measures each disk on its own figure.
     /// </para>
     /// </remarks>
     /// <exception cref="OperationCanceledException">
@@ -74,5 +95,5 @@ public sealed class RecycleBinContents
     /// stay read.
     /// </exception>
     public void LoadItemDetails(CancellationToken cancellationToken = default) =>
-        ItemDetailLoader.Load(Items, cancellationToken);
+        ItemDetailLoader.Load(RecycleBinVolumeContents.Flatten(Items), cancellationToken);
 }

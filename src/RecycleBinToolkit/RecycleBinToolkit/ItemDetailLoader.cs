@@ -6,10 +6,11 @@ namespace RecycleBinToolkit;
 /// Reads the records a listing left unread, in as much parallel as each volume's own hardware allows.
 /// </summary>
 /// <remarks>
-/// Volumes are read one after another rather than together. Two volumes can sit on different hardware, so a
-/// single degree of parallelism would be wrong for one of them, and a share has no seek penalty to ask about
-/// and a latency that multiplying would only make worse — the same reasoning the listing and the empty already
-/// follow.
+/// Volumes are read one after another rather than together, and that is the opposite of what the listing
+/// does. Two volumes can sit on different hardware, so a single degree of parallelism would be wrong for one
+/// of them, and a share has no seek penalty to ask about and a latency that multiplying would only make
+/// worse. The listing has no such question — it reads each volume's directory once, whatever the volume is —
+/// which is why it can take them all at once and this cannot.
 /// <para>
 /// <b>One loop, and the thread count is the only thing the drive type decides.</b> Splitting the reads from the
 /// parsing across a channel was tried and measured, on both volumes, with both a

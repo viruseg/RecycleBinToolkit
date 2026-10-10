@@ -11,9 +11,18 @@ namespace RecycleBinToolkit;
 /// The two fields that are only in the record are not read at all unless someone asks for them, or unless
 /// <see cref="RecycleBinOptions.PreloadItemDetails"/> asks for all of them up front.
 /// <para>
-/// Volumes are read one after another rather than together. Two volumes can sit on different hardware, so a
-/// single degree of parallelism would be wrong for one of them, and a share has no seek penalty to ask about
-/// and a latency that multiplying would only make worse.
+/// Volumes are read together, each on its own thread. A Recycle Bin is one directory per volume, so two
+/// volumes are two directories on two devices and nothing about them contends: one disk waiting on its head
+/// does not hold up another. The per-volume degree of parallelism
+/// (<see cref="VolumeSeekPenalty.DegreeOfParallelism"/>) still decides how many threads each volume's own
+/// records are read on, and that is the figure that has to answer to the drive — it says nothing about how
+/// many volumes there are.
+/// </para>
+/// <para>
+/// The answer's <em>order</em> does not follow the threads. Each volume writes into a slot taken by its
+/// position in the list that was handed in, and the slots are flattened in that order once every walk is
+/// done, so two listings of the same machine are comparable and a caller can match a group to the volume it
+/// asked about.
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
@@ -29,8 +38,8 @@ internal static class NativeBinLister
     /// </param>
     /// <param name="cancellationToken">Cancels the enumeration and the reading.</param>
     /// <returns>
-    /// The entries that could be described, plus one failure per record that could not be read. The elapsed
-    /// time is zero because the caller measures the wait instead.
+    /// One group per volume asked about, in the order they were asked about, plus one failure per record
+    /// that could not be read. The elapsed time is zero because the caller measures the wait instead.
     /// </returns>
     internal static RecycleBinContents TryEnumerate(
         IReadOnlyList<string> volumeRoots,
@@ -38,17 +47,64 @@ internal static class NativeBinLister
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(volumeRoots);
+        ArgumentNullException.ThrowIfNull(options);
 
-        var items = new List<RecycleBinItem>();
-        var failures = new List<RecycleFailure>();
+        var groups = new VolumeGroup[volumeRoots.Count];
 
-        foreach (var root in volumeRoots)
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // One volume has nothing to be parallel with. The caller has already asked for a thread of its own
+        // to run this on, and Parallel.For over a single index would nest another one inside it for no work.
+        if (volumeRoots.Count == 1)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            EnumerateVolume(root, options, items, failures, cancellationToken);
+            groups[0] = ReadVolume(volumeRoots[0], options, cancellationToken);
+        }
+        else
+        {
+            Parallel.For(
+                0,
+                volumeRoots.Count,
+                new ParallelOptions
+                {
+                    // A walk is a chain of directory queries against one device, so a volume past the first
+                    // adds nothing but a wait. The degree that matters is how many volumes there are.
+                    MaxDegreeOfParallelism = volumeRoots.Count,
+                    CancellationToken = cancellationToken
+                },
+                index => groups[index] = ReadVolume(volumeRoots[index], options, cancellationToken));
+        }
+
+        var failures = new List<RecycleFailure>();
+        var items = new List<RecycleBinVolumeContents>(groups.Length);
+
+        foreach (var group in groups)
+        {
+            items.Add(new RecycleBinVolumeContents(group.VolumeRoot, group.Items));
+            failures.AddRange(group.Failures);
         }
 
         return new RecycleBinContents(items, failures, TimeSpan.Zero);
+    }
+
+    /// <summary>
+    /// One volume's walk and everything read out of it, held aside until every other volume's is done.
+    /// </summary>
+    /// <param name="VolumeRoot">Volume root this was read from.</param>
+    /// <param name="Items">The entries that volume's bin holds, empty if it holds none.</param>
+    /// <param name="Failures">Records on this volume that could not be read.</param>
+    private sealed record VolumeGroup(string VolumeRoot, List<RecycleBinItem> Items, List<RecycleFailure> Failures);
+
+    private static VolumeGroup ReadVolume(
+        string volumeRoot,
+        RecycleBinOptions options,
+        CancellationToken cancellationToken)
+    {
+        var items = new List<RecycleBinItem>();
+        var failures = new List<RecycleFailure>();
+
+        EnumerateVolume(volumeRoot, options, items, failures, cancellationToken);
+
+        return new VolumeGroup(volumeRoot, items, failures);
     }
 
     private static void EnumerateVolume(

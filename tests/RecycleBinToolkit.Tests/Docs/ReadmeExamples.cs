@@ -115,19 +115,28 @@ internal static class ReadmeExamples
     {
         var contents = await RecycleBin.GetItemsAsync();
 
-        foreach (var item in contents.Items)
+        // One group per volume, in the order the volumes were asked about. A volume whose Recycle Bin is
+        // empty is one of the groups and holds nothing, so an empty bin and a volume that was never
+        // reached do not look alike.
+        foreach (var volume in contents.Items)
         {
-            // Size is 0 for a directory — its contents cannot be enumerated without elevation, so
-            // IsDirectory is the honest signal that no figure is available.
-            //
-            // OriginalPath and DeletedAt are read from the entry's record on first access, which is I/O
-            // and can raise IOException if the record was collected meanwhile. The two come out of one
-            // reading, so asking for either gives you both.
-            Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+            Console.WriteLine($"{volume.VolumeRoot} — {volume.Items.Count} item(s)");
+
+            foreach (var item in volume.Items)
+            {
+                // Size is 0 for a directory — its contents cannot be enumerated without elevation, so
+                // IsDirectory is the honest signal that no figure is available.
+                //
+                // OriginalPath and DeletedAt are read from the entry's record on first access, which is I/O
+                // and can raise IOException if the record was collected meanwhile. The two come out of one
+                // reading, so asking for either gives you both.
+                Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+            }
         }
 
-        // TotalSize is derived from Items when the listing is built, so it cannot disagree with them.
-        Console.WriteLine($"{contents.Items.Count} item(s), {contents.TotalSize} byte(s)");
+        // TotalSize is derived from every group's items when the listing is built, so it cannot disagree
+        // with them.
+        Console.WriteLine($"{contents.TotalSize} byte(s) in total");
     }
 
     internal static async Task ListTheRecycleBinAndReadEveryRecordUpFront()
@@ -140,9 +149,12 @@ internal static class ReadmeExamples
 
         var contents = await RecycleBin.GetItemsAsync(@"W:\", eager);
 
-        foreach (var item in contents.Items)
+        foreach (var volume in contents.Items)
         {
-            Console.WriteLine($"{item.OriginalPath} — {item.Size} byte(s)");
+            foreach (var item in volume.Items)
+            {
+                Console.WriteLine($"{item.OriginalPath} — {item.Size} byte(s)");
+            }
         }
 
         foreach (var failure in contents.Failures)
@@ -158,9 +170,12 @@ internal static class ReadmeExamples
         // Read every item's OriginalPath and DeletedAt up front, in parallel, so the loop below never blocks on I/O.
         contents.LoadItemDetails();
 
-        foreach (var item in contents.Items)
+        foreach (var volume in contents.Items)
         {
-            Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+            foreach (var item in volume.Items)
+            {
+                Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+            }
         }
     }
 

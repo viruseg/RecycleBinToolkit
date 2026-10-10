@@ -208,7 +208,11 @@ Lists the Recycle Bin.
 
 **Returns** a `RecycleBinContents`.
 
-Each volume's bin is enumerated directly, so `volumeRoot` selects which directories to read.
+Each volume's bin is enumerated directly, so `volumeRoot` selects which directories to read. **Every volume is
+read at the same time**, each on its own thread: a Recycle Bin is one directory per volume, so two volumes are
+two directories on two devices and nothing about them contends — one disk waiting on its head does not hold up
+another. The answer's order is the order the volumes were asked about and does not depend on which one finished
+first.
 
 A path inside a volume names no volume of its own, and it is refused rather than widened
 to the volume containing it — as `EmptyAsync` refuses it and `GetStatusAsync` answers it with
@@ -405,8 +409,8 @@ That means accessing these fields is I/O, and it can fail:
 - An entry whose record was collected under it — an empty running against a caller holding a listing — raises
   `IOException`. The exception is cached, so a second access raises the same one rather than retrying.
 - Set [`PreloadItemDetails`](#recyclebinoptions) to read every record during the listing instead. An entry
-  whose record cannot be read is then reported in `RecycleBinContents.Failures` and left out of `Items`,
-  rather than being returned and raising later.
+  whose record cannot be read is then reported in `RecycleBinContents.Failures` and left out of that volume's
+  group in `Items`, rather than being returned and raising later.
 
 #### Where each field comes from
 
@@ -443,11 +447,24 @@ The outcome of a listing. Its properties never change; `LoadItemDetails` fills i
 
 | Member | Type | Description |
 | --- | --- | --- |
-| `Items` | `IReadOnlyList<RecycleBinItem>` | The entries that were read. |
+| `Items` | `IReadOnlyList<RecycleBinVolumeContents>` | One group per volume that was read, in the order the volumes were asked about. A volume whose Recycle Bin is empty is one of the groups, holding nothing. |
 | `Failures` | `IReadOnlyList<RecycleFailure>` | Entries that could not be described, at stage `Enumeration`. |
 | `Elapsed` | `TimeSpan` | Wall-clock time spent enumerating. |
-| `TotalSize` | `long` | Sum of `Size` over `Items`, derived when the listing was built. |
+| `TotalSize` | `long` | Sum of `Size` over every group's entries, derived when the listing was built. |
 | `LoadItemDetails(CancellationToken)` | `void` | Reads every item's lazy fields now, so no later access touches the disk. See [Loading every item's details](#loading-every-items-details). |
+
+#### `RecycleBinVolumeContents`
+
+What one volume's Recycle Bin holds.
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `VolumeRoot` | `string` | Volume root the entries were read from, such as `"E:\\"`. |
+| `Items` | `IReadOnlyList<RecycleBinItem>` | The entries that volume's bin holds, in the order its directory gave them. Empty for a volume whose bin is empty. |
+
+The grouping is what keeps a caller able to tell which disk an entry came from, which matters because the
+volumes are read at the same time rather than one after another. The order is the order the volumes were asked
+about and does not depend on which volume's walk finished first.
 
 #### Loading every item's details
 
@@ -468,6 +485,10 @@ inside a loop that also has to do something else.
   record lands in one directory, and reading thirty thousand records is thirty thousand independent opens of
   files nobody is writing to. Measured cold, which is what a first read does, it is the difference between
   **50.7 s and 7.9 s** over 30,010 records on a mechanical volume, and **1.65 s and 0.49 s** warm.
+  `LoadItemDetails` is the one operation that still reads the volumes one at a time, and that is deliberate:
+  it has thirty thousand independent reads *per volume* and a degree of parallelism that has to answer to the
+  drive, so multiplying it across volumes would be answering a question no drive was asked. The listing itself
+  makes the opposite call — one directory walk per volume, whatever the volume is — and reads them together.
 - An item whose record cannot be read is **left cold**, and still raises `IOException` when a caller asks for
   its details. Nothing here throws for one, and `Failures` does not change — it describes what the listing could
   not do.
@@ -549,19 +570,28 @@ await RecycleBin.EmptyAsync(@"W:\");
 ```csharp
 var contents = await RecycleBin.GetItemsAsync();
 
-foreach (var item in contents.Items)
+// One group per volume, in the order the volumes were asked about. A volume whose Recycle Bin is
+// empty is one of the groups and holds nothing, so an empty bin and a volume that was never
+// reached do not look alike.
+foreach (var volume in contents.Items)
 {
-    // Size is 0 for a directory — its contents cannot be enumerated without elevation, so
-    // IsDirectory is the honest signal that no figure is available.
-    //
-    // OriginalPath and DeletedAt are read from the entry's record on first access, which is I/O
-    // and can raise IOException if the record was collected meanwhile. The two come out of one
-    // reading, so asking for either gives you both.
-    Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+    Console.WriteLine($"{volume.VolumeRoot} — {volume.Items.Count} item(s)");
+
+    foreach (var item in volume.Items)
+    {
+        // Size is 0 for a directory — its contents cannot be enumerated without elevation, so
+        // IsDirectory is the honest signal that no figure is available.
+        //
+        // OriginalPath and DeletedAt are read from the entry's record on first access, which is I/O
+        // and can raise IOException if the record was collected meanwhile. The two come out of one
+        // reading, so asking for either gives you both.
+        Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+    }
 }
 
-// TotalSize is derived from Items when the listing is built, so it cannot disagree with them.
-Console.WriteLine($"{contents.Items.Count} item(s), {contents.TotalSize} byte(s)");
+// TotalSize is derived from every group's items when the listing is built, so it cannot disagree
+// with them.
+Console.WriteLine($"{contents.TotalSize} byte(s) in total");
 ```
 
 ### List the Recycle Bin and read every record up front
@@ -575,9 +605,12 @@ var eager = new RecycleBinOptions { PreloadItemDetails = true };
 
 var contents = await RecycleBin.GetItemsAsync(@"W:\", eager);
 
-foreach (var item in contents.Items)
+foreach (var volume in contents.Items)
 {
-    Console.WriteLine($"{item.OriginalPath} — {item.Size} byte(s)");
+    foreach (var item in volume.Items)
+    {
+        Console.WriteLine($"{item.OriginalPath} — {item.Size} byte(s)");
+    }
 }
 
 foreach (var failure in contents.Failures)
@@ -594,9 +627,12 @@ var contents = await RecycleBin.GetItemsAsync();
 // Read every item's OriginalPath and DeletedAt up front, in parallel, so the loop below never blocks on I/O.
 contents.LoadItemDetails();
 
-foreach (var item in contents.Items)
+foreach (var volume in contents.Items)
 {
-    Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+    foreach (var item in volume.Items)
+    {
+        Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
+    }
 }
 ```
 
@@ -802,7 +838,7 @@ FileRecycler          validates, de-duplicates, recycles on the pool
    ├─ NativeIndexFile         version 1 and 2 records, read and written
    ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
    ├─ NativeRecycleRunner     record first, then the move; retries are per path
-   ├─ NativeBinLister         pairs from the walk; records only under PreloadItemDetails, in parallel
+   ├─ NativeBinLister         pairs from the walk, every volume at once; records only under PreloadItemDetails
    └─ NativeBinEmptier        payload first, then the record, counted from the walk
 
 RecycleBinContents.LoadItemDetails  warms a listing after the fact

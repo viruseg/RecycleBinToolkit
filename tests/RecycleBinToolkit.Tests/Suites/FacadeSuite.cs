@@ -987,7 +987,7 @@ internal static class FacadeSuite
 
         var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken);
         Check.True(
-            contents.Items.Any(item => string.Equals(item.OriginalPath, file, StringComparison.OrdinalIgnoreCase)),
+            Listing.OnlyEntries(contents, ScratchWorkspace.VolumeRoot).Any(item => string.Equals(item.OriginalPath, file, StringComparison.OrdinalIgnoreCase)),
             "the entry carries the whole original path, however long it was");
 
         workspace.Dispose();
