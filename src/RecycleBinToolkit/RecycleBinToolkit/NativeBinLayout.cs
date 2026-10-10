@@ -228,6 +228,54 @@ internal static class NativeBinLayout
         return string.Concat(directory, head, name[2..]);
     }
 
+    /// <summary>
+    /// The record path belonging to a payload path.
+    /// </summary>
+    /// <param name="payloadPath">Path of an <c>$R</c> payload.</param>
+    /// <returns>
+    /// The <c>$I</c> path beside it, worked out from the name and not looked up. A path that is not a
+    /// payload's is returned unchanged, so a caller that hands this something else gets that something back
+    /// rather than a mangled version of it.
+    /// </returns>
+    /// <remarks>
+    /// The exact inverse of <see cref="ToPayloadPath"/>, and free of the lookup that direction costs a caller:
+    /// a listing hands out the payload path of every entry, and this turns it into the record that describes
+    /// it without walking the bin directory to find which record that is.
+    /// </remarks>
+    internal static string ToIndexPath(string payloadPath)
+    {
+        ArgumentNullException.ThrowIfNull(payloadPath);
+
+        var name = Path.GetFileName(payloadPath.AsSpan());
+
+        if (name.Length < 2 ||
+            name[0] != EntryMarker ||
+            (name[1] != PayloadPrefix && name[1] != char.ToLowerInvariant(PayloadPrefix)))
+        {
+            return payloadPath;
+        }
+
+        var directory = Path.GetDirectoryName(payloadPath) ?? string.Empty;
+
+        var separator = directory.Length > 0
+            && directory[^1] != Path.DirectorySeparatorChar
+            && directory[^1] != Path.AltDirectorySeparatorChar;
+
+        Span<char> head = stackalloc char[2 + (separator ? 1 : 0)];
+
+        var at = 0;
+
+        if (separator)
+        {
+            head[at++] = Path.DirectorySeparatorChar;
+        }
+
+        head[at++] = EntryMarker;
+        head[at++] = IndexPrefix;
+
+        return string.Concat(directory, head, name[2..]);
+    }
+
     private static void NextStemInto(Span<char> destination)
     {
         for (var i = 0; i < destination.Length; i++)
