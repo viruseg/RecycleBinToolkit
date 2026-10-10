@@ -335,6 +335,7 @@ Immutable; set with object initialisers. Every property has a production default
 | `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. Applies on **both** backends. |
 | `MaxShellPathLength` | `int` | `260` | Longest path the Shell can be asked to recycle. Measured: 251 recycles, 261 does not. Clamped to at least 1. **Inert on `Native`** — there is no length limit there. |
 | `Backend` | `RecycleBinBackend` | `WinApi` | Which path to the Recycle Bin this call takes. A value this version does not define falls back to `WinApi`. See [Two paths to the Recycle Bin](#two-paths-to-the-recycle-bin). |
+| `PreloadItemDetails` | `bool` | `false` | Read every `$I` record during `GetItemsAsync` instead of leaving each entry to read its own on first access. Off by default, because a listing reads no records at all that way. Affects `Native` listing only — inert on `WinApi` and on both backends' empty. See [Lazy fields](#lazy-fields). |
 
 ```csharp
 // Every property has a production default, so RecycleBinOptions.Default — which is what a null
@@ -481,38 +482,73 @@ between calls: a volume mounted, or a policy applied, after one operation is see
 
 ### `RecycleBinItem`
 
-One entry in the Recycle Bin. Immutable.
+One entry in the Recycle Bin.
 
 | Member | Type | Description |
 | --- | --- | --- |
-| `Name` | `string` | File or directory name, as it was before deletion. |
-| `OriginalPath` | `string` | Full path the entry was deleted from. |
-| `RecycledPath` | `string` | Physical path of the renamed `$R` entry, inside the Recycle Bin. The name cannot be reconstructed from the other fields, and this is what a restore or a targeted delete needs. |
+| `OriginalPath` | `string` | Full path the entry was deleted from. On the native backend this is read from the entry's record on first access — see [Lazy fields](#lazy-fields). |
+| `DeletedAt` | `DateTimeOffset` | When it was deleted, in the local offset. Read from the same record, on the same first access. |
 | `Size` | `long` | Size in bytes. `0` for a directory — see [Limitations](#limitations). |
-| `DeletedAt` | `DateTimeOffset` | When it was deleted, as recorded by the Shell, presented in the local offset. |
 | `IsDirectory` | `bool` | Whether the entry is a directory. |
 
-**Where each field comes from was measured, not assumed.** The obvious sources come back empty on a
-current Windows build, which is why this is worth stating:
+There is no `Name`: it is the last component of `OriginalPath`. There is no `RecycledPath` either — the
+Recycle Bin renames every entry to a `$R` name, and on the native backend that name is derived from the
+entry's `$I` record rather than stored.
 
-| Field | Source | What does *not* work |
-| --- | --- | --- |
-| `OriginalPath`, `Name` | `SIGDN_NORMALDISPLAY`, which the Shell fills with the full original path. `System.Recycle.DeletedFrom` holds only the directory, and is the fallback when the name is not rooted | `System.ItemNameDisplay` comes back empty |
-| `RecycledPath` | `SIGDN_FILESYSPATH` | — |
-| `DeletedAt` | `System.Recycle.DateDeleted` through `IShellItem2` | — |
-| `Size` | The entry's own file on disk | `System.Size` returns `0` for everything in the Recycle Bin |
-| `IsDirectory` | `SFGAO_FOLDER` | — |
+#### Lazy fields
+
+On `RecycleBinBackend.Native`, `Size` and `IsDirectory` come from the bin directory itself, and the other two
+fields live in the entry's `$I` record. A listing of eighteen thousand entries is eighteen thousand record
+reads — about five seconds warm and thirty cold on a mechanical volume — so a listing reads **no records at
+all** and each entry reads its own on the first access to either `OriginalPath` or `DeletedAt`. The reading
+answers both, once, whichever was asked for first.
+
+That means accessing these fields is I/O, and it can fail:
+
+- An entry whose record was collected under it — an empty running against a caller holding a listing — raises
+  `IOException`. The exception is cached, so a second access raises the same one rather than retrying.
+- Set [`PreloadItemDetails`](#recyclebinoptions) to read every record during the listing instead. An entry
+  whose record cannot be read is then reported in `RecycleBinContents.Failures` and left out of `Items`,
+  rather than being returned and raising later.
+
+On `RecycleBinBackend.WinApi` every field is filled during enumeration, so nothing is read on access and
+nothing raises. The option changes nothing there.
+
+#### Where each field comes from
+
+The obvious sources come back empty on a current Windows build, which is why this is worth stating:
+
+| Backend | Field | Source | What does *not* work |
+| --- | --- | --- | --- |
+| WinApi | `OriginalPath` | `SIGDN_NORMALDISPLAY`, which the Shell fills with the full original path. `System.Recycle.DeletedFrom` holds only the directory, and is the fallback when the name is not rooted | `System.ItemNameDisplay` comes back empty |
+| WinApi | `DeletedAt` | `System.Recycle.DateDeleted` through `IShellItem2` | — |
+| WinApi | `Size` | The entry's own file on disk | `System.Size` returns `0` for everything in the Recycle Bin |
+| WinApi | `IsDirectory` | `SFGAO_FOLDER` | — |
+| Native | `OriginalPath`, `DeletedAt` | The entry's own `$I` record, read on first access | — |
+| Native | `Size`, `IsDirectory` | The `$R` payload's own directory entry, read during the listing | — |
 
 Binding an `IPropertyStore` onto a Recycle Bin entry answers `CO_E_NOT_SUPPORTED`, which is why the
 recycle properties are read through `IShellItem2` instead.
+
+#### What a listing does not show
+
+On the native backend an entry appears only when both halves of it are there: its `$R` payload and its `$I`
+record. An entry whose payload is gone has no file to report a size for, and an entry whose record is gone
+has no path to answer with — so neither is listed, and neither is a failure. Both are states a Recycle Bin is
+briefly in, and the next `EmptyAsync` collects what is left of them.
+
+For the same reason the native path does not filter by original path when you name a volume: its listing
+walks `<volume>$RECYCLE.BIN\<SID>\` of exactly the volumes you asked for, so an entry it returns was deleted
+from one of them. Matching on `OriginalPath` instead would read every record the listing had just declined
+to read.
 
 **Match this field against your own paths without regard to case.** `OriginalPath` is the path as the
 Shell recorded it, and the Shell writes the drive letter its own way: an entry deleted from a volume the
 caller reached for as `e:\` comes back as `E:\…`. The library does not rewrite it, because a path the Shell
 wrote down is reported as the Shell wrote it. Windows paths are case-insensitive, so a caller comparing
-this field with a path it holds compares it that way — `GetItemsAsync`'s volume filter does, which is what
-makes `--scratch 'e:\'` and `--scratch 'E:\'` behave identically, and an ordinal comparison of the same pair
-reports a correct listing as empty.
+this field with a path it holds compares it that way — `GetItemsAsync`'s volume filter on the Shell path
+does, which is what makes `--scratch 'e:\'` and `--scratch 'E:\'` behave identically, and an ordinal
+comparison of the same pair reports a correct listing as empty.
 
 > One original path can appear more than once. Deleting the same file twice leaves two entries with two
 > deletion times, and both are listed.
@@ -606,11 +642,41 @@ foreach (var item in contents.Items)
 {
     // Size is 0 for a directory — its contents cannot be enumerated without elevation, so
     // IsDirectory is the honest signal that no figure is available.
+    //
+    // On the native backend OriginalPath and DeletedAt are read from the entry's record on first
+    // access, which is I/O and can raise IOException if the record was collected meanwhile. The two
+    // come out of one reading, so asking for either gives you both.
     Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
 }
 
 // TotalSize is derived from Items when the listing is built, so it cannot disagree with them.
 Console.WriteLine($"{contents.Items.Count} item(s), {contents.TotalSize} byte(s)");
+```
+
+### List the Recycle Bin and read every record up front
+
+```csharp
+// A listing reads no $I records by default, which is what makes one walk of the bin directory
+// enough. A caller that is going to read every entry's path anyway can have the records read during
+// the listing instead of one at a time from its own loop — and an entry whose record cannot be read
+// is reported in Failures rather than raising later.
+var eager = new RecycleBinOptions
+{
+    Backend = RecycleBinBackend.Native,
+    PreloadItemDetails = true
+};
+
+var contents = await RecycleBin.GetItemsAsync(@"W:\", eager);
+
+foreach (var item in contents.Items)
+{
+    Console.WriteLine($"{item.OriginalPath} — {item.Size} byte(s)");
+}
+
+foreach (var failure in contents.Failures)
+{
+    Console.Error.WriteLine($"could not read an entry: 0x{failure.HResult:X8}");
+}
 ```
 
 ### List one volume, and hear about anything unreadable
@@ -819,10 +885,10 @@ backend reads and writes it directly.
 | Long paths | refused past 260 characters, or staged aside | no limit; nothing is staged |
 | `MaxShellPathLength`, `LongPathFailureAction` | apply | inert |
 | `NoRecycleBinAction` | applies | **applies, unchanged** |
-| `ItemsRemoved`, `BytesFreed` from an empty | measured before and after with `SHQueryRecycleBin` | exact, summed from the records being deleted |
+| `ItemsRemoved`, `BytesFreed` from an empty | measured before and after with `SHQueryRecycleBin` | exact, summed from the payloads the walk reports, falling back to a record only for an entry whose payload is already gone |
 | Cancelling an empty | always finishes | stops between entries and raises |
 | Recycle throughput, 3,000 files of 64 KiB | measured **213 files/s** | measured **616 files/s** |
-| Reading | 291 ms for 3,000 entries | measured **64 ms** for the same |
+| Reading | 291 ms for 3,000 entries | was measured **64 ms** for the same while it still read every `$I` record; it reads none now, so that figure is a floor and not a current measurement |
 | Needs a particular Windows build | no | **10.0.14393 or later** |
 
 **Throughput, and why reading and writing are not alike.** The throughput figure is the median of

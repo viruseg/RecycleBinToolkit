@@ -140,11 +140,40 @@ internal static class ReadmeExamples
         {
             // Size is 0 for a directory — its contents cannot be enumerated without elevation, so
             // IsDirectory is the honest signal that no figure is available.
+            //
+            // On the native backend OriginalPath and DeletedAt are read from the entry's record on first
+            // access, which is I/O and can raise IOException if the record was collected meanwhile. The two
+            // come out of one reading, so asking for either gives you both.
             Console.WriteLine($"{item.DeletedAt:d}  {item.Size,12}  {item.OriginalPath}");
         }
 
         // TotalSize is derived from Items when the listing is built, so it cannot disagree with them.
         Console.WriteLine($"{contents.Items.Count} item(s), {contents.TotalSize} byte(s)");
+    }
+
+    internal static async Task ListTheRecycleBinAndReadEveryRecordUpFront()
+    {
+        // A listing reads no $I records by default, which is what makes one walk of the bin directory
+        // enough. A caller that is going to read every entry's path anyway can have the records read during
+        // the listing instead of one at a time from its own loop — and an entry whose record cannot be read
+        // is reported in Failures rather than raising later.
+        var eager = new RecycleBinOptions
+        {
+            Backend = RecycleBinBackend.Native,
+            PreloadItemDetails = true
+        };
+
+        var contents = await RecycleBin.GetItemsAsync(@"W:\", eager);
+
+        foreach (var item in contents.Items)
+        {
+            Console.WriteLine($"{item.OriginalPath} — {item.Size} byte(s)");
+        }
+
+        foreach (var failure in contents.Failures)
+        {
+            Console.Error.WriteLine($"could not read an entry: 0x{failure.HResult:X8}");
+        }
     }
 
     internal static async Task ListOneVolumeAndHearAboutUnreadableEntries()
