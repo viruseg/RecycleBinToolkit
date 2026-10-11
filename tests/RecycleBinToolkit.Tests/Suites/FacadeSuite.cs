@@ -90,8 +90,8 @@ internal static class FacadeSuite
             new FileInfo(addressed).Length,
             "and it is that file, not another one of the same name");
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync([addressed], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var result = await RecycleBin
+            .RecycleAsync([addressed], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.False(result.Succeeded, $"a path nothing above the library can read is not recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
@@ -109,8 +109,8 @@ internal static class FacadeSuite
 
         Check.False(RecycleTarget.IsVolumeGuidPath(slashed), "the caller's own spelling carries no backslashes at all");
 
-        var viaSlashes = await FileRecycler
-            .MoveToRecycleBinAsync([slashed], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var viaSlashes = await RecycleBin
+            .RecycleAsync([slashed], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.Equal(1, viaSlashes.Failures.Count, $"the forward-slash spelling is refused too (got {viaSlashes.FirstFailure?.Stage})");
@@ -154,8 +154,8 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions { ThrowOnError = false };
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+        var result = await RecycleBin
+            .RecycleAsync([file], options, context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.False(result.Succeeded, $"a volume with no Recycle Bin cannot report success (recycled {result.RecycledPaths.Count})");
@@ -198,7 +198,7 @@ internal static class FacadeSuite
 
         var thrown = await Check
             .ThrowsAsync<IOException>(
-                () => FileRecycler.MoveToRecycleBinAsync(file, RecycleBinOptions.Default, cancellationToken: context.CancellationToken),
+                () => RecycleBin.RecycleAsync(file, RecycleBinOptions.Default, cancellationToken: context.CancellationToken),
                 "a refused volume raises on the single-path overload when ThrowOnError is on")
             .ConfigureAwait(false);
 
@@ -233,7 +233,7 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions { ThrowOnError = false };
 
-        var removed = await FileRecycler.MoveToRecycleBinAsync(file, options, context.CancellationToken).ConfigureAwait(false);
+        var removed = await RecycleBin.RecycleAsync(file, options, context.CancellationToken).ConfigureAwait(false);
 
         Check.False(removed, "a refused path reports false rather than throwing");
         Check.True(File.Exists(file), "and the file is still there, so false is the honest answer");
@@ -261,8 +261,8 @@ internal static class FacadeSuite
         var missing = Path.Combine(ScratchWorkspace.Root, $"definitely-absent-{Environment.ProcessId}.bin");
         var options = new RecycleBinOptions { ThrowOnError = false };
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync([missing], options, cancellationToken: context.CancellationToken)
+        var result = await RecycleBin
+            .RecycleAsync([missing], options, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.False(result.Succeeded, "a path that is not there cannot succeed");
@@ -347,8 +347,8 @@ internal static class FacadeSuite
 
         try
         {
-            var result = await FileRecycler
-                .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+            var result = await RecycleBin
+                .RecycleAsync([file], options, context.CancellationToken)
                 .ConfigureAwait(false);
 
             Check.True(
@@ -456,8 +456,8 @@ internal static class FacadeSuite
         var options = new RecycleBinOptions { ThrowOnError = false };
         var batch = new List<string?> { refused, healthy };
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync(batch, options, cancellationToken: context.CancellationToken)
+        var result = await RecycleBin
+            .RecycleAsync(batch, options, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.False(result.Succeeded, "the refused path still makes the batch report failure");
@@ -496,8 +496,8 @@ internal static class FacadeSuite
 
         var options = new RecycleBinOptions { ThrowOnError = false };
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync([file, file], options, context.CancellationToken)
+        var result = await RecycleBin
+            .RecycleAsync([file, file], options, context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.False(result.Succeeded, "the refused path still fails the operation");
@@ -542,8 +542,8 @@ internal static class FacadeSuite
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+        var result = await RecycleBin
+            .RecycleAsync([file], options, context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.True(result.Succeeded, $"the caller asked for the file to go (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
@@ -588,8 +588,8 @@ internal static class FacadeSuite
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync([directory], options, context.CancellationToken)
+        var result = await RecycleBin
+            .RecycleAsync([directory], options, context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.True(
@@ -636,8 +636,8 @@ internal static class FacadeSuite
 
         using (new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
-            var result = await FileRecycler
-                .MoveToRecycleBinAsync([file], options, context.CancellationToken)
+            var result = await RecycleBin
+                .RecycleAsync([file], options, context.CancellationToken)
                 .ConfigureAwait(false);
 
             Check.False(result.Succeeded, "a removal the file system refused is a failure");
@@ -701,8 +701,8 @@ internal static class FacadeSuite
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
         };
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync(files, options, context.CancellationToken)
+        var result = await RecycleBin
+            .RecycleAsync(files, options, context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.True(result.Succeeded, $"both paths were handled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
@@ -746,7 +746,7 @@ internal static class FacadeSuite
 
         var (_, sizeBefore) = RecycleBinProbe.MeasureOrFail(volumeRoot, "the baseline size");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync([extended], RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RecycleAsync([extended], RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         Check.True(
             result.Succeeded,
@@ -766,7 +766,7 @@ internal static class FacadeSuite
         var missing = Path.Combine(ScratchWorkspace.Root, "definitely-absent.bin");
 
         var thrown = Check.Throws<FileNotFoundException>(
-            () => FileRecycler.MoveToRecycleBinAsync(missing).GetAwaiter().GetResult(),
+            () => RecycleBin.RecycleAsync(missing).GetAwaiter().GetResult(),
             "a missing path on the single-path overload reports the path, not a move failure");
 
         Check.True(
@@ -800,11 +800,11 @@ internal static class FacadeSuite
                 OverallTimeout = TimeSpan.FromSeconds(5)
             };
 
-            var batch = await FileRecycler.MoveToRecycleBinAsync([files[0]], options, context.CancellationToken);
+            var batch = await RecycleBin.RecycleAsync([files[0]], options, context.CancellationToken);
             Check.False(batch.Succeeded, "a locked file cannot be recycled");
 
             thrown = Check.Throws<IOException>(
-                () => FileRecycler.MoveToRecycleBinAsync(files[0], cancellationToken: context.CancellationToken).GetAwaiter().GetResult(),
+                () => RecycleBin.RecycleAsync(files[0], cancellationToken: context.CancellationToken).GetAwaiter().GetResult(),
                 "a file-system refusal on the single-path overload raises IOException");
         }
 
@@ -823,7 +823,7 @@ internal static class FacadeSuite
         var files = workspace.CreateRandomFiles(1, 4096);
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
-        var recycled = await FileRecycler.MoveToRecycleBinAsync(files[0], cancellationToken: context.CancellationToken);
+        var recycled = await RecycleBin.RecycleAsync(files[0], cancellationToken: context.CancellationToken);
 
         Check.True(recycled, "a single recycled file reports success");
         Check.False(File.Exists(files[0]), "the file is gone from disk");
@@ -845,7 +845,7 @@ internal static class FacadeSuite
         var files = workspace.CreateFixtureSet();
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RecycleAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"every generated file is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8} {result.FirstFailure?.Path})");
         Check.Equal(files.Count, result.RecycledPaths.Count, "every generated file is reported as recycled");
@@ -864,11 +864,11 @@ internal static class FacadeSuite
     private static Task NullPathThrowsWhenThrowOnError(TestContext context)
     {
         Check.Throws<ArgumentException>(
-            () => FileRecycler.MoveToRecycleBinAsync((string?)null).GetAwaiter().GetResult(),
+            () => RecycleBin.RecycleAsync((string?)null).GetAwaiter().GetResult(),
             "a null path with throwOnError is rejected eagerly");
 
         Check.Throws<ArgumentException>(
-            () => FileRecycler.MoveToRecycleBinAsync("   ").GetAwaiter().GetResult(),
+            () => RecycleBin.RecycleAsync("   ").GetAwaiter().GetResult(),
             "a whitespace path with throwOnError is rejected eagerly");
 
         return Task.CompletedTask;
@@ -882,15 +882,15 @@ internal static class FacadeSuite
         var options = new RecycleBinOptions { ThrowOnError = false };
 
         Check.False(
-            await FileRecycler.MoveToRecycleBinAsync((string?)null, options, context.CancellationToken).ConfigureAwait(false),
+            await RecycleBin.RecycleAsync((string?)null, options, context.CancellationToken).ConfigureAwait(false),
             "the single-path overload answers false for a null path when throwing is off, rather than raising");
 
         Check.False(
-            await FileRecycler.MoveToRecycleBinAsync("   ", options, context.CancellationToken).ConfigureAwait(false),
+            await RecycleBin.RecycleAsync("   ", options, context.CancellationToken).ConfigureAwait(false),
             "and the same for a whitespace path, which names nothing either");
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync(new string?[] { null }, options, context.CancellationToken)
+        var result = await RecycleBin
+            .RecycleAsync(new string?[] { null }, options, context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.False(result.Succeeded, "a null path without throwOnError reports failure instead of throwing");
@@ -911,7 +911,7 @@ internal static class FacadeSuite
         var batch = new List<string?> { missing };
         batch.AddRange(files);
 
-        var result = await FileRecycler.MoveToRecycleBinAsync(batch, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RecycleAsync(batch, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         Check.False(result.Succeeded, "the missing path makes the batch report failure");
         Check.Equal(1, result.Failures.Count, "only the missing path is reported");
@@ -929,7 +929,7 @@ internal static class FacadeSuite
 
     private static async Task EmptyBatchSucceeds(TestContext context)
     {
-        var result = await FileRecycler.MoveToRecycleBinAsync(Array.Empty<string?>(), cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RecycleAsync(Array.Empty<string?>(), cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, "an empty batch is a success");
         Check.Equal(0, result.Failures.Count, "an empty batch reports no failures");
@@ -948,7 +948,7 @@ internal static class FacadeSuite
         File.WriteAllText(Path.Combine(ScratchWorkspace.Root, "tree", "b.txt"), "world");
 
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
-        var result = await FileRecycler.MoveToRecycleBinAsync([directory], RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RecycleAsync([directory], RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"a directory is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
         Check.False(Directory.Exists(directory), "the directory tree is gone from disk");
@@ -978,7 +978,7 @@ internal static class FacadeSuite
 
         Check.True(file.Length > 260, $"the test path is genuinely long ({file.Length} chars)");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RecycleAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"a long path is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
         Check.Equal(1, result.RecycledPaths.Count, "and is named as recycled");
@@ -1003,7 +1003,7 @@ internal static class FacadeSuite
         var files = workspace.CreateRandomFiles(1, size);
         var (_, before) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline size");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync([files[0]], cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RecycleAsync([files[0]], cancellationToken: context.CancellationToken);
 
         Check.True(result.Succeeded, $"a 10 MB file is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
         Check.False(File.Exists(files[0]), "the 10 MB file is gone from disk");
@@ -1022,7 +1022,7 @@ internal static class FacadeSuite
         await cancelled.CancelAsync();
 
         Check.Throws<TaskCanceledException>(
-            () => FileRecycler.MoveToRecycleBinAsync(files, cancellationToken: cancelled.Token).GetAwaiter().GetResult(),
+            () => RecycleBin.RecycleAsync(files, cancellationToken: cancelled.Token).GetAwaiter().GetResult(),
             "an already-cancelled token is observed instead of recycling");
 
         foreach (var file in files)
@@ -1063,16 +1063,17 @@ internal static class FacadeSuite
     }
 
     /// <summary>
-    /// Calls the private batch validator the way <see cref="FileRecycler.MoveToRecycleBinAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>
-    /// does, unwrapping what reflection hands back.
+    /// Calls the private batch validator the way <see cref="RecycleBatch.Run"/> does through
+    /// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>,
+    /// unwrapping what reflection hands back.
     /// </summary>
     private static void BuildTargets(
         IReadOnlyList<string?> filePaths,
         RecycleBinOptions options,
         CancellationToken cancellationToken)
     {
-        var build = typeof(FileRecycler).GetMethod("BuildTargets", BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new MissingMethodException(typeof(FileRecycler).FullName, nameof(BuildTargets));
+        var build = typeof(RecycleBatch).GetMethod("BuildTargets", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new MissingMethodException(typeof(RecycleBatch).FullName, nameof(BuildTargets));
 
         try
         {

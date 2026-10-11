@@ -55,7 +55,7 @@ namespace RecycleBinToolkit.Tests.Suites;
                 ReadAndAppend(path, random);
             }
 
-            var result = await FileRecycler.MoveToRecycleBinAsync(
+            var result = await RecycleBin.RecycleAsync(
                 chosen,
                 cancellationToken: context.CancellationToken);
 
@@ -95,7 +95,7 @@ namespace RecycleBinToolkit.Tests.Suites;
         var files = workspace.CreateRandomFiles(fileCount, fileSize);
         var (countBefore, sizeBefore) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline bytes");
 
-        var result = await FileRecycler.MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RecycleAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
 
         var (countAfter, sizeAfter) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the bytes after the batches");
 

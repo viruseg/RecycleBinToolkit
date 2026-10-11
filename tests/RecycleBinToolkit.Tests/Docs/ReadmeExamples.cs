@@ -13,12 +13,12 @@ internal static class ReadmeExamples
 {
     internal static async Task QuickStart()
     {
-        await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
+        await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
     }
 
     internal static async Task QuickStartWithTheBinItself()
     {
-        await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
+        await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
 
         await RecycleBin.GetItemsAsync();
         await RecycleBin.EmptyAsync(@"W:\");
@@ -32,7 +32,7 @@ internal static class ReadmeExamples
 
         // This overload never throws for a per-item failure — a bad path lands in result.Failures
         // and the rest of the batch still runs.
-        var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+        var result = await RecycleBin.RecycleAsync(paths);
 
         if (!result.Succeeded)
         {
@@ -51,7 +51,7 @@ internal static class ReadmeExamples
 
         // An empty list is a valid call: it succeeds and does nothing. Entries may also be null or
         // missing, each reported as a failure without aborting the batch.
-        var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
+        var result = await RecycleBin.RecycleAsync(paths, options);
 
         if (!result.Succeeded)
         {
@@ -105,7 +105,7 @@ internal static class ReadmeExamples
         // with ordinary file calls. It needs Windows 10 version 1607 (build 14393) or later, because that is the
         // first build that reads the index records it writes; below that the call raises
         // PlatformNotSupportedException, and ThrowOnError does not suppress that.
-        await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
+        await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
 
         var contents = await RecycleBin.GetItemsAsync(@"W:\");
         await RecycleBin.EmptyAsync(@"W:\");
@@ -226,7 +226,7 @@ internal static class ReadmeExamples
         // A directory tree is one path. The single-path overload returns a bool and no reason, so the
         // batch overload with one element is the way to learn why it failed.
         IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
-        var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+        var result = await RecycleBin.RecycleAsync(paths);
 
         if (result.Succeeded)
         {
@@ -245,7 +245,7 @@ internal static class ReadmeExamples
     {
         // A path that is not there comes back as a failure and does not stop the other entries.
         IReadOnlyList<string?> paths = [@"W:\Projects\build-output", @"W:\Projects\gone.log"];
-        var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+        var result = await RecycleBin.RecycleAsync(paths);
 
         foreach (var failure in result.Failures)
         {
@@ -259,7 +259,7 @@ internal static class ReadmeExamples
         // A path hundreds of characters long recycles with no staging, no policy and no limit: the
         // destination inside the bin is short whatever the source was.
         IReadOnlyList<string?> paths = [@"W:\Projects\a-very-long-path\build-output"];
-        var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+        var result = await RecycleBin.RecycleAsync(paths);
 
         Console.WriteLine($"{result.RecycledPaths.Count} path(s) recycled");
     }
@@ -272,7 +272,7 @@ internal static class ReadmeExamples
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
         };
 
-        var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
+        var result = await RecycleBin.RecycleAsync(paths, options);
 
         // Only paths on volumes that cannot recycle are affected; everything else still goes to the bin.
         if (result.PermanentlyDeletedPaths.Count > 0)
@@ -288,7 +288,7 @@ internal static class ReadmeExamples
 
         // Cancelling stops the batch between paths: a cancelled call stops part way and raises without
         // returning a result, so which files went is found by reading the bin.
-        await FileRecycler.MoveToRecycleBinAsync(paths, cancellationToken: cts.Token);
+        await RecycleBin.RecycleAsync(paths, cancellationToken: cts.Token);
     }
 
     internal static async Task RefuseABatchOnAVolumeWithoutARecycleBin()
@@ -299,7 +299,7 @@ internal static class ReadmeExamples
         // The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the path is refused
         // before anything is attempted. With ThrowOnError off the refusal comes back as data instead of
         // an exception.
-        var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
+        var result = await RecycleBin.RecycleAsync(paths, options);
 
         foreach (var failure in result.Failures)
         {
@@ -314,7 +314,7 @@ internal static class ReadmeExamples
     internal static async Task AssertInATest()
     {
         IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
-        var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+        var result = await RecycleBin.RecycleAsync(paths);
 
         Check.True(result.Succeeded, "the batch succeeded");
         Check.Equal(0, result.Failures.Count, "no failures");

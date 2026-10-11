@@ -6,7 +6,7 @@ tell you *why* an item failed — and read, empty, and inspect the Recycle Bin i
 ```csharp
 using RecycleBinToolkit;
 
-await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
+await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
 
 await RecycleBin.GetItemsAsync();
 await RecycleBin.EmptyAsync(@"W:\");
@@ -82,7 +82,7 @@ One file:
 ```csharp
 using RecycleBinToolkit;
 
-await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
+await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
 ```
 
 A batch, reporting failures as data:
@@ -94,7 +94,7 @@ var paths = Directory.GetFiles(@"W:\Users\me\Downloads", "*", SearchOption.TopDi
 
 // This overload never throws for a per-item failure — a bad path lands in result.Failures
 // and the rest of the batch still runs.
-var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+var result = await RecycleBin.RecycleAsync(paths);
 
 if (!result.Succeeded)
 {
@@ -114,7 +114,7 @@ var options = new RecycleBinOptions { ThrowOnError = false };
 
 // An empty list is a valid call: it succeeds and does nothing. Entries may also be null or
 // missing, each reported as a failure without aborting the batch.
-var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
+var result = await RecycleBin.RecycleAsync(paths, options);
 
 if (!result.Succeeded)
 {
@@ -133,15 +133,15 @@ if (!result.Succeeded)
 
 | Method | Returns | Description |
 | --- | --- | --- |
-| `FileRecycler.MoveToRecycleBinAsync(string? filePath, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<bool>` | Recycles one file or directory. `true` when it is gone from disk. |
-| `FileRecycler.MoveToRecycleBinAsync(IReadOnlyList<string?> filePaths, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinResult>` | Recycles a batch and reports the outcome of every item. |
+| `RecycleBin.RecycleAsync(string? filePath, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<bool>` | Recycles one file or directory. `true` when it is gone from disk. |
+| `RecycleBin.RecycleAsync(IReadOnlyList<string?> filePaths, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinResult>` | Recycles a batch and reports the outcome of every item. |
 | `RecycleBin.GetItemsAsync(string? volumeRoot = null, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinContents>` | Lists what is in the Recycle Bin. |
 | `RecycleBin.EmptyAsync(string? volumeRoot = null, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinEmptyResult>` | Empties it, and reports how much it freed. |
 | `RecycleBin.GetStatusAsync(string volumeRoot, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinStatus>` | Whether it is in use for a volume, and why not if it is not. |
 
 All five are safe to call from any thread.
 
-### `MoveToRecycleBinAsync(string?, RecycleBinOptions?, CancellationToken)`
+### `RecycleAsync(string?, RecycleBinOptions?, CancellationToken)`
 
 Recycles a single file or directory.
 
@@ -167,10 +167,10 @@ under an explicit policy.
 
 With `ThrowOnError` off, nothing is thrown: a bad path returns `false`.
 
-> **Overload note.** A bare `MoveToRecycleBinAsync(null)` is ambiguous between the two overloads and
+> **Overload note.** A bare `RecycleAsync(null)` is ambiguous between the two overloads and
 > does not compile. Cast it: `(string?)null`, or pass a list.
 
-### `MoveToRecycleBinAsync(IReadOnlyList<string?>, RecycleBinOptions?, CancellationToken)`
+### `RecycleAsync(IReadOnlyList<string?>, RecycleBinOptions?, CancellationToken)`
 
 Recycles a batch. This overload **never throws** for a per-item failure.
 
@@ -189,10 +189,10 @@ token is cancelled. Per-item problems are data, not exceptions.
 
 ## The Recycle Bin itself
 
-`RecycleBin` is a second entry point next to `FileRecycler`. Where `FileRecycler` moves items *in*,
-`RecycleBin` reads, empties, and reports on the bin as a whole.
+`RecycleBin` is one class, and this is the half of it that looks at the bin from the outside. `RecycleAsync`
+moves items *in*; the three methods below read, empty, and report on what is already there.
 
-All three of its methods are batch-shaped: they never throw for an environmental problem. A volume
+All three are batch-shaped: they never throw for an environmental problem. A volume
 that is not mounted or an entry that cannot be described is data in the result, because a service
 that lists or empties drives must survive one unmounted letter.
 
@@ -247,7 +247,7 @@ Whether the Recycle Bin is in use for one volume.
 
 **Returns** a `RecycleBinStatus`. **Throws** `ArgumentException` for a null or blank path.
 
-`GetStatusAsync` is the authoritative query on this, and `FileRecycler` asks it before every batch —
+`GetStatusAsync` is the authoritative query on this, and `RecycleAsync` asks it before every batch —
 once per distinct volume root rather than once per path, so a batch of twenty thousand files on one
 volume pays for one query. What it settles has three outcomes, not one: under the default
 `NoRecycleBinAction.Throw` the path is refused there with the file left in place and nothing attempted,
@@ -261,9 +261,9 @@ act on.
 
 ## Types
 
-### `FileRecycler`
+### `RecycleBin`
 
-The entry point. A static class with the two methods above. Work runs on the thread pool, so a caller
+The entry point. A static class with the five methods above. Work runs on the thread pool, so a caller
 never blocks inside the bin.
 
 ### `RecycleBinOptions`
@@ -559,7 +559,7 @@ using RecycleBinToolkit;
 // with ordinary file calls. It needs Windows 10 version 1607 (build 14393) or later, because that is the
 // first build that reads the index records it writes; below that the call raises
 // PlatformNotSupportedException, and ThrowOnError does not suppress that.
-await FileRecycler.MoveToRecycleBinAsync(@"W:\Users\me\Downloads\archive.zip");
+await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
 
 var contents = await RecycleBin.GetItemsAsync(@"W:\");
 await RecycleBin.EmptyAsync(@"W:\");
@@ -687,7 +687,7 @@ if (!status.IsEnabled)
 // A directory tree is one path. The single-path overload returns a bool and no reason, so the
 // batch overload with one element is the way to learn why it failed.
 IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
-var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+var result = await RecycleBin.RecycleAsync(paths);
 
 if (result.Succeeded)
 {
@@ -707,7 +707,7 @@ else
 ```csharp
 // A path that is not there comes back as a failure and does not stop the other entries.
 IReadOnlyList<string?> paths = [@"W:\Projects\build-output", @"W:\Projects\gone.log"];
-var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+var result = await RecycleBin.RecycleAsync(paths);
 
 foreach (var failure in result.Failures)
 {
@@ -722,7 +722,7 @@ foreach (var failure in result.Failures)
 // A path hundreds of characters long recycles with no staging, no policy and no limit: the
 // destination inside the bin is short whatever the source was.
 IReadOnlyList<string?> paths = [@"W:\Projects\a-very-long-path\build-output"];
-var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+var result = await RecycleBin.RecycleAsync(paths);
 
 Console.WriteLine($"{result.RecycledPaths.Count} path(s) recycled");
 ```
@@ -736,7 +736,7 @@ var options = new RecycleBinOptions
     NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
 };
 
-var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
+var result = await RecycleBin.RecycleAsync(paths, options);
 
 // Only paths on volumes that cannot recycle are affected; everything else still goes to the bin.
 if (result.PermanentlyDeletedPaths.Count > 0)
@@ -753,7 +753,7 @@ using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
 // Cancelling stops the batch between paths: a cancelled call stops part way and raises without
 // returning a result, so which files went is found by reading the bin.
-await FileRecycler.MoveToRecycleBinAsync(paths, cancellationToken: cts.Token);
+await RecycleBin.RecycleAsync(paths, cancellationToken: cts.Token);
 ```
 
 ### Refuse a batch on a volume without a Recycle Bin
@@ -765,7 +765,7 @@ var options = new RecycleBinOptions { ThrowOnError = false };
 // The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the path is refused
 // before anything is attempted. With ThrowOnError off the refusal comes back as data instead of
 // an exception.
-var result = await FileRecycler.MoveToRecycleBinAsync(paths, options);
+var result = await RecycleBin.RecycleAsync(paths, options);
 
 foreach (var failure in result.Failures)
 {
@@ -781,7 +781,7 @@ lines read `Assert.True`, `Assert.Equal` and `Assert.False`.
 
 ```csharp
 IReadOnlyList<string?> paths = [@"W:\Projects\build-output"];
-var result = await FileRecycler.MoveToRecycleBinAsync(paths);
+var result = await RecycleBin.RecycleAsync(paths);
 
 Check.True(result.Succeeded, "the batch succeeded");
 Check.Equal(0, result.Failures.Count, "no failures");
@@ -821,7 +821,7 @@ pipeline: there is nothing to overlap.
 
 **The version requirement is a refusal, not a warning.** Windows 10 build 14393 is the first build
 that reads a version 2 index record. An older build does not reject one — it reads it as something it
-cannot use, so the item appears in the bin and cannot be restored from it. `FileRecycler` therefore
+cannot use, so the item appears in the bin and cannot be restored from it. `RecycleAsync` therefore
 throws `RecycleBinNativeBackendUnavailableException` (a `PlatformNotSupportedException`) before it
 touches anything, and `ThrowOnError` does not suppress it: there is no path to report and no
 `RecycleFailureStage` that describes it, because nothing failed. `GetItemsAsync` and `EmptyAsync` are
@@ -833,7 +833,13 @@ nothing — so a machine too old to *write* can still *read* and *clear* at full
 ## How it works
 
 ```
-FileRecycler          validates, de-duplicates, recycles on the pool
+RecycleBin            the entry point: moves items in, resolves volumes, reports
+   ├─ RecycleBatch           validates, de-duplicates, refuses what cannot be recycled, recycles on the pool
+   ├─ RecycleBinVolumeSet   which volumes an operation covers
+   ├─ RecycleBinVolumeState  volume table + registry facts
+   └─ RecycleBinVolumePolicy the decision, separated so it can be checked exhaustively
+
+the engine, over whatever the entry point resolved
    ├─ NativeBinLayout         $RECYCLE.BIN\<SID>\ and the $I/$R name pair
    ├─ NativeIndexFile         version 1 and 2 records, read and written
    ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
@@ -843,11 +849,6 @@ FileRecycler          validates, de-duplicates, recycles on the pool
 
 RecycleBinContents.LoadItemDetails  warms a listing after the fact
   └─ ItemDetailLoader        one volume at a time, at that volume's own degree of parallelism
-
-RecycleBin            resolves volumes, reports
-  ├─ RecycleBinVolumeSet   which volumes an operation covers
-  ├─ RecycleBinVolumeState  volume table + registry facts
-  └─ RecycleBinVolumePolicy the decision, separated so it can be checked exhaustively
 ```
 
 **Record first, then the move.** A crash between the two leaves the caller's file exactly where it
@@ -871,7 +872,7 @@ already happened.
 **`GetStatusAsync` answers configuration, but not the future.** Where the registry records a volume's
 own setting, that setting is the whole answer. A volume nothing was recorded for answers
 `Indeterminate`: unproven, never enabled. That is what makes it trustworthy enough for
-`FileRecycler` to refuse a path rather than destroy it. It still does not predict the next delete:
+`RecycleAsync` to refuse a path rather than destroy it. It still does not predict the next delete:
 a volume mounted after the call, or a policy applied after it, changes the answer without the call
 having been wrong. Nothing is cached, so each call asks the question again.
 

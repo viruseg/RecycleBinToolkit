@@ -284,8 +284,8 @@ internal static class StatusSuite
         var files = workspace.CreateRandomFiles(1, 4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the file was recycled, so the volume demonstrably uses the Recycle Bin");
 

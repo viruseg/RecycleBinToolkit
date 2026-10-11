@@ -479,8 +479,8 @@ internal static class ContractSuite
             normalized.OverallTimeout < TimeSpan.MaxValue,
             $"the budget is pulled back far enough that adding the elapsed time cannot overflow (got {normalized.OverallTimeout})");
 
-        var result = await FileRecycler
-            .MoveToRecycleBinAsync([file], absurd, context.CancellationToken)
+        var result = await RecycleBin
+            .RecycleAsync([file], absurd, context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.True(result.Succeeded, $"an absurd budget still recycles the file (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");

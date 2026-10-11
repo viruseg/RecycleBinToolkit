@@ -49,8 +49,8 @@ internal static class EmptySuite
 
         // Recycled first, so the empty has something to remove. An already-empty bin reports a success
         // either way, which is what makes this case vacuous without them.
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.True(recycled.Succeeded, $"the files reached the volume's Recycle Bin (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
@@ -126,7 +126,7 @@ internal static class EmptySuite
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
         var forwardSlash = volumeRoot.Replace('\\', '/');
 
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin.RecycleAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
 
@@ -170,7 +170,7 @@ internal static class EmptySuite
         var file = workspace.CreateRandomFile(4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin.RecycleAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
 
@@ -220,7 +220,7 @@ internal static class EmptySuite
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
         var prefixed = ExtendedPath.For(volumeRoot);
 
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin.RecycleAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
 
@@ -261,7 +261,7 @@ internal static class EmptySuite
         var file = workspace.CreateRandomFile(4096);
 
         // Something on the volume, so a silent widening would have something to destroy.
-        var recycled = await FileRecycler.MoveToRecycleBinAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin.RecycleAsync([file], RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is an entry on the volume for the check to be about");
 
@@ -299,8 +299,8 @@ internal static class EmptySuite
         var files = workspace.CreateRandomFiles(2, 4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        await FileRecycler
-            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        await RecycleBin
+            .RecycleAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         var stopwatch = Stopwatch.StartNew();
@@ -336,8 +336,8 @@ internal static class EmptySuite
 
         var (countBefore, _) = RecycleBinProbe.MeasureOrFail(volumeRoot, "the baseline count");
 
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the file was recycled");
 
@@ -377,8 +377,8 @@ internal static class EmptySuite
         var files = workspace.CreateRandomFiles(fileCount, fileSize);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the files were recycled");
 
@@ -407,8 +407,8 @@ internal static class EmptySuite
         var files = workspace.CreateRandomFiles(1, fileSize);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         // The premise of the case is a Recycle Bin that was not empty, so the run has to establish one

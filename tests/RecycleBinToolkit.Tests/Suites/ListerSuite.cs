@@ -39,8 +39,8 @@ internal static class ListerSuite
 
         var files = workspace.CreateRandomFiles(1, fileSize);
 
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync(files, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, $"the file was recycled ({recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
 
@@ -73,8 +73,8 @@ internal static class ListerSuite
 
         var files = workspace.CreateRandomFiles(1, 4096);
 
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync(files, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the file was recycled");
 
@@ -109,8 +109,8 @@ internal static class ListerSuite
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, "inside.txt"), "content that travels with the directory");
 
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync([directory], cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync([directory], cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the directory was recycled");
 
@@ -137,8 +137,8 @@ internal static class ListerSuite
         var files = workspace.CreateRandomFiles(1, 4096);
         var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
 
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync(files, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the file was recycled");
 
@@ -180,8 +180,8 @@ internal static class ListerSuite
 
         var files = workspace.CreateRandomFiles(1, 4096);
 
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync(files, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the file was recycled");
 
@@ -240,8 +240,8 @@ internal static class ListerSuite
         ScratchWorkspace.RequireRecycling("a real entry on the volume for a silent widening to report");
 
         var file = workspace.CreateRandomFile(4096);
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync([file], cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync([file], cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is an entry on the volume for the check to be about");
 
@@ -273,8 +273,8 @@ internal static class ListerSuite
 
         var files = workspace.CreateRandomFiles(fileCount, fileSize);
 
-        var recycled = await FileRecycler
-            .MoveToRecycleBinAsync(files, cancellationToken: context.CancellationToken)
+        var recycled = await RecycleBin
+            .RecycleAsync(files, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the batch was recycled");
 
