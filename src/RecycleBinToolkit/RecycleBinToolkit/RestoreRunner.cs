@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Runtime.Versioning;
 using System.Threading.Channels;
@@ -23,7 +24,16 @@ namespace RecycleBinToolkit;
 /// fixable by restoring that entry again.
 /// </para>
 /// <para>
-/// <b>Nothing one entry does ends the call; the caller's own cancellation does.</b> A payload deleted since the
+    /// <b>A refusal is not the end of one entry; the caller's budget is.</b> A move the filesystem will not
+    /// make — a destination somebody is holding, a directory in the way of a file — is asked again, up to
+    /// <see cref="RecycleBinOptions.MaxAttempts"/> times, and what is in the way is asked again with it rather
+    /// than answered once before the first attempt.
+    /// <see cref="RecycleBinOptions.OverallTimeout"/> bounds all of that, and it is one budget for the whole
+    /// call: taken before any disk is read, so a run of refused entries cannot each spend a budget of their
+    /// own and a slow disk cannot lengthen the one a fast disk is spending.
+    /// </para>
+/// <para>
+    /// <b>Nothing one entry does ends the call; the caller's own cancellation does.</b> A payload deleted since the
 /// listing, a destination occupied by the other kind, a record that cannot be read, an entry the caller named
 /// twice: each is one entry's answer, carried in <see cref="RecycleBinRestoreResult.Failures"/> with the code
 /// the filesystem gave where there was one, and the entries around it keep the outcomes they had. A caller
@@ -48,6 +58,31 @@ namespace RecycleBinToolkit;
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class RestoreRunner
 {
+    /// <summary>Longest wait that can be expressed as a <see cref="TimeSpan"/> from milliseconds.</summary>
+    private const double MaxWaitableMilliseconds = (double)int.MaxValue;
+
+    /// <summary>
+    /// How far a delay is randomised, as a fraction of itself. Stops a run of entries that are all held by
+    /// the same thing from asking again in lockstep with every other restore on the machine.
+    /// </summary>
+    private const double MaxJitterFraction = 0.2;
+
+    /// <summary>
+    /// How many names one entry is given before a collision is taken to be a real refusal.
+    /// </summary>
+    /// <remarks>
+    /// Only a name the filesystem reports as taken counts, and only this many of them: the probability of one
+    /// is about two in a billion, and a refusal that is <em>not</em> a collision — a held destination, a denied
+    /// directory — is spent against <see cref="RecycleBinOptions.MaxAttempts"/> rather than against this.
+    /// </remarks>
+    private const int NameAttempts = 3;
+
+    /// <summary>Win32 <c>ERROR_FILE_EXISTS</c>, returned by a move that would overwrite a file.</summary>
+    private const int ErrorFileExists = 80;
+
+    /// <summary>Win32 <c>ERROR_ALREADY_EXISTS</c>, the other half of the same refusal.</summary>
+    private const int ErrorAlreadyExists = 183;
+
     /// <summary>
     /// Puts every entry back and reports what happened to each.
     /// </summary>
@@ -118,6 +153,11 @@ internal static class RestoreRunner
 
         options = options.Normalize();
 
+        // Taken here, before the hop into the pool and before any volume is read, because it is one budget
+        // for the whole call: a disk that is slow must not lengthen the budget of one that is not, and one
+        // that is fast must not wait for the other to finish with its own.
+        var budget = RestoreBudget.Start(options);
+
         // One slot per entry, in the caller's order. A slot still carrying its opening kind is an entry
         // nothing has been decided for. Two threads never write the same one, because an entry enters the
         // work once and leaves it once.
@@ -130,7 +170,7 @@ internal static class RestoreRunner
         // another one inside it for no work — the rule the listing applies to a single volume.
         if (disks.Count == 1)
         {
-            RunDisk(disks[0], options, slots, cancellationToken);
+            RunDisk(disks[0], options, budget, slots, cancellationToken);
         }
         else if (disks.Count > 1)
         {
@@ -144,7 +184,7 @@ internal static class RestoreRunner
                     MaxDegreeOfParallelism = disks.Count,
                     CancellationToken = cancellationToken
                 },
-                index => RunDisk(disks[index], options, slots, cancellationToken));
+                index => RunDisk(disks[index], options, budget, slots, cancellationToken));
         }
 
         return Flatten(slots, items);
@@ -155,6 +195,7 @@ internal static class RestoreRunner
     /// </summary>
     /// <param name="disk">The volumes sharing one physical disk, in the caller's own order.</param>
     /// <param name="options">The normalised settings the restore runs under.</param>
+    /// <param name="budget">The whole call's retry budget, already running.</param>
     /// <param name="slots">Where each entry's outcome is written, by position in the caller's list.</param>
     /// <param name="cancellationToken">Cancels the operation between entries and between volumes.</param>
     /// <remarks>
@@ -173,6 +214,7 @@ internal static class RestoreRunner
     private static void RunDisk(
         RestoreDiskGroup disk,
         RecycleBinOptions options,
+        RestoreBudget budget,
         RestoreOutcome[] slots,
         CancellationToken cancellationToken)
     {
@@ -180,7 +222,7 @@ internal static class RestoreRunner
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            RunVolume(pipeline, options, slots, cancellationToken);
+            RunVolume(pipeline, options, budget, slots, cancellationToken);
         }
     }
 
@@ -217,6 +259,7 @@ internal static class RestoreRunner
     /// </summary>
     /// <param name="pipeline">The volume's own channel, movers, put-back guard and answered set.</param>
     /// <param name="options">The normalised settings the restore runs under.</param>
+    /// <param name="budget">The whole call's retry budget, which this volume shares with every other one.</param>
     /// <param name="slots">Where each entry's outcome is written, by position in the caller's list.</param>
     /// <param name="cancellationToken">Cancels the operation between entries.</param>
     /// <remarks>
@@ -244,6 +287,7 @@ internal static class RestoreRunner
     private static void RunVolume(
         RestoreVolumePipeline pipeline,
         RecycleBinOptions options,
+        RestoreBudget budget,
         RestoreOutcome[] slots,
         CancellationToken cancellationToken)
     {
@@ -272,7 +316,7 @@ internal static class RestoreRunner
                     {
                         try
                         {
-                            MoveFrom(pipeline, options, slots, cancellationToken);
+                            MoveFrom(pipeline, options, budget, slots, cancellationToken);
                         }
                         catch (Exception ex)
                         {
@@ -364,6 +408,7 @@ internal static class RestoreRunner
     /// </summary>
     /// <param name="pipeline">The volume whose channel this mover drains.</param>
     /// <param name="options">The normalised settings the restore runs under.</param>
+    /// <param name="budget">The whole call's retry budget, which one entry's retrying is spent from.</param>
     /// <param name="slots">Where each entry's outcome is written, by position in the caller's list.</param>
     /// <param name="cancellationToken">Cancels the operation between entries.</param>
     /// <remarks>
@@ -387,6 +432,7 @@ internal static class RestoreRunner
     private static void MoveFrom(
         RestoreVolumePipeline pipeline,
         RecycleBinOptions options,
+        RestoreBudget budget,
         RestoreOutcome[] slots,
         CancellationToken cancellationToken)
     {
@@ -401,6 +447,7 @@ internal static class RestoreRunner
                 Restore(
                     entry.Item,
                     options,
+                    budget,
                     slots,
                     pipeline.Settled,
                     pipeline.PutBack,
@@ -500,10 +547,11 @@ internal static class RestoreRunner
 
     /// <summary>
     /// Decides what to do about one entry, does it, and records what became of it in the slot its position in
-    /// the caller's list gave it.
+    /// the caller's list gave it — asking again, up to the caller's budget, while the filesystem refuses.
     /// </summary>
     /// <param name="item">The entry, whose record has been read.</param>
     /// <param name="options">The normalised settings the restore runs under.</param>
+    /// <param name="budget">The whole call's retry budget, shared by every volume and every disk group.</param>
     /// <param name="slots">Where the outcome is written, by position in the caller's list.</param>
     /// <param name="settled">The entries this volume has already answered.</param>
     /// <param name="putBack">The guard a merge writes its put-back behind.</param>
@@ -533,10 +581,26 @@ internal static class RestoreRunner
     /// for the move. Only what the filesystem itself raises on these paths is caught, so a defect here still
     /// surfaces rather than being reported as a disk that said no.
     /// </para>
+    /// <para>
+    /// <b>The loop is this entry's own, not a round shared with the batch.</b> A mover thread holds one entry
+    /// at a time, so a round would drive entries that had already been answered; and
+    /// <see cref="RestoreOutcome.Attempts"/> is the number of times <em>this</em> payload was put down, which
+    /// is what <see cref="RecycleFailure.Attempts"/> is documented to be and what a round number is not. The
+    /// budget is <see cref="RestoreBudget"/> rather than a fresh one per entry, so a run of refused entries
+    /// cannot each take a whole budget of their own.
+    /// </para>
+    /// <para>
+    /// <b>The conflict is asked again on every attempt rather than answered once before the loop.</b> After a
+    /// refused overwrite the destination holds whatever the last attempt left there, and deciding against the
+    /// path the first attempt chose is how <see cref="RestoreAction.Replace"/> ends up clobbering a file it no
+    /// longer means to. A re-decision may therefore answer something else altogether — a directory now in the
+    /// way where a file was, a free path where something was — and that answer is acted on like any other.
+    /// </para>
     /// </remarks>
     private static void Restore(
         RecycleBinItem item,
         RecycleBinOptions options,
+        RestoreBudget budget,
         RestoreOutcome[] slots,
         ConcurrentDictionary<RecycleBinItem, byte> settled,
         SemaphoreSlim putBack,
@@ -544,12 +608,10 @@ internal static class RestoreRunner
         CancellationToken cancellationToken)
     {
         // Hoisted so that a refusal on the way to a decision can still be reported against the path the entry
-        // came from. Reading the record and deciding where to put it are one try because one of them being the
+        // came from. Reading the record and settling the entry are one try because one of them being the
         // thing that raises is not worth the caller losing the other's answer, but only the record read leaves
         // this null, and null is what says there was no path to name.
         string? originalPath = null;
-
-        RestoreDecision decision;
 
         try
         {
@@ -567,8 +629,6 @@ internal static class RestoreRunner
                 slots[position] = Failed(originalPath, item.Size, hResult: 0, attempts: 0);
                 return;
             }
-
-            decision = RestorePathPlanner.Decide(originalPath, item.IsDirectory, options);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -580,54 +640,77 @@ internal static class RestoreRunner
             return;
         }
 
-        try
+        for (var attempt = 1; ; attempt++)
         {
-            switch (decision.Action)
+            cancellationToken.ThrowIfCancellationRequested();
+
+            RestoreDecision decision;
+
+            try
             {
-                case RestoreAction.Move when Merges(item, decision, options):
-                    slots[position] = Merge(item, decision.TargetPath, options, putBack, cancellationToken);
-                    break;
-
-                case RestoreAction.Move:
-                    Place(item, decision.TargetPath);
-                    slots[position] = new RestoreOutcome(RestoreOutcomeKind.Restored, decision.TargetPath, item.Size);
-                    break;
-
-                case RestoreAction.Replace:
-                    Place(item, decision.TargetPath, overwrite: true);
-                    slots[position] = new RestoreOutcome(RestoreOutcomeKind.Replaced, decision.TargetPath, item.Size);
-                    break;
-
-                case RestoreAction.Rename:
-                    Place(item, decision.TargetPath);
-                    slots[position] = new RestoreOutcome(RestoreOutcomeKind.RestoredRenamed, decision.TargetPath, item.Size)
-                    {
-                        OccupiedByDirectory = decision.OccupiedByDirectory
-                    };
-                    break;
-
-                default:
-                    slots[position] = new RestoreOutcome(
-                        IsRefusal(item, options) ? RestoreOutcomeKind.Refused : RestoreOutcomeKind.Skipped,
-                        decision.TargetPath,
-                        item.Size)
-                    {
-                        OccupiedByDirectory = decision.OccupiedByDirectory
-                    };
-                    break;
+                decision = RestorePathPlanner.Decide(originalPath!, item.IsDirectory, options);
             }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        {
-            // The move, or the delete of a record whose payload has already been put back, is what raised. The
-            // second of those is why this is reported and not acted on: the file is already where its caller
-            // wanted it, and the entry is left in the bin to be recognised as restored next time.
-            //
-            // This filter must never gain an OperationCanceledException clause. The switch above calls Merge,
-            // which reaches PutBack, and that hands the token to a caller which raises it — so a live
-            // cancellation raises inside this very try. Reported here it would be this entry's failure
-            // rather than the caller's own cancellation, and the raise would go no further.
-            slots[position] = Failed(decision.TargetPath, item.Size, ex.HResult, attempts: 1);
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // Where this entry goes could not be asked at all, and asking again is answered by the same
+                // record the same way — so this is reported at zero attempts rather than retried: nothing was
+                // put down for it and nothing would be.
+                slots[position] = Failed(originalPath!, item.Size, ex.HResult, attempts: 0);
+                return;
+            }
+
+            try
+            {
+                switch (decision.Action)
+                {
+                    case RestoreAction.Move when Merges(item, decision, options):
+                        slots[position] = Merge(item, decision.TargetPath, options, putBack, cancellationToken);
+                        break;
+
+                    // The three that put a payload down share one arm, because they differ only in the kind
+                    // they report and in whether the move is an overwrite — and a retry loop is what they have
+                    // in common, which is why it sits outside the switch rather than in three copies of it.
+                    case RestoreAction.Move:
+                    case RestoreAction.Replace:
+                    case RestoreAction.Rename:
+                        slots[position] = PlaceDown(item, decision, originalPath!, attempt);
+                        break;
+
+                    default:
+                        slots[position] = new RestoreOutcome(
+                            IsRefusal(item, options) ? RestoreOutcomeKind.Refused : RestoreOutcomeKind.Skipped,
+                            decision.TargetPath,
+                            item.Size)
+                        {
+                            OccupiedByDirectory = decision.OccupiedByDirectory
+                        };
+                        break;
+                }
+
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // The move is what raised. A merge answers rather than raising, so what reaches here is a
+                // refusal to put one payload down — and the only thing to be done with it is to ask the disk
+                // again, which is what the next attempt is.
+                //
+                // This filter must never gain an OperationCanceledException clause. The switch above calls
+                // Merge, which reaches PutBack, and that hands the token to a caller which raises it — so a
+                // live cancellation raises inside this very try. Reported here it would be this entry's
+                // failure rather than the caller's own cancellation, and the raise would go no further.
+                if (attempt < options.MaxAttempts && WaitBeforeRetry(options, attempt, budget, cancellationToken))
+                {
+                    continue;
+                }
+
+                // A wait that ended early was the caller's own cancellation rather than a budget that ran out,
+                // and this is the only place that can tell the two apart.
+                cancellationToken.ThrowIfCancellationRequested();
+
+                slots[position] = Failed(decision.TargetPath, item.Size, ex.HResult, attempt);
+                return;
+            }
         }
     }
 
@@ -647,20 +730,93 @@ internal static class RestoreRunner
         };
 
     /// <summary>
-    /// Puts the payload down at <paramref name="targetPath"/> and takes the record away, in that order.
+    /// Puts one entry's payload down, takes its record away, and reports which of the two answers that is.
     /// </summary>
     /// <param name="item">The entry whose payload moves and whose record goes.</param>
-    /// <param name="targetPath">Where the payload is to land.</param>
-    /// <param name="overwrite">
-    /// Whether what is at <paramref name="targetPath"/> is to be overwritten. <see langword="false"/> is what
-    /// a move to a free path is, and asking for it costs nothing over the answer that would refuse. It is
-    /// never set for a directory, which <see cref="RestorePathPlanner.Decide"/> never answers
-    /// <see cref="RestoreAction.Replace"/> for.
+    /// <param name="decision">Where the payload is to land, and whether the move is an overwrite.</param>
+    /// <param name="wantedPath">The path the entry's own record named, which is what a free name is taken beside.</param>
+    /// <param name="attempt">
+    /// How many times this payload has been put down so far, which is what a record that will not go is
+    /// reported with.
     /// </param>
     /// <remarks>
-    /// One place does the move and the delete, because the order between them is the whole design and is
-    /// the reason this class is documented the way it is. A branch that wanted them the other way round
-    /// would have to be argued for in its own right.
+    /// <b>The second half of the order is here and the retry is not over it.</b> A record whose payload has
+    /// already been put back is a failure rather than an exception, because the file is where its caller
+    /// wanted it and the entry is left in the bin to be recognised as restored next time — and asking again
+    /// would move a payload that is no longer in the bin to put down, which is how the two halves of one entry
+    /// stop describing one another.
+    /// <para>
+    /// The refusal to move does raise rather than answer: it is the one thing here the caller's budget decides,
+    /// and <see cref="Restore"/> is what asks again, with the disk asked about what is in the way in between.
+    /// </para>
+    /// </remarks>
+    private static RestoreOutcome PlaceDown(
+        RecycleBinItem item,
+        RestoreDecision decision,
+        string wantedPath,
+        int attempt)
+    {
+        var placed = Place(item, decision, wantedPath);
+
+        try
+        {
+            // Payload first, record second, for the reason this class is documented with.
+            File.Delete(item.IndexPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return Failed(placed.TargetPath, item.Size, ex.HResult, attempt);
+        }
+
+        return Placed(placed, item.Size);
+    }
+
+    /// <summary>
+    /// What an entry whose payload is down and whose record has gone becomes.
+    /// </summary>
+    /// <param name="decision">The decision the payload was put down under.</param>
+    /// <param name="size">The bytes the entry carries back, as its own record measured them.</param>
+    /// <remarks>
+    /// Read off the decision rather than off the arm that reached it, so that a name this library picked under
+    /// <see cref="RestoreAction.Rename"/> is the path reported even when a lost race for it moved the payload
+    /// to the next free name: what is reported is where the entry <em>is</em>, not which of its four arms
+    /// happened to place it.
+    /// </remarks>
+    private static RestoreOutcome Placed(RestoreDecision decision, long size) =>
+        decision.Action switch
+        {
+            RestoreAction.Replace => new RestoreOutcome(RestoreOutcomeKind.Replaced, decision.TargetPath, size),
+            RestoreAction.Rename => new RestoreOutcome(RestoreOutcomeKind.RestoredRenamed, decision.TargetPath, size)
+            {
+                OccupiedByDirectory = decision.OccupiedByDirectory
+            },
+            _ => new RestoreOutcome(RestoreOutcomeKind.Restored, decision.TargetPath, size)
+        };
+
+    /// <summary>
+    /// Puts the payload down at the name <paramref name="decision"/> chose, and reports the decision it was
+    /// actually put down under.
+    /// </summary>
+    /// <param name="item">The entry whose payload moves.</param>
+    /// <param name="decision">Where the payload is to land, and whether the move is an overwrite.</param>
+    /// <param name="wantedPath">The path the entry's own record named, which is what a free name is taken beside.</param>
+    /// <returns>
+    /// The decision the payload answered to. It is the one handed in unless a name this library chose was
+    /// taken in between and the entry was set down under the next free one.
+    /// </returns>
+    /// <remarks>
+    /// <b>A name this library chose is not a failed attempt, and this loop is why.</b> Under
+    /// <see cref="RestoreAction.Rename"/> the target is a free name this code picked, and somebody else can
+    /// take it between the query and the move; the next free name is taken and the move made again, inside
+    /// the same attempt. <see cref="RecycleBinOptions.MaxAttempts"/> is spent on the filesystem refusing the
+    /// move, not on somebody else being faster at naming files. A refusal under any other action, and any
+    /// refusal that is not a name being taken, leaves this method by raising.
+    /// <para>
+    /// The names are counted against <see cref="NameAttempts"/> so that a name taken on every attempt cannot
+    /// loop here for ever, and bounded at that because the probability of one is about two in a billion. <b>No
+    /// case in this repository witnesses it</b>: arranging a lost race would mean taking a name away between
+    /// the query and the move, which is a hook inside this class rather than a thing a run can arrange.
+    /// </para>
     /// <para>
     /// A directory is one <see cref="Directory.Move(string, string)"/> rather than a walk of what is inside
     /// it. Windows moves a whole directory to a free name in a single call, and that is the shape nearly
@@ -680,25 +836,110 @@ internal static class RestoreRunner
     /// the separator, and it is read as the same name by everything here rather than by half of it.
     /// </para>
     /// </remarks>
-    private static void Place(RecycleBinItem item, string targetPath, bool overwrite = false)
+    private static RestoreDecision Place(RecycleBinItem item, RestoreDecision decision, string wantedPath)
     {
-        // The one place a destination is resolved, so the folder made below and the move onto it cannot answer
-        // about two different names of the same place.
-        var destination = Path.TrimEndingDirectorySeparator(targetPath);
+        // The overwrite is the decision's own rather than a parameter, because it is asked of every attempt
+        // and a name taken between two of them does not change what the caller's policy asked for.
+        var overwrite = decision.Action == RestoreAction.Replace;
 
-        CreateTheParentFolder(destination);
-
-        if (item.IsDirectory)
+        for (var name = 1; ; name++)
         {
-            Directory.Move(item.PayloadPath, destination);
+            // The one place a destination is resolved, so the folder made below and the move onto it cannot
+            // answer about two different names of the same place.
+            var destination = Path.TrimEndingDirectorySeparator(decision.TargetPath);
+
+            CreateTheParentFolder(destination);
+
+            try
+            {
+                if (item.IsDirectory)
+                {
+                    Directory.Move(item.PayloadPath, destination);
+                }
+                else
+                {
+                    File.Move(item.PayloadPath, destination, overwrite);
+                }
+
+                return decision;
+            }
+            catch (Exception ex) when (name < NameAttempts && decision.Action == RestoreAction.Rename && IsNameTaken(ex))
+            {
+                decision = decision with { TargetPath = RestorePathPlanner.WithFreeNumber(wantedPath) };
+            }
         }
-        else
+    }
+
+    /// <summary>
+    /// Whether a refusal was this library's own name being taken rather than the entry being unavailable.
+    /// </summary>
+    /// <param name="failure">What the move raised.</param>
+    /// <remarks>
+    /// Telling the two apart is what lets a taken free name be tried again without a held destination being
+    /// charged for somebody else's speed. A held file is a fact about the caller's disk and is spent against
+    /// <see cref="RecycleBinOptions.MaxAttempts"/>; a taken name is a fact about this library's own generator
+    /// and is its own business.
+    /// </remarks>
+    private static bool IsNameTaken(Exception failure) =>
+        failure is IOException io && io.HResult is ErrorFileExists or ErrorAlreadyExists;
+
+    /// <summary>
+    /// Waits out the backoff for the attempt that just failed.
+    /// </summary>
+    /// <param name="options">The normalised settings the delay is derived from.</param>
+    /// <param name="attempt">The attempt that just failed, counting from one; the delay doubles on each.</param>
+    /// <param name="budget">The whole call's budget, which is what the delay has to fit inside.</param>
+    /// <param name="cancellationToken">Cancels the wait, ending the retrying rather than faulting inside it.</param>
+    /// <returns>
+    /// <see langword="false"/> when no further attempt may start: the call's budget is spent, or the backoff
+    /// does not fit in what is left of it.
+    /// </returns>
+    /// <remarks>
+    /// The shape of <see cref="NativeRecycleRunner.WaitBeforeRetry"/> and deliberately not a call to it: that
+    /// method is private to a class owning a different retry policy, and the two do not agree about what is
+    /// being bounded. That one waits between rounds of one batch, where every round re-drives every path still
+    /// pending; this one waits between attempts of one entry, where the count is the entry's own and the budget
+    /// is the whole call's. Sharing one would have meant moving a policy that is settled into a class that
+    /// does not own it.
+    /// </remarks>
+    private static bool WaitBeforeRetry(
+        RecycleBinOptions options,
+        int attempt,
+        RestoreBudget budget,
+        CancellationToken cancellationToken)
+    {
+        var exponential = options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, attempt - 1);
+        var jittered = exponential * (1 + ((Random.Shared.NextDouble() * 2 - 1) * MaxJitterFraction));
+
+        var delay = TimeSpan.FromMilliseconds(Math.Clamp(jittered, 0, MaxWaitableMilliseconds));
+
+        var remaining = budget.Remaining;
+        if (remaining <= TimeSpan.Zero || delay >= remaining)
         {
-            File.Move(item.PayloadPath, destination, overwrite);
+            return false;
         }
 
-        // Payload first, record second, for the reason this class is documented with.
-        File.Delete(item.IndexPath);
+        if (!cancellationToken.CanBeCanceled)
+        {
+            Thread.Sleep(delay);
+            return true;
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        try
+        {
+            return !cancellationToken.WaitHandle.WaitOne(delay);
+        }
+        catch (ObjectDisposedException)
+        {
+            // The caller disposed their token source while this entry was still queued. They have gone, so
+            // this entry has nobody left to report to either.
+            return false;
+        }
     }
 
     /// <summary>
@@ -1578,6 +1819,42 @@ internal static class RestoreRunner
 /// ordering and the entry's identity are in the same hands.
 /// </param>
 internal readonly record struct RestoreWorkItem(RecycleBinItem Item, int Position);
+
+/// <summary>
+/// The retry budget of one whole call: a clock and the deadline it was measured against.
+/// </summary>
+/// <param name="clock">The call's own clock, which <paramref name="deadline"/> was taken from.</param>
+/// <param name="deadline">
+/// When the call's <see cref="RecycleBinOptions.OverallTimeout"/> runs out, whatever the call is doing then.
+/// </param>
+/// <remarks>
+/// <b>One budget, taken before the call reaches the pool, and carried down to every mover of every volume.</b>
+/// A deadline derived where it is waited on would be a fresh budget for each entry that has to wait, and a
+/// batch of refused entries would then take a budget apiece — which is the case a caller who set a budget at
+/// all is exactly the one that hits. A slow disk does not lengthen a fast one's budget either, because the
+/// deadline is not derived from anything a disk does.
+/// <para>
+/// It is a value rather than a field on the pipeline because the budget is the call's and not a volume's:
+/// <see cref="RestoreVolumePipeline"/> is opened once per volume, and a call with one volume and a call with
+/// four must spend the same budget.
+/// </para>
+/// </remarks>
+internal readonly struct RestoreBudget(Stopwatch clock, TimeSpan deadline)
+{
+    /// <summary>How much of the budget is left, or nothing at all once it has run out.</summary>
+    internal TimeSpan Remaining => deadline - clock.Elapsed;
+
+    /// <summary>Takes the budget for a call that is about to start.</summary>
+    /// <param name="options">The normalised settings the budget is taken from.</param>
+    internal static RestoreBudget Start(RecycleBinOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        var started = Stopwatch.StartNew();
+
+        return new RestoreBudget(started, started.Elapsed + options.OverallTimeout);
+    }
+}
 
 /// <summary>One volume's entries, and the root it is being restored from.</summary>
 /// <param name="VolumeRoot">The volume root these entries' records live on.</param>

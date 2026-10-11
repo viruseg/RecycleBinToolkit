@@ -250,6 +250,13 @@ A destination whose parent folders are gone is made on the way for anything actu
 names where a thing came from and says nothing about the folders on the way to it. An entry the policy leaves
 in the bin makes nothing.
 
+A move the file system refuses is **tried again**, up to `MaxAttempts` times, and what is in the way is
+asked about on each attempt rather than decided once before the first: a destination somebody lets go of half
+way through is restored, and one that stays held is reported carrying the number of attempts it was actually
+given in [`Attempts`](#recyclefailurestage). `OverallTimeout` bounds all of that, and it is **one budget for
+the whole call** — not one per entry and not one per volume — so a run of refused entries cannot each spend a
+budget of their own, and a slow disk cannot lengthen the one a fast disk is spending.
+
 **Exceptions** `ArgumentNullException` when the list is null. `ArgumentException` when one of the
 volume groups is null: a group that is not there has no entries to restore and no volume root to name,
 so there is no path to report it at and nothing to say which volume could not be answered — and nothing
@@ -1068,7 +1075,7 @@ the engine, over whatever the entry point resolved
    └─ NativeBinEmptier        payload first, then the record, counted from the walk
 
 the restore engine, over the entries a listing handed back
-   ├─ RestoreRunner           payload first, then the record; one answer per entry, in the caller's order; one mover pool per volume
+   ├─ RestoreRunner           payload first, then the record; one answer per entry, in the caller's order; one mover pool per volume; a refused move asked again
    └─ RestorePathPlanner      what is in the way of a path, and what to do about the item that wanted it
 
 RecycleBinContents.LoadItemDetails  warms a listing after the fact

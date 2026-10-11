@@ -40,6 +40,9 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing), AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing),
         new TestCase("RestoreSuite." + nameof(OneEntryFailingDoesNotCostTheOthersTheirAnswers), OneEntryFailingDoesNotCostTheOthersTheirAnswers),
         new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure),
+        new TestCase("RestoreSuite." + nameof(AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts), AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts),
+        new TestCase("RestoreSuite." + nameof(ABudgetThatIsSpentStopsTheRetrying), ABudgetThatIsSpentStopsTheRetrying),
+        new TestCase("RestoreSuite." + nameof(AShortOverallTimeoutAcrossManyItemsDoesNotFreezeTheRest), AShortOverallTimeoutAcrossManyItemsDoesNotFreezeTheRest),
         new TestCase("RestoreSuite." + nameof(TheVolumeOverloadRestoresEveryVolumeItWasGiven), TheVolumeOverloadRestoresEveryVolumeItWasGiven),
         new TestCase("RestoreSuite." + nameof(TwoVolumesOnOneDiskAreBothAnswered), TwoVolumesOnOneDiskAreBothAnswered),
         new TestCase("RestoreSuite." + nameof(TheResultFollowsTheOrderTheCallerPassed), TheResultFollowsTheOrderTheCallerPassed),
@@ -1151,6 +1154,12 @@ internal static class RestoreSuite
     /// that the code is the filesystem's own, and not a zero standing in for one, is the claim, and which
     /// refusal Windows raises for a missing source is not.
     /// </para>
+    /// <para>
+    /// One attempt, for the reason <c>AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin</c> gives: a
+    /// payload that has been deleted is not going to come back, and the default budget would spend a second
+    /// and a half of this run asking for it. How often a refusal that will not change is asked again is
+    /// <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's.
+    /// </para>
     /// </remarks>
     private static async Task AnEntryWhosePayloadIsGoneIsAFailureAndNothingElse(TestContext context)
     {
@@ -1173,7 +1182,9 @@ internal static class RestoreSuite
         File.Delete(item.PayloadPath);
         Check.False(File.Exists(target), "and the file is not on disk either, so there is nowhere else it could be");
 
-        var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+        var options = new RecycleBinOptions { MaxAttempts = 1 };
+
+        var result = await RecycleBin.RestoreAsync([item], options, context.CancellationToken);
 
         Check.False(result.Succeeded, "the restore did not succeed");
         Check.Equal(0, result.ItemsRestored, "nothing was restored");
@@ -2315,6 +2326,12 @@ internal static class RestoreSuite
     /// The payload is checked for still being in the Recycle Bin, which is the other half of the claim — a
     /// move that raised is a move that did not happen, so nothing was lost and the entry is still restorable.
     /// </para>
+    /// <para>
+    /// One attempt, for the reason <c>AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin</c> gives: a
+    /// directory standing where the file wanted is not going to move by itself, and the default budget would
+    /// spend a second and a half of this run asking it to. How often a refusal that will not change is asked
+    /// again is <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's.
+    /// </para>
     /// </remarks>
     private static async Task AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing(TestContext context)
     {
@@ -2337,10 +2354,13 @@ internal static class RestoreSuite
             await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
             target);
 
-        var result = await RecycleBin.RestoreAsync(
-            [item],
-            new RecycleBinOptions { FileConflict = RestoreFileConflict.Replace },
-            context.CancellationToken);
+        var options = new RecycleBinOptions
+        {
+            FileConflict = RestoreFileConflict.Replace,
+            MaxAttempts = 1
+        };
+
+        var result = await RecycleBin.RestoreAsync([item], options, context.CancellationToken);
 
         Check.False(result.Succeeded, "the restore did not succeed");
         Check.Equal(0, result.ItemsRestored, "nothing was restored");
@@ -2484,6 +2504,223 @@ internal static class RestoreSuite
         }
 
         File.Delete(item.IndexPath);
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A destination that will not let go of itself is asked again and again, up to the caller's own attempt
+    /// budget, and the failure says how many times the payload was put down for it.
+    /// </summary>
+    /// <remarks>
+    /// The refusal is manufactured rather than waited for, because a case that waits for a virus scanner to
+    /// let go of a file is a case that skips. A handle opened on the destination sharing nothing denies the
+    /// delete an overwriting move needs, so the same call raises the same code every time — which is what a
+    /// retry loop needs to be measured against, and is why the budget rather than the clock decides the count.
+    /// <para>
+    /// The failure count and the attempt count answer different questions and either alone would pass a runner
+    /// reporting one failure per attempt: three attempts is one entry that could not be put back, and it is
+    /// reported once.
+    /// </para>
+    /// <para>
+    /// <b>The handle is released before the assertions rather than at the end of the case.</b> It shares
+    /// nothing, so it would refuse the very read that checks the file it holds is untouched, and the scratch
+    /// tree could not be taken away under it either.
+    /// </para>
+    /// <para>
+    /// That the entry is still restorable is read from its payload still being in the bin and from the count
+    /// against the baseline, not from <see cref="RecycleBinItem.IsDetailsLoaded"/>: the record was read to find
+    /// the entry, so that property answers the same whether or not it left the bin.
+    /// </para>
+    /// </remarks>
+    private static async Task AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(64);
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the file reached the bin");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        // At the path the entry wants back, not beside it: a file under some other name is not what the
+        // overwrite is refused over.
+        File.WriteAllText(target, "mine");
+
+        var options = new RecycleBinOptions
+        {
+            FileConflict = RestoreFileConflict.Replace,
+            MaxAttempts = 3,
+            InitialRetryDelay = TimeSpan.FromMilliseconds(1)
+        };
+
+        RecycleBinRestoreResult result;
+
+        // An exclusive hold makes the overwriting move fail the same way every time, which is what a retry
+        // loop needs to be measured against: nothing here is waiting for a handle to be let go of.
+        using (new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            result = await RecycleBin.RestoreAsync([item], options, context.CancellationToken);
+        }
+
+        Check.Equal(1, result.Failures.Count, "one failure, however many attempts it took");
+        Check.Equal(3, result.Failures[0].Attempts, "and it reports the real number of attempts it made");
+        Check.Equal(target, result.Failures[0].Path, "under the path the entry wanted");
+        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move is reported at");
+        Check.True(
+            (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
+            $"carrying the file system's own code for a held destination: 0x{result.Failures[0].HResult:X8}");
+
+        Check.Equal(0, result.ItemsRestored, "nothing was restored");
+        Check.Equal("mine", File.ReadAllText(target), "the held file is untouched");
+        Check.True(File.Exists(item.PayloadPath), "the payload never left the Recycle Bin, so nothing was lost");
+        Check.Equal(1, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the entry is still restorable");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A budget of no time at all is still a budget: the first attempt is made, nothing waits for a second, and
+    /// the count the caller allowed is not spent.
+    /// </summary>
+    /// <remarks>
+    /// The same held destination as the case above, so the only thing that differs is the budget — which is
+    /// what makes the attempt count the answer rather than the shape of the refusal. Six attempts were allowed
+    /// and one was made, so the budget is what ended it; a runner that retried to
+    /// <see cref="RecycleBinOptions.MaxAttempts"/> regardless would answer six, and a runner that never
+    /// retried at all would also answer one, which is why the case above sits beside this one.
+    /// <para>
+    /// The first attempt is not optional. A budget that stopped the call before it began would report a
+    /// failure nobody made, at zero attempts, which is what <see cref="RecycleBinOptions.Normalize"/> exists
+    /// to prevent for a count of zero.
+    /// </para>
+    /// </remarks>
+    private static async Task ABudgetThatIsSpentStopsTheRetrying(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(64);
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the file reached the bin");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        File.WriteAllText(target, "mine");
+
+        var options = new RecycleBinOptions
+        {
+            FileConflict = RestoreFileConflict.Replace,
+            MaxAttempts = 6,
+            OverallTimeout = TimeSpan.Zero
+        };
+
+        RecycleBinRestoreResult result;
+
+        using (new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            result = await RecycleBin.RestoreAsync([item], options, context.CancellationToken);
+        }
+
+        Check.Equal(1, result.Failures.Count, "one failure");
+        Check.Equal(1, result.Failures[0].Attempts, "the spent budget ended it rather than the count: six were allowed and one was made");
+        Check.Equal("mine", File.ReadAllText(target), "and the held file is untouched");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// One budget is spent by the whole call, so a run of refused entries cannot each take a budget of their
+    /// own and turn a one-second restore into a run that waits a dozen times as long.
+    /// </summary>
+    /// <remarks>
+    /// Eight locked destinations, one per entry, is the shape that shows it: a budget restarted per entry
+    /// would be spent eight times over, and one taken for the call is spent once — by the first entry, after
+    /// which every entry is attempted exactly once.
+    /// <para>
+    /// <b>The attempt count is asserted on both sides, and the lower bound is what gives the case its teeth
+    /// against a restore that simply gives up.</b> More than the eight attempts the entries would account for
+    /// says something was retried at all; no more than two apiece says the budget was not restarted, where a
+    /// fresh one would allow all six each.
+    /// </para>
+    /// <para>
+    /// The figures are chosen so the jitter cannot move the answer. Delays double from 200 ms against a
+    /// second of budget, so the first entry makes two attempts and the seven after it one each: the third
+    /// delay is 800 ms at its lowest against at most 720 ms spent, so it never fits. A budget restarted per
+    /// entry lets every one of them make three, and one restarted at every wait lets it make four — 24 and 32
+    /// attempts, both past the bound this case sets.
+    /// </para>
+    /// <para>
+    /// Nothing here asserts how long the call took. What it asserts is how much retrying was paid for, which
+    /// is the claim that does not move when the machine is busy.
+    /// </para>
+    /// </remarks>
+    private static async Task AShortOverallTimeoutAcrossManyItemsDoesNotFreezeTheRest(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var files = workspace.CreateRandomFiles(8, 4096);
+        Check.True((await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken)).Succeeded, "they reached the bin");
+
+        var listed = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken);
+        var items = files.Select(file => FindTheEntryFor(listed, file)).ToArray();
+
+        foreach (var file in files)
+        {
+            File.WriteAllText(file, "mine");
+        }
+
+        var options = new RecycleBinOptions
+        {
+            FileConflict = RestoreFileConflict.Replace,
+            MaxAttempts = 6,
+            InitialRetryDelay = TimeSpan.FromMilliseconds(200),
+            OverallTimeout = TimeSpan.FromSeconds(1)
+        };
+
+        var holds = new List<FileStream>(files.Count);
+        RecycleBinRestoreResult result;
+
+        try
+        {
+            // One handle per destination, all released together below: a case that fails an assertion with a
+            // handle still open would leave the scratch tree undeletable rather than fail.
+            foreach (var file in files)
+            {
+                holds.Add(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.None));
+            }
+
+            result = await RecycleBin.RestoreAsync(items, options, context.CancellationToken);
+        }
+        finally
+        {
+            foreach (var hold in holds)
+            {
+                hold.Dispose();
+            }
+        }
+
+        Check.Equal(8, result.Failures.Count, "every locked entry is answered rather than left out of the result");
+        Check.Equal(0, result.ItemsRestored, "and none of them was restored");
+
+        var attempts = result.Failures.Sum(failure => failure.Attempts);
+
+        Check.True(attempts > 8, $"a refused move is retried rather than given up at the first refusal ({attempts} attempts over eight entries)");
+        Check.True(attempts <= files.Count * 2, $"and the budget is spent once for the call rather than afresh for each entry, where every one of them could take all six attempts ({attempts})");
 
         workspace.Dispose();
     }

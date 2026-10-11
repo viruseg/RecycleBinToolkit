@@ -341,6 +341,16 @@ public static class RecycleBin
     /// where its caller asked for it with its entry still in the bin.
     /// </para>
     /// <para>
+    /// <b>A refused move is asked again rather than given up on.</b> A destination somebody is holding, a
+    /// directory standing where a file wanted: the entry is put down again up to
+    /// <see cref="RecycleBinOptions.MaxAttempts"/> times, and what is in the way is asked about on each of
+    /// them rather than decided once before the first.
+    /// <see cref="RecycleBinOptions.OverallTimeout"/> bounds all of that and it is one budget for the whole
+    /// call — not one per entry and not one per volume — so a run of refused entries cannot each spend a
+    /// budget of their own. An entry that is given up on reports how many attempts it was actually given in
+    /// <see cref="RecycleFailure.Attempts"/>.
+    /// </para>
+    /// <para>
     /// <b>Where a cancelled restore stops is not pinned by a case in this repository.</b> Every case cancels
     /// before the call, because cancelling between two entries is a race against the machine's speed and
     /// pinning it would need a hook inside the engine. What is witnessed is that a cancelled restore raises
