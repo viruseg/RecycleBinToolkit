@@ -2618,9 +2618,9 @@ internal static class RestoreSuite
     /// begin before about 400 ms have passed.
     /// </para>
     /// <para>
-    /// The hold is released by the task that swaps the occupant rather than by the case, and the case disposes
-    /// it again on the way out whatever happened, because a handle left open would refuse both the delete the
-    /// swap needs and the taking away of the scratch tree.
+    /// The hold is released by the task that swaps the occupant rather than by the case, and the case awaits
+    /// that task in a <c>finally</c> before disposing the handle again, so a restore that raised cannot leave
+    /// the swap unobserved and racing the taking away of the scratch tree.
     /// </para>
     /// </remarks>
     private static async Task ADestinationThatChangesUnderTheCallIsAskedAboutAgain(TestContext context)
@@ -2670,19 +2670,20 @@ internal static class RestoreSuite
         {
             hold = new FileStream(root, FileMode.Open, FileAccess.Read, FileShare.None);
 
-            // Ten times inside the first backoff and two hundred times outside it, which is what makes this a
-            // test of two attempts rather than of what a task can do while a call is running.
-            var changing = LetGoAndSwapAsync(
-                hold,
-                root,
-                "shared.bin",
-                squatter,
-                TimeSpan.FromMilliseconds(100),
-                context.CancellationToken);
+            // A hundred milliseconds is far outside the first attempt, which takes milliseconds, and far
+            // inside the backoff below, which is half a second: so the change lands between the two.
+            var changing = LetGoAndSwapAsync(hold, root, "shared.bin", squatter, TimeSpan.FromMilliseconds(100));
 
-            result = await RecycleBin.RestoreAsync([item], options, context.CancellationToken);
-
-            await changing.ConfigureAwait(false);
+            try
+            {
+                result = await RecycleBin.RestoreAsync([item], options, context.CancellationToken);
+            }
+            finally
+            {
+                // Awaited on every path, not only on the one that returned: a restore cancelled mid-call would
+                // otherwise leave the swap unobserved and racing the taking away of the scratch tree below it.
+                await changing.ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -2717,22 +2718,26 @@ internal static class RestoreSuite
     /// <param name="fileName">The name of the file written inside the directory.</param>
     /// <param name="content">What that file holds.</param>
     /// <param name="after">How long to leave the file held for.</param>
-    /// <param name="cancellationToken">Cancels the wait.</param>
     /// <remarks>
     /// Three acts in the order they have to be in, and it is a task rather than a sleep in the case body
     /// because the whole of it has to happen while the restore is between its own two attempts — which no
     /// code outside the call can synchronise, so the case pins the ordering by the backoff it waited for
     /// instead.
+    /// <para>
+    /// <b>The wait takes no cancellation token, and that is deliberate.</b> The case awaits this task in a
+    /// <c>finally</c>, so a wait that could be cancelled would either throw out of the teardown on its own or
+    /// leave the swap half done and the scratch tree to be taken away underneath it. A hundred milliseconds is
+    /// short enough that letting it finish is cheaper than reasoning about either.
+    /// </para>
     /// </remarks>
     private static async Task LetGoAndSwapAsync(
         FileStream hold,
         string path,
         string fileName,
         string content,
-        TimeSpan after,
-        CancellationToken cancellationToken)
+        TimeSpan after)
     {
-        await Task.Delay(after, cancellationToken).ConfigureAwait(false);
+        await Task.Delay(after).ConfigureAwait(false);
 
         // Nothing can delete or replace the file while the handle refuses to share it, so the handle goes
         // first and the path is only touched afterwards.

@@ -743,7 +743,8 @@ internal static class RestoreRunner
     /// <param name="decision">
     /// Where the payload is to land and whether the move is an overwrite. Taken by reference because a name
     /// this library chose may be lost to a race, and a failure must name the last name tried rather than the
-    /// first — which is the name <see cref="Restore"/> reports and the one a retry would be made against.
+    /// first — which is the name <see cref="Restore"/> reports. It is not the name the next attempt is made
+    /// against: that one is worked out afresh by <see cref="RestorePathPlanner.Decide"/>.
     /// </param>
     /// <param name="wantedPath">The path the entry's own record named, which is what a free name is taken beside.</param>
     /// <param name="attempt">
