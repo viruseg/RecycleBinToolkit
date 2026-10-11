@@ -504,10 +504,11 @@ internal static class NativeBinSuite
     /// <summary>Win32 <c>ERROR_ALREADY_EXISTS</c>: a move that would overwrite a name.</summary>
     private const int ErrorAlreadyExists = unchecked((int)0x800700B7);
 
-    /// <summary>
-    /// Win32 <c>ERROR_ACCESS_DENIED</c>: an overwriting move onto a destination nobody may open.
-    /// </summary>
-    private const int ErrorAccessDenied = unchecked((int)0x80070005);
+    /// <summary>Win32 <c>ERROR_FILE_NOT_FOUND</c>: a move of a source that is not there.</summary>
+    private const int ErrorFileNotFound = unchecked((int)0x80070002);
+
+    /// <summary>Win32 <c>ERROR_SHARING_VIOLATION</c>: a move of a file somebody is holding.</summary>
+    private const int ErrorSharingViolation = unchecked((int)0x80070020);
 
     /// <summary>
     /// A refusal carrying a taken name's code is answered as a taken name, and a refusal carrying anything
@@ -518,19 +519,24 @@ internal static class NativeBinSuite
     /// <b>The one case that reads <see cref="NameCollision.IsTaken"/>, for both of the paths that call
     /// it.</b> They shared it after each had a copy of its own, and two cases asserting one judgment's answers
     /// would be the same duplication one layer up. Every refusal below is raised by the filesystem on this
-    /// machine rather than written down by the case, and together they are the set the judgment has to tell
-    /// apart: a <c>CREATE_NEW</c> over a record that is already there, a move onto a payload that is already
-    /// there, a file somebody is holding, a source that is not there at all, and an overwriting move onto a
-    /// destination that will not open.
+    /// machine rather than written down by the case, and what it stages is: a <c>CREATE_NEW</c> over a record
+    /// that is already there, a move onto a payload that is already there, a file somebody is holding, a
+    /// source that is not there at all, and an overwriting move onto a destination that will not open.
     /// <para>
-    /// The last of those is the only one here that is not an <see cref="IOException"/>: the runtime raises an
-    /// <see cref="UnauthorizedAccessException"/>, so the narrowing answers it without asking what it carries.
-    /// It cannot reach the restore path's branch, because <c>Place</c> overwrites only under
+    /// <b>The last of those is taken as whatever it is, because its code is not the filesystem's.</b> It
+    /// arrives as an <see cref="UnauthorizedAccessException"/> on this machine and would be pinned here
+    /// against <c>0x80070005</c> if that were an observation — but that type has no constructor taking an
+    /// errno, so its <see cref="Exception.HResult"/> is the type's own constant and would read the same
+    /// whatever the disk had said. What is asserted is the judgment's answer, which holds either way, and it
+    /// would go red if this shape ever arrived carrying a name code.
+    /// </para>
+    /// <para>
+    /// It cannot reach the restore path's branch either: <c>Place</c> overwrites only under
     /// <see cref="RestoreAction.Replace"/> and the filter beside it asks only under
-    /// <see cref="RestoreAction.Rename"/> — so it is staged here for what the judgment answers, not for a
-    /// branch it cannot enter. Nothing in the suite pins the narrowing itself: the only exceptions these two
-    /// call sites raise that are not an <see cref="IOException"/> carry 5 or <c>0x80070057</c>, and neither is
-    /// 80 or 183, so removing the narrowing would change no answer.
+    /// <see cref="RestoreAction.Rename"/>. And nothing in the suite pins the narrowing itself, because the
+    /// only exception types these two call sites raise that are not an <see cref="IOException"/> carry their
+    /// own constants rather than a code — <c>0x80070005</c> and <c>0x80070057</c>, neither of which is 80 or
+    /// 183 — so removing the narrowing would change no answer.
     /// </para>
     /// <para>
     /// <b>The loop this feeds is not what is witnessed.</b> <see cref="NativeBinLayout.NextStem"/> draws six
@@ -583,17 +589,24 @@ internal static class NativeBinSuite
         var denied = Path.Combine(ScratchWorkspace.Root, "held-destination.bin");
         File.WriteAllText(denied, "occupied by somebody who will not let go");
 
-        UnauthorizedAccessException deniedRefused;
+        Exception deniedRefused;
 
         using (new FileStream(denied, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
-            deniedRefused = Check.Throws<UnauthorizedAccessException>(
+            deniedRefused = Check.Throws<Exception>(
                 () => File.Move(overwriting, denied, overwrite: true),
-                "and an overwriting move into a destination nobody may open is refused as an access failure");
+                "an overwriting move into a destination nobody may open is refused");
         }
 
-        Check.Equal(ErrorAccessDenied, deniedRefused.HResult,
-            $"which arrives as 0x{ErrorAccessDenied:X8} (got 0x{deniedRefused.HResult:X8}, win32 {deniedRefused.HResult & 0xFFFF})");
+        Check.Equal(
+            ErrorFileNotFound,
+            absentRefused.HResult,
+            $"a source that is not there arrives as 0x{ErrorFileNotFound:X8} (got 0x{absentRefused.HResult:X8}, win32 {absentRefused.HResult & 0xFFFF})");
+
+        Check.Equal(
+            ErrorSharingViolation,
+            holdRefused.HResult,
+            $"and a file somebody is holding as 0x{ErrorSharingViolation:X8} (got 0x{holdRefused.HResult:X8}, win32 {holdRefused.HResult & 0xFFFF})");
 
         Check.True(
             NameCollision.IsTaken(recordRefused),
@@ -613,7 +626,7 @@ internal static class NativeBinSuite
 
         Check.False(
             NameCollision.IsTaken(deniedRefused),
-            $"and 0x{deniedRefused.HResult:X8} is not even an IOException, so what it carries is never read");
+            $"and 0x{deniedRefused.HResult:X8} on a {deniedRefused.GetType().Name} is not a name either, and its type is not one the judgment reads");
 
         workspace.Dispose();
         return Task.CompletedTask;
