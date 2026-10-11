@@ -130,8 +130,10 @@ internal static class RestoreRunner
     /// What is in the way is asked about rather than assumed, because it is a fact about the disk and not
     /// about this call: an entry whose path was taken again while it sat in the Recycle Bin must not be
     /// moved over whatever is there now. Only <see cref="RestoreAction.Move"/> is acted on here — an entry
-    /// the caller was not going to put back keeps its record, keeps its place in the bin, and is reported
-    /// by whatever the conflict policies settle, which is a decision this method does not make.
+    /// the caller was not going to put back keeps its record and its place in the bin, and its slot is left
+    /// unwritten, so it reaches no list at all yet. The conflict policies are what close that: a skip is
+    /// reported as a conflict, and <see cref="RestoreFileConflict.Error"/> into both the conflicts and the
+    /// failures.
     /// </remarks>
     private static void Move(
         RecycleBinItem item,

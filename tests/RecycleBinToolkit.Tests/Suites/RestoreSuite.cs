@@ -572,8 +572,19 @@ internal static class RestoreSuite
     /// not an absolute: "the bin holds one entry" is false of any real desktop. Taken after
     /// <c>Recreate</c> and before anything is recycled, which is the only point where the count is the
     /// machine's rather than the case's.
+    /// <para>
+    /// Read through <see cref="RecycleBinProbe.MeasureOrFail"/> rather than as a bare count because this
+    /// number is subtracted from a later one: a volume that could not be read arrives as <c>-1</c>, and
+    /// <c>-1 - (-1)</c> is zero, so an unreadable bin would satisfy "back to its baseline" having measured
+    /// nothing at all.
+    /// </para>
     /// </remarks>
-    private static long BaselineCount() => RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
+    private static long BaselineCount()
+    {
+        var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
+
+        return before;
+    }
 
     /// <summary>
     /// Keeps what it was told, so a case can read it back after the call returns.
