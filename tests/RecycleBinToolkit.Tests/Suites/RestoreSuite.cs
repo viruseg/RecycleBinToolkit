@@ -41,6 +41,7 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(OneEntryFailingDoesNotCostTheOthersTheirAnswers), OneEntryFailingDoesNotCostTheOthersTheirAnswers),
         new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure),
         new TestCase("RestoreSuite." + nameof(AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts), AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts),
+        new TestCase("RestoreSuite." + nameof(ADestinationThatChangesUnderTheCallIsAskedAboutAgain), ADestinationThatChangesUnderTheCallIsAskedAboutAgain),
         new TestCase("RestoreSuite." + nameof(ABudgetThatIsSpentStopsTheRetrying), ABudgetThatIsSpentStopsTheRetrying),
         new TestCase("RestoreSuite." + nameof(AShortOverallTimeoutAcrossManyItemsDoesNotFreezeTheRest), AShortOverallTimeoutAcrossManyItemsDoesNotFreezeTheRest),
         new TestCase("RestoreSuite." + nameof(TheVolumeOverloadRestoresEveryVolumeItWasGiven), TheVolumeOverloadRestoresEveryVolumeItWasGiven),
@@ -1158,7 +1159,9 @@ internal static class RestoreSuite
     /// One attempt, for the reason <c>AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin</c> gives: a
     /// payload that has been deleted is not going to come back, and the default budget would spend a second
     /// and a half of this run asking for it. How often a refusal that will not change is asked again is
-    /// <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's.
+    /// <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's — and
+    /// what this case asked for by setting it is why it says nothing about
+    /// <see cref="RecycleFailure.Attempts"/>: one allowed and one reported is what any budget answers.
     /// </para>
     /// </remarks>
     private static async Task AnEntryWhosePayloadIsGoneIsAFailureAndNothingElse(TestContext context)
@@ -1196,7 +1199,6 @@ internal static class RestoreSuite
         Check.True(
             (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
             $"the file system's own code rather than none: 0x{result.Failures[0].HResult:X8}");
-        Check.Equal(1, result.Failures[0].Attempts, "one move was attempted, and it is what failed");
         Check.Equal(0, result.Conflicts.Count, "a move that would not happen is not a conflict to resolve");
 
         Check.False(File.Exists(target), "and the file was not invented at the destination");
@@ -2330,7 +2332,9 @@ internal static class RestoreSuite
     /// One attempt, for the reason <c>AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin</c> gives: a
     /// directory standing where the file wanted is not going to move by itself, and the default budget would
     /// spend a second and a half of this run asking it to. How often a refusal that will not change is asked
-    /// again is <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's.
+    /// again is <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's
+    /// — and what this case asked for by setting it is why it says nothing about
+    /// <see cref="RecycleFailure.Attempts"/>: one allowed and one reported is what any budget answers.
     /// </para>
     /// </remarks>
     private static async Task AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing(TestContext context)
@@ -2372,7 +2376,6 @@ internal static class RestoreSuite
         Check.True(
             (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
             $"carrying the file system's own code rather than none: 0x{result.Failures[0].HResult:X8}");
-        Check.Equal(1, result.Failures[0].Attempts, "the overwrite was attempted once, and it is what failed");
         Check.Equal(0, result.Conflicts.Count, "and it is not a conflict to resolve: the overwrite resolved nothing");
 
         Check.True(Directory.Exists(target), "the directory in the way is still there");
@@ -2587,19 +2590,178 @@ internal static class RestoreSuite
     }
 
     /// <summary>
+    /// What is in the way is asked about again on every attempt rather than answered once before the first:
+    /// a destination that stops being in the way while the call is retrying is restored under the answer that
+    /// is true then, not under the one that was true before.
+    /// </summary>
+    /// <remarks>
+    /// <b>The destination changes kind between the two attempts, and that is what makes the case bite.</b> A
+    /// file is standing where the tree was deleted from, held so the first move is refused however fast the
+    /// machine is; while the backoff is running it is let go of and a directory takes its place. A restore
+    /// that asked the planner once would be holding a decision to move a directory onto a path that is now
+    /// occupied by a directory, and would go on being refused for the rest of its budget and report a
+    /// failure. Asking again answers <see cref="RestoreDirectoryConflict.MergeReplace"/> with a merge, and
+    /// the tree arrives.
+    /// <para>
+    /// <b>A file released half way through would not be a witness, and the reason is worth writing down.</b>
+    /// The same test with a file entry would pass whether or not the conflict is decided again: the wanted
+    /// path is the same path, an overwrite onto a path nothing occupies is the same move as a plain one, and
+    /// both reach the same file on disk. What a re-decision changes is the <em>action</em>, and the only way
+    /// to change that under one policy is to change what is occupying the path.
+    /// </para>
+    /// <para>
+    /// <b>The elapsed time is the assertion that the change landed between two attempts</b> rather than
+    /// before the first, which is the only way a timed case can be empty of the thing it is about: a restore
+    /// that merged on its first attempt would answer every other line here, and the one line it could not is
+    /// the backoff it would have had to wait. The lower bound is the library's own floor rather than the
+    /// machine's speed — the delay is 500 ms jittered by no more than a fifth, so a second attempt cannot
+    /// begin before about 400 ms have passed.
+    /// </para>
+    /// <para>
+    /// The hold is released by the task that swaps the occupant rather than by the case, and the case disposes
+    /// it again on the way out whatever happened, because a handle left open would refuse both the delete the
+    /// swap needs and the taking away of the scratch tree.
+    /// </para>
+    /// </remarks>
+    private static async Task ADestinationThatChangesUnderTheCallIsAskedAboutAgain(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var root = Path.Combine(ScratchWorkspace.Root, "decided-again");
+        var leafPath = Path.Combine(root, "nested", "leaf.bin");
+        var sharedPath = Path.Combine(root, "shared.bin");
+
+        var leaf = RandomBytes(4096);
+        var shared = RandomBytes(2048);
+
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+
+        File.WriteAllBytes(leafPath, leaf);
+        File.WriteAllBytes(sharedPath, shared);
+
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(root, cancellationToken: context.CancellationToken),
+            "the tree reached the bin");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            root);
+
+        // The other kind, at the very path the record names. A directory is not moved onto a file under any
+        // policy, and a merge policy has no tree to merge into one either, so the first attempt is refused
+        // whatever happens next.
+        File.WriteAllText(root, "a file where the tree used to be");
+
+        var options = new RecycleBinOptions
+        {
+            DirectoryConflict = RestoreDirectoryConflict.MergeReplace,
+            InitialRetryDelay = TimeSpan.FromMilliseconds(500)
+        };
+
+        var squatter = "the file that took its place";
+        RecycleBinRestoreResult result;
+        FileStream? hold = null;
+
+        try
+        {
+            hold = new FileStream(root, FileMode.Open, FileAccess.Read, FileShare.None);
+
+            // Ten times inside the first backoff and two hundred times outside it, which is what makes this a
+            // test of two attempts rather than of what a task can do while a call is running.
+            var changing = LetGoAndSwapAsync(
+                hold,
+                root,
+                "shared.bin",
+                squatter,
+                TimeSpan.FromMilliseconds(100),
+                context.CancellationToken);
+
+            result = await RecycleBin.RestoreAsync([item], options, context.CancellationToken);
+
+            await changing.ConfigureAwait(false);
+        }
+        finally
+        {
+            // Idempotent, and the task above has usually got there first.
+            hold?.Dispose();
+        }
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(0, result.Failures.Count, "so nothing reached the failures list");
+        Check.Equal(1, result.ItemsRestored, "the entry left the bin on the attempt that asked again");
+        Check.Equal(1, result.RestoredPaths.Count, "and is named");
+        Check.Equal(root, result.RestoredPaths[0], "at the path its record named, occupied or not");
+
+        Check.Equal(1, result.Conflicts.Count, "and the merge the re-decision became is reported as itself");
+        Check.Equal(sharedPath, result.Conflicts[0].Path, "under the file of the tree that collided");
+        Check.Equal(RecycleRestoreConflictAction.MergedReplaced, result.Conflicts[0].Action, "as the action the policy took");
+
+        Check.True(leaf.AsSpan().SequenceEqual(File.ReadAllBytes(leafPath)), "the file that fitted is in the directory that took its place, byte for byte");
+        Check.True(shared.AsSpan().SequenceEqual(File.ReadAllBytes(sharedPath)), "and the one that collided is the tree's own rather than the occupant's");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the bin is back to its baseline");
+
+        Check.True(
+            result.Elapsed.TotalMilliseconds >= 300,
+            $"the call waited out a backoff before the second attempt ({result.Elapsed.TotalMilliseconds:F0} ms), so the destination changed between them rather than before the first");
+    }
+
+    /// <summary>
+    /// Lets go of a held file, and puts a directory with one file in it where the file was.
+    /// </summary>
+    /// <param name="hold">The handle denying everything, which is disposed here.</param>
+    /// <param name="path">Where the file stands, and where the directory takes its place.</param>
+    /// <param name="fileName">The name of the file written inside the directory.</param>
+    /// <param name="content">What that file holds.</param>
+    /// <param name="after">How long to leave the file held for.</param>
+    /// <param name="cancellationToken">Cancels the wait.</param>
+    /// <remarks>
+    /// Three acts in the order they have to be in, and it is a task rather than a sleep in the case body
+    /// because the whole of it has to happen while the restore is between its own two attempts — which no
+    /// code outside the call can synchronise, so the case pins the ordering by the backoff it waited for
+    /// instead.
+    /// </remarks>
+    private static async Task LetGoAndSwapAsync(
+        FileStream hold,
+        string path,
+        string fileName,
+        string content,
+        TimeSpan after,
+        CancellationToken cancellationToken)
+    {
+        await Task.Delay(after, cancellationToken).ConfigureAwait(false);
+
+        // Nothing can delete or replace the file while the handle refuses to share it, so the handle goes
+        // first and the path is only touched afterwards.
+        hold.Dispose();
+
+        File.Delete(path);
+
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, fileName), content);
+    }
+
+    /// <summary>
     /// A budget of no time at all is still a budget: the first attempt is made, nothing waits for a second, and
     /// the count the caller allowed is not spent.
     /// </summary>
     /// <remarks>
-    /// The same held destination as the case above, so the only thing that differs is the budget — which is
-    /// what makes the attempt count the answer rather than the shape of the refusal. Six attempts were allowed
-    /// and one was made, so the budget is what ended it; a runner that retried to
-    /// <see cref="RecycleBinOptions.MaxAttempts"/> regardless would answer six, and a runner that never
-    /// retried at all would also answer one, which is why the case above sits beside this one.
+    /// The same held destination as the case above, so the only thing that differs is the budget.
     /// <para>
-    /// The first attempt is not optional. A budget that stopped the call before it began would report a
-    /// failure nobody made, at zero attempts, which is what <see cref="RecycleBinOptions.Normalize"/> exists
-    /// to prevent for a count of zero.
+    /// <b>What this pins is that a spent budget does not stop the call before it begins, and that the
+    /// loop ends there.</b> Six attempts were allowed and one was made, so the first attempt is not optional
+    /// and the budget is what is left of the answer — a runner that gave up at the first refusal answers the
+    /// same way, which is why <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/> sits
+    /// beside it.
+    /// </para>
+    /// <para>
+    /// <b>What it does not pin is which part of the guard ended the loop.</b> The delay before a second
+    /// attempt cannot fit in a budget of no time, and a budget of no time is the same statement said the other
+    /// way round: the wait never runs, and there is nothing to tell the two conditions apart from outside. No
+    /// case can separate them, and the guard carries one comparison rather than two for the same reason.
     /// </para>
     /// </remarks>
     private static async Task ABudgetThatIsSpentStopsTheRetrying(TestContext context)
@@ -2635,7 +2797,7 @@ internal static class RestoreSuite
         }
 
         Check.Equal(1, result.Failures.Count, "one failure");
-        Check.Equal(1, result.Failures[0].Attempts, "the spent budget ended it rather than the count: six were allowed and one was made");
+        Check.Equal(1, result.Failures[0].Attempts, "six were allowed and one was made, because the budget left the loop nothing to wait on before a second");
         Check.Equal("mine", File.ReadAllText(target), "and the held file is untouched");
 
         workspace.Dispose();

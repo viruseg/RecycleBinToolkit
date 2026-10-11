@@ -257,6 +257,12 @@ given in [`RecycleFailure.Attempts`](#recyclefailure). `OverallTimeout` bounds a
 budget for the whole call** — not one per entry and not one per volume — so a run of refused entries cannot
 each spend a budget of their own, and a slow disk cannot lengthen the one a fast disk is spending.
 
+That budget is spent in sleeping, and with the defaults a call with nothing else to do waits a little over a
+second and a half before it gives up on an entry it cannot restore — 50 ms, then 100, 200, 400 and 800, each
+jittered by up to a fifth. That is inside the call and inside `Elapsed`. A caller restoring a set of paths
+somebody else is holding pays it per entry, so **set `MaxAttempts` to what a refusal is worth waiting for**:
+`MaxAttempts = 1` answers the first refusal at once, and `InitialRetryDelay` sets what each wait costs.
+
 **Exceptions** `ArgumentNullException` when the list is null. `ArgumentException` when one of the
 volume groups is null: a group that is not there has no entries to restore and no volume root to name,
 so there is no path to report it at and nothing to say which volume could not be answered — and nothing

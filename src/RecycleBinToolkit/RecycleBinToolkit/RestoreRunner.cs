@@ -84,6 +84,12 @@ internal static class RestoreRunner
     private const int ErrorAlreadyExists = 183;
 
     /// <summary>
+    /// The bits of an HRESULT that carry the Win32 error number, which is where a code the file system
+    /// raised can be compared against the constants above.
+    /// </summary>
+    private const int ErrorMask = 0xFFFF;
+
+    /// <summary>
     /// Puts every entry back and reports what happened to each.
     /// </summary>
     /// <param name="items">
@@ -653,9 +659,10 @@ internal static class RestoreRunner
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
                 // Where this entry goes could not be asked at all, and asking again is answered by the same
-                // record the same way — so this is reported at zero attempts rather than retried: nothing was
-                // put down for it and nothing would be.
-                slots[position] = Failed(originalPath!, item.Size, ex.HResult, attempts: 0);
+                // record the same way — so this is not retried. What it reports is how many placements were
+                // already made before it, which is zero on the first attempt and the entry's own count on any
+                // after that.
+                slots[position] = Failed(originalPath!, item.Size, ex.HResult, attempts: attempt - 1);
                 return;
             }
 
@@ -673,7 +680,7 @@ internal static class RestoreRunner
                     case RestoreAction.Move:
                     case RestoreAction.Replace:
                     case RestoreAction.Rename:
-                        slots[position] = PlaceDown(item, decision, originalPath!, attempt);
+                        slots[position] = PlaceDown(item, ref decision, originalPath!, attempt);
                         break;
 
                     default:
@@ -733,7 +740,11 @@ internal static class RestoreRunner
     /// Puts one entry's payload down, takes its record away, and reports which of the two answers that is.
     /// </summary>
     /// <param name="item">The entry whose payload moves and whose record goes.</param>
-    /// <param name="decision">Where the payload is to land, and whether the move is an overwrite.</param>
+    /// <param name="decision">
+    /// Where the payload is to land and whether the move is an overwrite. Taken by reference because a name
+    /// this library chose may be lost to a race, and a failure must name the last name tried rather than the
+    /// first — which is the name <see cref="Restore"/> reports and the one a retry would be made against.
+    /// </param>
     /// <param name="wantedPath">The path the entry's own record named, which is what a free name is taken beside.</param>
     /// <param name="attempt">
     /// How many times this payload has been put down so far, which is what a record that will not go is
@@ -752,11 +763,11 @@ internal static class RestoreRunner
     /// </remarks>
     private static RestoreOutcome PlaceDown(
         RecycleBinItem item,
-        RestoreDecision decision,
+        ref RestoreDecision decision,
         string wantedPath,
         int attempt)
     {
-        var placed = Place(item, decision, wantedPath);
+        Place(item, ref decision, wantedPath);
 
         try
         {
@@ -765,10 +776,10 @@ internal static class RestoreRunner
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            return Failed(placed.TargetPath, item.Size, ex.HResult, attempt);
+            return Failed(decision.TargetPath, item.Size, ex.HResult, attempt);
         }
 
-        return Placed(placed, item.Size);
+        return Placed(decision, item.Size);
     }
 
     /// <summary>
@@ -794,16 +805,15 @@ internal static class RestoreRunner
         };
 
     /// <summary>
-    /// Puts the payload down at the name <paramref name="decision"/> chose, and reports the decision it was
-    /// actually put down under.
+    /// Puts the payload down at the name <paramref name="decision"/> chooses, leaving the decision to name the
+    /// last name it tried.
     /// </summary>
     /// <param name="item">The entry whose payload moves.</param>
-    /// <param name="decision">Where the payload is to land, and whether the move is an overwrite.</param>
+    /// <param name="decision">
+    /// Where the payload is to land and whether the move is an overwrite, taken by reference so that a name
+    /// lost to a race is written back into it.
+    /// </param>
     /// <param name="wantedPath">The path the entry's own record named, which is what a free name is taken beside.</param>
-    /// <returns>
-    /// The decision the payload answered to. It is the one handed in unless a name this library chose was
-    /// taken in between and the entry was set down under the next free one.
-    /// </returns>
     /// <remarks>
     /// <b>A name this library chose is not a failed attempt, and this loop is why.</b> Under
     /// <see cref="RestoreAction.Rename"/> the target is a free name this code picked, and somebody else can
@@ -814,8 +824,9 @@ internal static class RestoreRunner
     /// <para>
     /// The names are counted against <see cref="NameAttempts"/> so that a name taken on every attempt cannot
     /// loop here for ever, and bounded at that because the probability of one is about two in a billion. <b>No
-    /// case in this repository witnesses it</b>: arranging a lost race would mean taking a name away between
-    /// the query and the move, which is a hook inside this class rather than a thing a run can arrange.
+    /// case in this repository witnesses the loop</b>: taking a free name away between the query and the move
+    /// is a hook inside this class rather than a thing a run can arrange. What <see cref="IsNameTaken"/> is
+    /// compared against was measured rather than assumed, and the measurement is written down there.
     /// </para>
     /// <para>
     /// A directory is one <see cref="Directory.Move(string, string)"/> rather than a walk of what is inside
@@ -836,7 +847,7 @@ internal static class RestoreRunner
     /// the separator, and it is read as the same name by everything here rather than by half of it.
     /// </para>
     /// </remarks>
-    private static RestoreDecision Place(RecycleBinItem item, RestoreDecision decision, string wantedPath)
+    private static void Place(RecycleBinItem item, ref RestoreDecision decision, string wantedPath)
     {
         // The overwrite is the decision's own rather than a parameter, because it is asked of every attempt
         // and a name taken between two of them does not change what the caller's policy asked for.
@@ -861,7 +872,7 @@ internal static class RestoreRunner
                     File.Move(item.PayloadPath, destination, overwrite);
                 }
 
-                return decision;
+                return;
             }
             catch (Exception ex) when (name < NameAttempts && decision.Action == RestoreAction.Rename && IsNameTaken(ex))
             {
@@ -879,9 +890,20 @@ internal static class RestoreRunner
     /// charged for somebody else's speed. A held file is a fact about the caller's disk and is spent against
     /// <see cref="RecycleBinOptions.MaxAttempts"/>; a taken name is a fact about this library's own generator
     /// and is its own business.
+    /// <para>
+    /// <b>The code is the low half of the HRESULT and not the whole of it.</b> Measured on this machine by
+    /// moving a file onto a name that was already there: the runtime raises
+    /// <see cref="IOException"/> carrying <c>0x800700B7</c>, which is <see cref="ErrorAlreadyExists"/>
+    /// <c>0xB7</c> with the severity bit and the <c>ERROR_</c> facility on top. Comparing the whole value
+    /// against the bare errno — which is what <see cref="NativeRecycleRunner.IsNameTaken"/> does, and what
+    /// this method did when it was first written — is therefore never true, and a lost race would be charged
+    /// to <see cref="RecycleBinOptions.MaxAttempts"/> after all. A name taken between the query and the move
+    /// is still not something a run can arrange, so <b>no case witnesses the branch</b>; what is witnessed is
+    /// the comparison, and this is what the comparison was corrected against.
+    /// </para>
     /// </remarks>
     private static bool IsNameTaken(Exception failure) =>
-        failure is IOException io && io.HResult is ErrorFileExists or ErrorAlreadyExists;
+        failure is IOException io && (io.HResult & ErrorMask) is ErrorFileExists or ErrorAlreadyExists;
 
     /// <summary>
     /// Waits out the backoff for the attempt that just failed.
@@ -891,8 +913,8 @@ internal static class RestoreRunner
     /// <param name="budget">The whole call's budget, which is what the delay has to fit inside.</param>
     /// <param name="cancellationToken">Cancels the wait, ending the retrying rather than faulting inside it.</param>
     /// <returns>
-    /// <see langword="false"/> when no further attempt may start: the call's budget is spent, or the backoff
-    /// does not fit in what is left of it.
+    /// <see langword="false"/> when no further attempt may start: the backoff does not fit in what is left of
+    /// the call's budget.
     /// </returns>
     /// <remarks>
     /// The shape of <see cref="NativeRecycleRunner.WaitBeforeRetry"/> and deliberately not a call to it: that
@@ -914,7 +936,11 @@ internal static class RestoreRunner
         var delay = TimeSpan.FromMilliseconds(Math.Clamp(jittered, 0, MaxWaitableMilliseconds));
 
         var remaining = budget.Remaining;
-        if (remaining <= TimeSpan.Zero || delay >= remaining)
+
+        // One comparison and not the two the copied method carries: a delay is never negative, so a budget
+        // that has run out is a delay that does not fit in it, and a second clause for the first case could
+        // never be the reason on its own.
+        if (delay >= remaining)
         {
             return false;
         }
