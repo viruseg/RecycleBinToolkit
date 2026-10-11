@@ -7,7 +7,8 @@ namespace RecycleBinToolkit;
 /// gone.
 /// </summary>
 /// <remarks>
-/// Two routes share this one: a path the caller has said may go because its volume cannot recycle it.
+/// Reached from one place only, under <see cref="NoRecycleBinAction.DeletePermanently"/>: a path on a volume
+/// this library will not recycle on the caller's behalf, which the caller has said may go for good.
 /// </remarks>
 internal static class PermanentDeleter
 {
@@ -51,7 +52,7 @@ internal static class PermanentDeleter
             or ArgumentException
             or SecurityException)
         {
-            // Everything the file system raises for one path. Both callers document that they do not throw
+            // Everything the file system raises for one path. The caller documents that it does not throw
             // for a per-item failure, so an exception type missing from here is a whole batch lost to one
             // file rather than one failure recorded.
             refused = ex.HResult;
