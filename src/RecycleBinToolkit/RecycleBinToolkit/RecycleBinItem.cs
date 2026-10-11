@@ -102,6 +102,14 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// <summary>Physical <c>$R</c> path of the payload, inside the Recycle Bin.</summary>
     internal string PayloadPath { get; }
 
+    /// <summary>Physical <c>$I</c> path of the record describing the item, inside the Recycle Bin.</summary>
+    /// <remarks>
+    /// Read without touching disk, like <see cref="PayloadPath"/> and unlike
+    /// <see cref="OriginalPath"/>, which this record is what holds. A restore deletes it once the payload has
+    /// been put back.
+    /// </remarks>
+    internal string IndexPath => _indexPath;
+
     /// <summary>
     /// Full path the item was deleted from.
     /// </summary>

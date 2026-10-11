@@ -298,6 +298,70 @@ public static class RecycleBin
     }
 
     /// <summary>
+    /// Restores items from the Recycle Bin to the paths they were deleted from.
+    /// </summary>
+    /// <param name="items">
+    /// The entries to restore, as a listing returned them. Each is an object a listing produced, so an entry
+    /// whose record cannot be read raises rather than being described as a failure — the entry's own
+    /// <see cref="RecycleBinItem.OriginalPath"/> says so, and a restore that cannot say where a payload came
+    /// from has nothing to restore it to.
+    /// </param>
+    /// <param name="options">
+    /// Settings. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>.
+    /// <see cref="RecycleBinOptions.DirectoryConflict"/> and <see cref="RecycleBinOptions.FileConflict"/>
+    /// decide what a restore does about a path that is already occupied.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the work between entries.</param>
+    /// <returns>
+    /// What every entry became, in the order the entries were passed in whatever order the work itself
+    /// finished in.
+    /// </returns>
+    /// <remarks>
+    /// An entry's payload is moved back to the path its record names and its record is then deleted, so a
+    /// restored item leaves the Recycle Bin rather than being copied out of it.
+    /// <para>
+    /// Nothing here writes an index record, which is why this carries none of the machine gate
+    /// <see cref="RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/> does: that
+    /// one leaves records the Explorer's own Restore has to be able to read, and this one only takes them
+    /// away.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="items"/> is <see langword="null"/>.</exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before the work started, or between entries.
+    /// </exception>
+    /// <exception cref="IOException">
+    /// An entry's payload would not move, or its record would not go. The payload's own file system code is
+    /// in <see cref="Exception.HResult"/>. Under the order the engine restores in, a move that failed leaves
+    /// the entry whole and restorable; a delete that failed leaves the file already back where its caller
+    /// asked for it, with its entry still in the bin.
+    /// </exception>
+    public static async Task<RecycleBinRestoreResult> RestoreAsync(
+        IReadOnlyList<RecycleBinItem> items,
+        RecycleBinOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return await Task.FromCanceled<RecycleBinRestoreResult>(cancellationToken).ConfigureAwait(false);
+        }
+
+        var effective = options ?? RecycleBinOptions.Default;
+
+        // Started before the work is queued so that Elapsed covers the wait for a pool thread as well as
+        // the restore itself.
+        var stopwatch = Stopwatch.StartNew();
+
+        var restored = await Task
+            .Run(() => RestoreRunner.Run(items, effective, cancellationToken), cancellationToken)
+            .ConfigureAwait(false);
+
+        return restored.WithElapsed(stopwatch.Elapsed);
+    }
+
+    /// <summary>
     /// Reports whether the Recycle Bin is in use for a volume, and why.
     /// </summary>
     /// <param name="volumeRoot">Volume root to inspect, such as <c>"X:\\"</c>.</param>

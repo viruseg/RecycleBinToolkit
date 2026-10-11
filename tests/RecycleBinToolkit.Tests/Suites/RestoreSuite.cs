@@ -12,7 +12,8 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot), VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot),
         new TestCase("RestoreSuite." + nameof(EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode), EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode),
         new TestCase("RestoreSuite." + nameof(RenamingTakesTheFirstFreeNumberBeforeTheExtension), RenamingTakesTheFirstFreeNumberBeforeTheExtension),
-        new TestCase("RestoreSuite." + nameof(ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt), ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt)
+        new TestCase("RestoreSuite." + nameof(ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt), ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt),
+        new TestCase("RestoreSuite." + nameof(ARecycledFileComesBackToThePathItCameFrom), ARecycledFileComesBackToThePathItCameFrom)
     ];
 
     /// <summary>
@@ -482,6 +483,97 @@ internal static class RestoreSuite
 
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// One file comes back: the payload is on the path it was deleted from, byte for byte, and its entry
+    /// has left the Recycle Bin.
+    /// </summary>
+    /// <remarks>
+    /// The two halves are separate facts and are asserted separately. The file being back is what a caller
+    /// asked for; the count returning to its baseline is what makes the entry gone rather than left, and an
+    /// implementation that moved the bytes and kept the record would pass the first assertion and fail the
+    /// second. The bytes are read back rather than the length checked, because a payload that arrived
+    /// truncated is still a payload that arrived.
+    /// <para>
+    /// The entry is found by its recorded path, not by its shape in the bin: the bin holds whatever else
+    /// this machine has put in it, and only the record says which entry was this case's. Finding it reads
+    /// every entry's record, which warms the whole group — a restore that wanted to prove it reads records
+    /// on demand would have to keep the group cold, and that is the loader's claim to make rather than this
+    /// one's.
+    /// </para>
+    /// </remarks>
+    private static async Task ARecycledFileComesBackToThePathItCameFrom(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var original = workspace.CreateRandomFile(4096);
+        var bytes = File.ReadAllBytes(original);
+
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(original, cancellationToken: context.CancellationToken),
+            "the file reached the bin");
+        Check.False(File.Exists(original), "and left the disk");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            original);
+
+        var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+
+        Check.True(File.Exists(original), $"the file is back at {original}");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(original)), "byte for byte");
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(1, result.ItemsRestored, "one item restored");
+        Check.Equal(4096, result.RestoredSize, "its bytes were measured");
+        Check.Equal(0, result.Conflicts.Count, "nothing conflicted");
+
+        // The entry is gone from the bin, which is the other half of "restored".
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the bin is back to its baseline");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The one entry of a listing that was deleted from <paramref name="path"/>.
+    /// </summary>
+    /// <remarks>
+    /// How every case that restores something finds its subject. A bin on a working machine holds
+    /// everything else the owner has deleted, so an entry cannot be told apart by its name or by its
+    /// position in the walk; the record it carries is the only thing that says which entry a case made.
+    /// Reading it is also what warms the entry, so a case that filters this way gets a warm group back and
+    /// cannot claim anything about how the details were read.
+    /// </remarks>
+    /// <exception cref="CheckFailedException">
+    /// No entry, or more than one, names <paramref name="path"/>. Either way there is no single subject for
+    /// the case, and picking one of them would make the assertions below about an entry nobody chose.
+    /// </exception>
+    private static RecycleBinItem FindTheEntryFor(RecycleBinContents listing, string path)
+    {
+        var named = Listing
+            .OnlyEntries(listing, ScratchWorkspace.VolumeRoot)
+            .Where(entry => string.Equals(entry.OriginalPath, path, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        Check.Equal(1, named.Length, $"exactly one entry in the bin was deleted from {path}");
+
+        return named[0];
+    }
+
+    /// <summary>
+    /// How many entries the run's volume held before the case put anything there.
+    /// </summary>
+    /// <remarks>
+    /// The bin is shared with everything else on the machine, so what a case can assert is a difference and
+    /// not an absolute: "the bin holds one entry" is false of any real desktop. Taken after
+    /// <c>Recreate</c> and before anything is recycled, which is the only point where the count is the
+    /// machine's rather than the case's.
+    /// </remarks>
+    private static long BaselineCount() => RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
 
     /// <summary>
     /// Keeps what it was told, so a case can read it back after the call returns.

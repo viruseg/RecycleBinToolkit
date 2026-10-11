@@ -111,4 +111,18 @@ public sealed class RecycleBinRestoreResult
     /// it as one. So an item that was skipped leaves this <see langword="true"/>.
     /// </remarks>
     public bool Succeeded => Failures.Count == 0;
+
+    /// <summary>
+    /// Returns a copy whose elapsed time is <paramref name="elapsed"/>, keeping every other part of the
+    /// outcome as it was.
+    /// </summary>
+    /// <remarks>
+    /// The engine runs on a thread from the pool, so the time it measures is not the time the caller waited
+    /// for it: the wait for a thread to become free is the caller's and belongs in this one field, stamped
+    /// by whoever handed the work over. Everything else is already decided when the copy is made, which is
+    /// what keeps a half-restored batch from being described by two answers.
+    /// </remarks>
+    /// <param name="elapsed">The wall-clock time to carry.</param>
+    internal RecycleBinRestoreResult WithElapsed(TimeSpan elapsed) =>
+        new(RestoredPaths, Conflicts, Failures, ItemsRestored, RestoredSize, elapsed);
 }
