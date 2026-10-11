@@ -77,18 +77,6 @@ internal static class RestoreRunner
     /// </remarks>
     private const int NameAttempts = 3;
 
-    /// <summary>Win32 <c>ERROR_FILE_EXISTS</c>, returned by a move that would overwrite a file.</summary>
-    private const int ErrorFileExists = 80;
-
-    /// <summary>Win32 <c>ERROR_ALREADY_EXISTS</c>, the other half of the same refusal.</summary>
-    private const int ErrorAlreadyExists = 183;
-
-    /// <summary>
-    /// The bits of an HRESULT that carry the Win32 error number, which is where a code the file system
-    /// raised can be compared against the constants above.
-    /// </summary>
-    private const int ErrorMask = 0xFFFF;
-
     /// <summary>
     /// Puts every entry back and reports what happened to each.
     /// </summary>
@@ -843,8 +831,8 @@ internal static class RestoreRunner
     /// The names are counted against <see cref="NameAttempts"/> so that a name taken on every attempt cannot
     /// loop here for ever, and bounded at that because the probability of one is about two in a billion. <b>No
     /// case in this repository witnesses the loop</b>: taking a free name away between the query and the move
-    /// is a hook inside this class rather than a thing a run can arrange. What <see cref="IsNameTaken"/> is
-    /// compared against was measured rather than assumed, and the measurement is written down there.
+    /// is a hook inside this class rather than a thing a run can arrange. What <see cref="NameCollision.IsTaken"/>
+    /// is compared against was measured rather than assumed, and the measurement is written down there.
     /// </para>
     /// <para>
     /// A directory is one <see cref="Directory.Move(string, string)"/> rather than a walk of what is inside
@@ -892,36 +880,12 @@ internal static class RestoreRunner
 
                 return;
             }
-            catch (Exception ex) when (name < NameAttempts && decision.Action == RestoreAction.Rename && IsNameTaken(ex))
+            catch (Exception ex) when (name < NameAttempts && decision.Action == RestoreAction.Rename && NameCollision.IsTaken(ex))
             {
                 decision = decision with { TargetPath = RestorePathPlanner.WithFreeNumber(wantedPath) };
             }
         }
     }
-
-    /// <summary>
-    /// Whether a refusal was this library's own name being taken rather than the entry being unavailable.
-    /// </summary>
-    /// <param name="failure">What the move raised.</param>
-    /// <remarks>
-    /// Telling the two apart is what lets a taken free name be tried again without a held destination being
-    /// charged for somebody else's speed. A held file is a fact about the caller's disk and is spent against
-    /// <see cref="RecycleBinOptions.MaxAttempts"/>; a taken name is a fact about this library's own generator
-    /// and is its own business.
-    /// <para>
-    /// <b>The code is the low half of the HRESULT and not the whole of it.</b> Measured on this machine by
-    /// moving a file onto a name that was already there: the runtime raises
-    /// <see cref="IOException"/> carrying <c>0x800700B7</c>, which is <see cref="ErrorAlreadyExists"/>
-    /// <c>0xB7</c> with the severity bit and the <c>ERROR_</c> facility on top. Comparing the whole value
-    /// against the bare errno — which is what both of these comparisons did when they were first written — is
-    /// therefore never true, and a lost race would be charged to
-    /// <see cref="RecycleBinOptions.MaxAttempts"/> after all. A name taken between the query and the move
-    /// is still not something a run can arrange, so <b>no case witnesses the branch</b>; what is witnessed is
-    /// the comparison, and this is what the comparison was corrected against.
-    /// </para>
-    /// </remarks>
-    private static bool IsNameTaken(Exception failure) =>
-        failure is IOException io && (io.HResult & ErrorMask) is ErrorFileExists or ErrorAlreadyExists;
 
     /// <summary>
     /// Waits out the backoff for the attempt that just failed.

@@ -1,4 +1,3 @@
-using System.Reflection;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
@@ -519,8 +518,8 @@ internal static class NativeBinSuite
     /// <b>The loop this feeds is not what is witnessed.</b> <see cref="NativeBinLayout.NextStem"/> draws six
     /// characters out of thirty-six and takes no argument, so no run can ask it for the name it is about to
     /// draw, and making the runner itself collide would take a hook in the runner. What is reached is the
-    /// decision its two catch filters make — and that decision could not tell a collision from a locked file,
-    /// because it compared the whole HRESULT rather than the code inside it.
+    /// decision its two catch filters make, which could not tell a collision from a locked file for as long
+    /// as it compared the whole HRESULT rather than the code inside it.
     /// </para>
     /// </remarks>
     private static Task ATakenNameIsRecognisedByItsCodeAndALockedFileIsNot(TestContext context)
@@ -563,19 +562,19 @@ internal static class NativeBinSuite
             "and neither can one that is not there");
 
         Check.True(
-            RunnerTreatsItAsTaken(recordRefused),
+            NameCollision.IsTaken(recordRefused),
             $"a refusal carrying 0x{recordRefused.HResult:X8} is a name being taken, which is what earns the fresh one");
 
         Check.True(
-            RunnerTreatsItAsTaken(payloadRefused),
+            NameCollision.IsTaken(payloadRefused),
             $"and so is one carrying 0x{payloadRefused.HResult:X8}, which arrives from the move rather than from the create");
 
         Check.False(
-            RunnerTreatsItAsTaken(holdRefused),
+            NameCollision.IsTaken(holdRefused),
             $"while 0x{holdRefused.HResult:X8} is a fact about the caller's own file, and is reported on its first attempt");
 
         Check.False(
-            RunnerTreatsItAsTaken(absentRefused),
+            NameCollision.IsTaken(absentRefused),
             $"and 0x{absentRefused.HResult:X8} is not a name either");
 
         workspace.Dispose();
@@ -2084,33 +2083,6 @@ using var workspace = new ScratchWorkspace();
     /// </summary>
     private static bool SamePath(string left, string right) =>
         string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Calls the runner's private refusal classifier the way its two catch filters call it, unwrapping what
-    /// reflection hands back.
-    /// </summary>
-    /// <remarks>
-    /// Reached by reflection rather than by widening the method, because the case cannot arrange the
-    /// collision that reaches it and a parameter added to the runner for a case to fill would be a hook in
-    /// the code under test rather than a claim about it. <see cref="FacadeSuite"/> reaches a private
-    /// validator this way for the same reason.
-    /// </remarks>
-    private static bool RunnerTreatsItAsTaken(IOException failure)
-    {
-        const string classifier = "IsNameTaken";
-
-        var method = typeof(NativeRecycleRunner).GetMethod(classifier, BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new MissingMethodException(typeof(NativeRecycleRunner).FullName, classifier);
-
-        try
-        {
-            return (bool)(method.Invoke(null, [failure]) ?? false);
-        }
-        catch (TargetInvocationException wrapped) when (wrapped.InnerException is not null)
-        {
-            throw wrapped.InnerException;
-        }
-    }
 
     /// <summary>
     /// The record of the newest entry in the current user's bin that names <paramref name="originalPath"/>.

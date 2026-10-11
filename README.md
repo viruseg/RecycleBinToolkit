@@ -1203,7 +1203,7 @@ clear for that drive; a volume with no such key is answered `Indeterminate` — 
 `NoRecycleBinAction.Throw`. The run asks the library once which kind of volume it was given, and each
 case that needs the other kind skips rather than fails.
 
-The suite is a console application with no external packages: 210 cases covering batch and single-path
+The suite is a console application with no external packages: 211 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock, long
 paths with no limit, concurrent callers, directories, 10 MB files, volumes with no Recycle Bin, and a
 ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing, emptying and status checking are
@@ -1211,16 +1211,17 @@ covered by their own suites. The default run writes only inside the directory it
 `--scratch`. On a volume with no Recycle Bin the cases that recycle there skip rather than fail, and
 the cases that are about such a volume run instead of skipping.
 
-**Of the 210 cases, `--all` runs 206.** Four are load cases that run only on request: the ten-cycle stress
+**Of the 211 cases, `--all` runs 207.** Four are load cases that run only on request: the ten-cycle stress
 run, and the three cases that each move the whole 94-file fixture set in one call.
 `--all` and `--filter` never run them — `--load` runs those four cases and nothing else. Nothing is
 covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
 and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
-The remainder is the volume's decision rather than a flag's: **196 pass and 10 skip** where there is a
-bin, with nothing failing, measured by one `--all` on `D:`. Each case added since the previous full run
-was run individually first and was then covered by a full run whose totals matched what it implied. A volume with no Recycle Bin and a share are both unmeasured here — measure before
-quoting either. `--all` prints its own counts, so a figure that disagrees with them is the figure being
-wrong.
+The remainder is the volume's decision rather than a flag's: **197 pass and 10 skip** where there is a
+bin, with nothing failing. That is the last `--all` on `D:` — 196 and 10 over 206 — plus
+`RestoreSuite.ATakenFreeNameIsRecognisedByItsCodeAndAnAbsentHeldOrDeniedOneIsNot`, which was run on its
+own there and is not yet inside a full run. A volume with no Recycle Bin and a share are both unmeasured
+here — measure before quoting either. `--all` prints its own counts, so a figure that disagrees with them
+is the figure being wrong.
 
 **A share has to survive your command line.** `--scratch "\\server\share\"` is right in PowerShell and in
 `cmd.exe`, which treat backslashes literally. It is wrong in anything that treats `\\` as an escape —
