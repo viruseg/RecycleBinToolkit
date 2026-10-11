@@ -70,12 +70,11 @@ under the rule `--filter` is read under, so `--exclude --load` is a mistake rath
 There are 210 registered cases, of which four are load cases, so `--all` runs 206 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
 cases that recycle one and runs the cases that are about a volume with no bin. On `D:`, which has a bin:
-**195 pass and 10 skip**, with nothing failing — measured by one `--all` on `D:`. The four cases added
-after the previous full run were each run individually first and were then covered by that `--all`, whose
-totals matched what they implied. The case added since it was run individually too, and no `--all` has
-covered it. A volume with no bin and a share are both unmeasured here: measure
-before quoting either. `--all` prints the counts, so a count in a document that disagrees with them is
-the document being wrong.
+**196 pass and 10 skip**, with nothing failing — measured by one `--all` on `D:`. Each case added since
+the previous full run was run individually first and was then covered by a full run whose totals matched
+what it implied. A volume with no bin and a share are both unmeasured here: measure before quoting
+either. `--all` prints the counts, so a count in a document that disagrees with them is the document
+being wrong.
 
 A run that must not empty the bin says `--exclude EmptySuite`; that drops its eleven cases, so the counts
 it prints are eleven lower than a plain `--all` and a document must not quote one run's figures as the
