@@ -25,15 +25,15 @@ namespace RecycleBinToolkit;
 /// </para>
 /// <para>
     /// <b>A refusal is not the end of one entry; the caller's budget is.</b> A move the filesystem will not
-    /// make — a destination somebody is holding, a directory in the way of a file — is asked again, up to
-    /// <see cref="RecycleBinOptions.MaxAttempts"/> times, and what is in the way is asked again with it rather
-    /// than answered once before the first attempt.
-    /// <see cref="RecycleBinOptions.OverallTimeout"/> bounds all of that, and it is one budget for the whole
-    /// call: taken before any disk is read, so a run of refused entries cannot each spend a budget of their
-    /// own and a slow disk cannot lengthen the one a fast disk is spending.
-    /// </para>
+/// make — a destination somebody is holding, a directory in the way of a file — is asked again, up to
+/// <see cref="RecycleBinOptions.MaxAttempts"/> times, and what is in the way is asked again with it rather
+/// than answered once before the first attempt.
+/// <see cref="RecycleBinOptions.OverallTimeout"/> bounds all of that, and it is one budget for the whole
+/// call: taken before any disk is read, so a run of refused entries cannot each spend a budget of their
+/// own and a slow disk cannot lengthen the one a fast disk is spending.
+/// </para>
 /// <para>
-    /// <b>Nothing one entry does ends the call; the caller's own cancellation does.</b> A payload deleted since the
+/// <b>Nothing one entry does ends the call; the caller's own cancellation does.</b> A payload deleted since the
 /// listing, a destination occupied by the other kind, a record that cannot be read, an entry the caller named
 /// twice: each is one entry's answer, carried in <see cref="RecycleBinRestoreResult.Failures"/> with the code
 /// the filesystem gave where there was one, and the entries around it keep the outcomes they had. A caller
@@ -42,14 +42,14 @@ namespace RecycleBinToolkit;
 /// batch.
 /// </para>
 /// <para>
-    /// A cancellation is not one of those answers. It raises <see cref="OperationCanceledException"/> out of
-    /// <see cref="Run"/> and returns nothing, because a restore is not transactional and so what it got through
-    /// is found by listing the bin — the same answer
-    /// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>
-    /// gives for its own cancellation.
-    /// </para>
-    /// <para>
-    /// <b>Where a cancelled batch stops is not something a case here pins.</b> Cancelling between two entries
+/// A cancellation is not one of those answers. It raises <see cref="OperationCanceledException"/> out of
+/// <see cref="Run"/> and returns nothing, because a restore is not transactional and so what it got through
+/// is found by listing the bin — the same answer
+/// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>
+/// gives for its own cancellation.
+/// </para>
+/// <para>
+/// <b>Where a cancelled batch stops is not something a case here pins.</b> Cancelling between two entries
     /// is a race against the machine's speed, and the way to ask it at a chosen entry would be a hook in this
     /// class, which is a change to the library rather than to what is known about it. The checks above are
     /// read, not witnessed; what a case witnesses is that a cancelled restore raises and leaves the bin alone.

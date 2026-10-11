@@ -98,8 +98,9 @@ public sealed class RecycleRestoreConflict
     /// Under <see cref="RecycleRestoreConflictAction.RestoredRenamed"/> the item *is* the entry the caller
     /// restored, and <see cref="RecycleBinRestoreResult.RestoredPaths"/> names it. Under
     /// <see cref="RecycleRestoreConflictAction.MergedRenamed"/> it is a file <em>inside</em> a merged
-    /// directory, and that list holds the directory's path instead —
-    /// <c>AMergedTreeSetsEachCollidingFileUnderAFreeName</c> restores one entry and reads two of these.
+    /// directory, and that list holds the directory's path instead — so one entry restored can report
+    /// several of these, one for each incoming file the merge set down under a free name, each naming
+    /// where that file landed.
     /// </para>
     /// </remarks>
     public string Path { get; }

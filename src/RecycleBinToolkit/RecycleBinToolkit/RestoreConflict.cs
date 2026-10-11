@@ -8,18 +8,18 @@ namespace RecycleBinToolkit;
 /// and a file do not have the same choices: a directory can be set down whole under a free name and a file
 /// only ever under its own, and merging a tree into what is already there is a question a file cannot be
 /// asked. One enumerator between them would carry values that are impossible for one of the two.
-    /// <para>
-    /// No value here writes outside the directory the caller named, and none touches a directory the restore
-    /// was not restoring. What is already on disk is left alone, overwritten, or set beside — never renamed,
-    /// moved, or removed outright.
-    /// </para>
-    /// <para>
-    /// A destination occupied by a <em>file</em> is a conflict like any other, and the three merge values
-    /// have no tree to merge into: the move is refused and the entry is reported at
-    /// <see cref="RecycleFailureStage.RestoreFailed"/> with the file left exactly as it was, where
-    /// <see cref="RenameDirectory"/> takes a free name instead.
-    /// </para>
-    /// </remarks>
+/// <para>
+/// No value here writes outside the directory the caller named, and none touches a directory the restore
+/// was not restoring. What is already on disk is left alone, overwritten, or set beside — never renamed,
+/// moved, or removed outright.
+/// </para>
+/// <para>
+/// A destination occupied by a <em>file</em> is a conflict like any other, and the three merge values
+/// have no tree to merge into: the move is refused and the entry is reported at
+/// <see cref="RecycleFailureStage.RestoreFailed"/> with the file left exactly as it was, where
+/// <see cref="RenameDirectory"/> takes a free name instead.
+/// </para>
+/// </remarks>
 public enum RestoreDirectoryConflict
 {
     /// <summary>
@@ -122,8 +122,9 @@ public enum RestoreDirectoryConflict
 /// </summary>
 /// <remarks>
 /// Every value either leaves what is on disk alone, writes over it, or sets the incoming file down beside
-/// it under a name this library picked. None writes outside the directory the caller named, and none
-/// touches a file the restore was not restoring.
+/// it under a name this library picked. None writes outside the directory the caller named, and the one
+/// file here that is not the one being restored — what already occupies the path — is overwritten by
+/// <see cref="Replace"/> and left alone by every other value.
 /// </remarks>
 public enum RestoreFileConflict
 {
