@@ -48,10 +48,18 @@ internal enum RestoreAction
 /// </remarks>
 internal readonly record struct RestoreDecision(RestoreAction Action, string TargetPath)
 {
-    /// <summary>Whether what occupies <see cref="TargetPath"/> is a directory rather than a file.</summary>
+    /// <summary>Whether what occupies the path the item asked for is a directory rather than a file.</summary>
     /// <remarks>
-    /// <see langword="false"/> for a free path, where there is nothing to be in the way, and under
-    /// <see cref="RestoreAction.Rename"/>, where what was found is not where the item lands.
+    /// The path in question is the one the item wanted, not <see cref="TargetPath"/>: under
+    /// <see cref="RestoreAction.Rename"/> the item lands at a free name of its own and nothing occupies that,
+    /// while the path it collided with is still there and is what a conflict record names.
+    /// <para>
+    /// It is therefore <see langword="false"/> only where nothing was in the way at all — a
+    /// <see cref="RestoreAction.Move"/> into a free path — and true under every action taken over an
+    /// occupied one, <see cref="RestoreAction.Rename"/> among them. A file occupant gives
+    /// <see langword="false"/> and a directory occupant <see langword="true"/> whichever of the four actions
+    /// answered, because the answer is about what was found rather than about what was done about it.
+    /// </para>
     /// </remarks>
     internal bool OccupiedByDirectory { get; init; }
 }
@@ -88,7 +96,11 @@ internal static class RestorePathPlanner
     /// <c>1</c> — <c>report.txt</c> becoming <c>report (1).txt</c>, or <c>report (2).txt</c> when
     /// <c>report (1).txt</c> is taken.
     /// </summary>
-    /// <param name="destinationPath">The path the item wanted, which by the time this is called is occupied.</param>
+    /// <param name="destinationPath">
+    /// The path the item wanted, which by the time this is called is occupied. A trailing separator is
+    /// trimmed, so a path written as a directory names the directory it points at rather than a name
+    /// beginning with a space.
+    /// </param>
     /// <returns>A path in the same directory as <paramref name="destinationPath"/>, under a name nothing is using.</returns>
     /// <remarks>
     /// The split is <see cref="Path.GetExtension(string)"/>'s: on the last dot rather than the first, so
@@ -103,11 +115,13 @@ internal static class RestorePathPlanner
     /// has ever been asked for.
     /// </para>
     /// <para>
-    /// Whether a candidate is taken is asked of the kind its name describes: a name carrying an extension is
-    /// probed with <see cref="File.Exists"/> and a name without one with <see cref="Directory.Exists"/>.
-    /// A directory whose own name carries a dot is therefore probed as a file, which is the one shape this
-    /// naming gets wrong. Nothing here reads the directory it belongs to to find out, because the caller
-    /// already knows which kind it is restoring and does not say so here.
+    /// A candidate is free when nothing at all is using it, which is both <see cref="File.Exists"/> and
+    /// <see cref="Directory.Exists"/> saying no rather than one of them chosen from what the name looks
+    /// like. That is not redundant: each of those two is false of the other's kind, so a directory named
+    /// <c>Photos.2024</c> — whose name says file — and a file named <c>README</c> — whose name says
+    /// directory — would otherwise both be handed a number that is already taken, and the move that follows
+    /// would throw on a name this library picked itself. Asking both costs one extra query on a name that
+    /// turns out to be free, and cannot be wrong the way picking one is.
     /// </para>
     /// <para>
     /// The candidate is composed in one span and the number written into it without an intermediate string.
@@ -121,27 +135,40 @@ internal static class RestorePathPlanner
     {
         ArgumentNullException.ThrowIfNull(destinationPath);
 
-        var extension = Path.GetExtension(destinationPath);
+        // A path spelled with a trailing separator names a directory, and the name composed below goes beside it
+        // rather than after the separator — which would make "D:\pics\" answer "D:\pics\ (1)", the name of a
+        // directory called " (1)". TrimEndingDirectorySeparator takes one separator off and leaves a root
+        // alone, so "D:\" and "\\server\share\" are still themselves; it is called until it stops shortening,
+        // because a path spelled with two separators would otherwise keep one and answer just as wrongly.
+        var trimmed = destinationPath;
+        var shorter = Path.TrimEndingDirectorySeparator(trimmed);
+
+        while (shorter.Length < trimmed.Length)
+        {
+            trimmed = shorter;
+            shorter = Path.TrimEndingDirectorySeparator(trimmed);
+        }
+
+        var extension = Path.GetExtension(trimmed);
 
         // GetExtension answers with a suffix of the path, so the head needs no splitting: a candidate is
         // that head, the number, and the extension. A name that is all extension leaves a separator where
         // the head would end, and cutting there would put the number against a bare directory.
-        var stemLength = destinationPath.Length - extension.Length;
-        var hasStem = stemLength > 0 && !IsSeparator(destinationPath[stemLength - 1]);
+        var stemLength = trimmed.Length - extension.Length;
+        var hasStem = stemLength > 0 && !IsSeparator(trimmed[stemLength - 1]);
 
-        var headLength = hasStem ? stemLength : destinationPath.Length;
+        var headLength = hasStem ? stemLength : trimmed.Length;
         var tailLength = hasStem ? extension.Length : 0;
-        var isFile = extension.Length > 0;
 
-        Span<char> buffer = destinationPath.Length + NumberWidth <= MaxStackCandidateLength
+        Span<char> buffer = trimmed.Length + NumberWidth <= MaxStackCandidateLength
             ? stackalloc char[MaxStackCandidateLength]
-            : new char[destinationPath.Length + NumberWidth];
+            : new char[trimmed.Length + NumberWidth];
 
         for (var number = 1; ; number++)
         {
             var at = headLength;
 
-            destinationPath.AsSpan(0, headLength).CopyTo(buffer);
+            trimmed.AsSpan(0, headLength).CopyTo(buffer);
 
             buffer[at++] = ' ';
             buffer[at++] = '(';
@@ -153,7 +180,7 @@ internal static class RestorePathPlanner
 
             var candidate = new string(buffer[..(at + tailLength)]);
 
-            if (isFile ? !File.Exists(candidate) : !Directory.Exists(candidate))
+            if (!File.Exists(candidate) && !Directory.Exists(candidate))
             {
                 return candidate;
             }
@@ -200,9 +227,11 @@ internal static class RestorePathPlanner
     /// <param name="isDirectory">Whether the item being restored is a directory.</param>
     /// <param name="options">The normalized options the restore is running under.</param>
     /// <returns>
-    /// The action, the path the item is to land at, and whether what occupies it is a directory. A free
-    /// destination answers <see cref="RestoreAction.Move"/> at <paramref name="destinationPath"/> with no
-    /// occupant.
+    /// The action, the path the item is to land at, and whether what occupies
+    /// <paramref name="destinationPath"/> is a directory. A free destination answers
+    /// <see cref="RestoreAction.Move"/> at <paramref name="destinationPath"/> with no occupant; an occupied
+    /// one reports the kind of what is there under every action, <see cref="RestoreAction.Rename"/> among
+    /// them, because that is the path a conflict record names rather than the one the item ends up at.
     /// </returns>
     /// <remarks>
     /// The policy is the one for the kind arriving, not the kind in the way. A destination holding the other

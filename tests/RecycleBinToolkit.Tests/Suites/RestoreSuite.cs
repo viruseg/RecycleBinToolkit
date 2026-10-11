@@ -258,6 +258,14 @@ internal static class RestoreSuite
     /// empty one.
     /// </para>
     /// <para>
+    /// A name is free when nothing at all is using it. Each of the three shapes below is a name whose occupancy
+    /// is of the kind its own name does not suggest: a directory whose name carries a dot, a file whose
+    /// numbered name is held by a directory, and an extension-less name whose numbered name is held by a
+    /// file. A probe that asked only whether there was a file — or only whether there was a directory —
+    /// would hand back the occupied name in every one of them, and the move that follows would throw on a
+    /// name this library picked itself.
+    /// </para>
+    /// <para>
     /// The last shape is the one the buffer itself decides: a candidate is assembled on the stack for an
     /// ordinary path and on the heap for one too long for that, and the two arms have to answer identically.
     /// A single flat component cannot reach the heap arm from this root — 255 characters is the most one
@@ -323,6 +331,59 @@ internal static class RestoreSuite
         Check.Equal(Path.GetDirectoryName(longPath), Path.GetDirectoryName(numbered), "and it lands in the same directory, however deep that is");
         Check.True(longPath.Length > 320, $"the path really did leave the stack buffer: {longPath.Length} characters");
 
+        // A name is taken by whatever kind holds it, and the number must step over that as readily as over a
+        // same-kind occupant. A probe that asked only "is there a file at this name" would answer these three
+        // with the occupied name itself, because File.Exists is false of a directory and Directory.Exists is
+        // false of a file — and the move that follows would then throw on a name this naming chose itself.
+        //
+        // Each squatter goes where this naming actually puts the number, which for the dotted name is before
+        // its extension rather than after the whole thing: "Photos.2024" numbers to "Photos (1).2024".
+        var dottedDirectory = Path.Combine(ScratchWorkspace.Root, "Photos.2024");
+        Directory.CreateDirectory(Path.Combine(ScratchWorkspace.Root, "Photos (1).2024"));
+
+        Check.Equal(
+            "Photos (2).2024",
+            Path.GetFileName(RestorePathPlanner.WithFreeNumber(dottedDirectory)),
+            "a directory whose name carries a dot is not probed as a file");
+
+        var report = Path.Combine(ScratchWorkspace.Root, "report.txt");
+        Directory.CreateDirectory(Path.Combine(ScratchWorkspace.Root, "report (1).txt"));
+
+        Check.Equal(
+            "report (2).txt",
+            Path.GetFileName(RestorePathPlanner.WithFreeNumber(report)),
+            "a name taken by a directory is not free for a file");
+
+        var readme = Path.Combine(ScratchWorkspace.Root, "README");
+        File.WriteAllText(Path.Combine(ScratchWorkspace.Root, "README (1)"), "a file");
+
+        Check.Equal(
+            "README (2)",
+            Path.GetFileName(RestorePathPlanner.WithFreeNumber(readme)),
+            "a name with no extension is not probed as a directory either");
+
+        // Skipping a name the other kind holds costs one extra query and cannot be wrong the way returning
+        // one is, so the two probes run together rather than one chosen from the name.
+        Check.True(Directory.Exists(Path.Combine(ScratchWorkspace.Root, "Photos (1).2024")), "the directory that was stepped over is still there");
+        Check.True(Directory.Exists(Path.Combine(ScratchWorkspace.Root, "report (1).txt")), "and so is the directory holding a file's name");
+        Check.True(File.Exists(Path.Combine(ScratchWorkspace.Root, "README (1)")), "and the file holding an extension-less name");
+
+        // A path written as a directory carries a trailing separator, and Path.GetExtension answers "" for
+        // it — so without the trim the number lands after that separator and names a directory called " (1)".
+        var spelled = Path.Combine(ScratchWorkspace.Root, "pics") + Path.DirectorySeparatorChar;
+
+        Check.Equal(
+            Path.Combine(ScratchWorkspace.Root, "pics (1)"),
+            RestorePathPlanner.WithFreeNumber(spelled),
+            "a path written with a trailing separator numbers the directory it names, not the separator");
+
+        // Two separators, because trimming one and stopping would leave one behind and answer the very same
+        // wrong thing. Nothing produces this spelling; a path this library composes never does.
+        Check.Equal(
+            Path.Combine(ScratchWorkspace.Root, "pics (1)"),
+            RestorePathPlanner.WithFreeNumber(spelled + Path.DirectorySeparatorChar),
+            "and a path written with two of them is trimmed of both");
+
         return Task.CompletedTask;
     }
 
@@ -375,16 +436,16 @@ internal static class RestoreSuite
 
         var renamed = RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename });
         Check.Equal(RestoreAction.Rename, renamed.Action, "the file policy renames");
-        Check.Equal(RestorePathPlanner.WithFreeNumber(takenByFile), renamed.TargetPath, "and it lands under the first free name, which is the one naming gives");
-        Check.False(renamed.OccupiedByDirectory, "renaming does not change what was in the way");
+        Check.Equal("taken (1).bin", Path.GetFileName(renamed.TargetPath), "and it lands under the first free number");
+        Check.False(renamed.OccupiedByDirectory, "and what was in the way of the path it asked for is still a file");
 
         Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByFile, isDirectory: false, defaults).Action, "the default file policy skips");
         Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RecycleBinOptions { FileConflict = RestoreFileConflict.Error }).Action, "and refusing is the same action as skipping");
 
         var renamedDirectory = RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory });
         Check.Equal(RestoreAction.Rename, renamedDirectory.Action, "renaming a directory takes a free name rather than merging into what is there");
-        Check.Equal(RestorePathPlanner.WithFreeNumber(takenByDirectory), renamedDirectory.TargetPath, "and it lands under the first free name");
-        Check.True(renamedDirectory.OccupiedByDirectory, "a directory was in the way");
+        Check.Equal("taken (1)", Path.GetFileName(renamedDirectory.TargetPath), "and it lands under the first free number");
+        Check.True(renamedDirectory.OccupiedByDirectory, "a directory was in the way of the path it asked for");
 
         Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, defaults).Action, "the default directory policy merges rather than skipping");
         Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip }).Action, "and every merge mode answers the same");
