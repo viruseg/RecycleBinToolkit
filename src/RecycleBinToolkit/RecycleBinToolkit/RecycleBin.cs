@@ -312,7 +312,8 @@ public static class RecycleBin
     /// decide what a restore does about a path that is already occupied.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the work between entries. A cancelled restore raises <see cref="OperationCanceledException"/>
+    /// Cancels the work between entries and between volumes. A cancelled restore raises
+    /// <see cref="OperationCanceledException"/>
     /// without returning a result: a restore is not transactional, so what was already put back is found by
     /// listing the bin rather than by reading a result.
     /// </param>
@@ -385,7 +386,8 @@ public static class RecycleBin
     /// decide what a restore does about a path that is already occupied.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the work between entries. A cancelled restore raises <see cref="OperationCanceledException"/>
+    /// Cancels the work between entries and between volumes. A cancelled restore raises
+    /// <see cref="OperationCanceledException"/>
     /// without returning a result: a restore is not transactional, so what was already put back is found by
     /// listing the bin rather than by reading a result.
     /// </param>

@@ -73,9 +73,13 @@ internal static class RestoreRunner
     /// </para>
     /// <para>
     /// <b>The slots are what a cancellation throws away.</b> A caller who cancels is told the call stopped,
-    /// and the entries it had not reached are in the bin with their records and payloads untouched. Nothing
-    /// rolls a placed payload back, and nothing reads the slots on that path, so there is no partial answer
-    /// to hand back.
+    /// and the entries it had not reached are in the bin with their records still beside their payloads.
+    /// <para>
+    /// A merge is the exception, and the one that has moved something: its walk has already set down whatever
+    /// children it placed before the cancellation reached it, and the payload holds the rest. Nothing rolls any
+    /// of that back, and no slot is written for the entry either — so nothing reads the slots to say what went,
+    /// and the caller who wants that reads the bin.
+    /// </para>
     /// </para>
     /// </remarks>
     internal static RecycleBinRestoreResult Run(
@@ -286,6 +290,11 @@ internal static class RestoreRunner
             // The move, or the delete of a record whose payload has already been put back, is what raised. The
             // second of those is why this is reported and not acted on: the file is already where its caller
             // wanted it, and the entry is left in the bin to be recognised as restored next time.
+            //
+// This filter must never gain an OperationCanceledException clause. The switch above calls Merge,
+            // which reaches PutBack, and that hands the token to a caller which raises it — so a live
+            // cancellation raises inside this very try. Reported here it would be this entry's failure
+            // rather than the caller's own cancellation, and the raise would go no further.
             slots[position] = Failed(decision.TargetPath, item.Size, ex.HResult, attempts: 1);
         }
     }
@@ -624,6 +633,10 @@ internal static class RestoreRunner
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
+                // The same rule as the filter on Restore's own switch, for the same reason: the recursive call
+                // above is this one, and it raises a cancellation of its own between the children it
+                // recurses into. Answered here it would be one file's refusal rather than the caller's own
+                // cancellation, and the raise would go no further.
                 state.Failures.Add(new RecycleFailure(wanted, ex.HResult, 1, RecycleFailureStage.RestoreFailed));
                 LeaveBehind(entry, wanted, state);
             }
@@ -662,6 +675,14 @@ internal static class RestoreRunner
     /// One call for the whole list rather than one per file, so that the put-back is the
     /// single writer it is documented to be and this library's own record writer is the only one in the
     /// business.
+    /// </para>
+    /// <para>
+    /// <b>This is where a live cancellation becomes an exception rather than a check between entries.</b> The
+    /// token is handed both to the guard and to <see cref="NativeRecycleRunner"/>, and each raises
+    /// <see cref="OperationCanceledException"/> from inside this call rather than between two of them. The
+    /// caller of this method sits inside a try in <see cref="Restore"/>, so that exception reaches a filter
+    /// that must not name it — which is why <see cref="Restore"/>'s filter says so, and why it is written
+    /// down here as well as there.
     /// </para>
     /// </remarks>
     private static int? PutBack(
