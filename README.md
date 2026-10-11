@@ -1217,10 +1217,9 @@ run, and the three cases that each move the whole 94-file fixture set in one cal
 covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
 and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
 The remainder is the volume's decision rather than a flag's: **195 pass and 10 skip** where there is a
-bin, with nothing failing. Those two numbers are derived, not measured by a single `--all`: the four cases
-added since the last full run were each run individually against `D:` and passed there and skipped
-nowhere, and the totals follow from those four over the 191-and-10 that run printed. A real `--all`
-settles it, and a volume with no Recycle Bin and a share are both unmeasured here — measure before
+bin, with nothing failing, measured by one `--all` on `D:`. The four cases added after the previous full
+run were each run individually first and were then covered by that `--all`, whose totals matched what
+they implied. A volume with no Recycle Bin and a share are both unmeasured here — measure before
 quoting either. `--all` prints its own counts, so a figure that disagrees with them is the figure being
 wrong.
 
