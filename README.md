@@ -1181,7 +1181,7 @@ clear for that drive; a volume with no such key is answered `Indeterminate` — 
 `NoRecycleBinAction.Throw`. The run asks the library once which kind of volume it was given, and each
 case that needs the other kind skips rather than fails.
 
-The suite is a console application with no external packages: 200 cases covering batch and single-path
+The suite is a console application with no external packages: 202 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock, long
 paths with no limit, concurrent callers, directories, 10 MB files, volumes with no Recycle Bin, and a
 ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing, emptying and status checking are
@@ -1189,12 +1189,12 @@ covered by their own suites. The default run writes only inside the directory it
 `--scratch`. On a volume with no Recycle Bin the cases that recycle there skip rather than fail, and
 the cases that are about such a volume run instead of skipping.
 
-**Of the 200 cases, `--all` runs 196.** Four are load cases that run only on request: the ten-cycle stress
+**Of the 202 cases, `--all` runs 198.** Four are load cases that run only on request: the ten-cycle stress
 run, and the three cases that each move the whole 94-file fixture set in one call.
 `--all` and `--filter` never run them — `--load` runs those four cases and nothing else. Nothing is
 covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
 and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
-The remainder is the volume's decision rather than a flag's: 186 pass and 10 skip where there is a bin,
+The remainder is the volume's decision rather than a flag's: 188 pass and 10 skip where there is a bin,
 and nothing fails.
 
 **A share has to survive your command line.** `--scratch "\\server\share\"` is right in PowerShell and in

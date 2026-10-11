@@ -10,6 +10,7 @@ internal static class RestoreSuite
     [
         new TestCase("RestoreSuite." + nameof(DefaultsAreTheDocumentedOnes), DefaultsAreTheDocumentedOnes),
         new TestCase("RestoreSuite." + nameof(VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot), VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot),
+        new TestCase("RestoreSuite." + nameof(VolumesAreGroupedByPhysicalDiskAndNotByCount), VolumesAreGroupedByPhysicalDiskAndNotByCount),
         new TestCase("RestoreSuite." + nameof(EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode), EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode),
         new TestCase("RestoreSuite." + nameof(RenamingTakesTheFirstFreeNumberBeforeTheExtension), RenamingTakesTheFirstFreeNumberBeforeTheExtension),
         new TestCase("RestoreSuite." + nameof(ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt), ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt),
@@ -38,6 +39,7 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(OneEntryFailingDoesNotCostTheOthersTheirAnswers), OneEntryFailingDoesNotCostTheOthersTheirAnswers),
         new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure),
         new TestCase("RestoreSuite." + nameof(TheVolumeOverloadRestoresEveryVolumeItWasGiven), TheVolumeOverloadRestoresEveryVolumeItWasGiven),
+        new TestCase("RestoreSuite." + nameof(TheResultFollowsTheOrderTheCallerPassed), TheResultFollowsTheOrderTheCallerPassed),
         new TestCase("RestoreSuite." + nameof(ANullVolumeIsRefusedRatherThanRestoredAround), ANullVolumeIsRefusedRatherThanRestoredAround),
         new TestCase("RestoreSuite." + nameof(AnEmptyListOfVolumesIsAnEmptyResult), AnEmptyListOfVolumesIsAnEmptyResult),
         new TestCase("RestoreSuite." + nameof(ARestoredPathIsTheOneItsRecordNamed), ARestoredPathIsTheOneItsRecordNamed),
@@ -157,6 +159,68 @@ internal static class RestoreSuite
         Check.True(d != c, "C: is a different physical disk, so it must not");
 
         Check.False(PhysicalVolumeDisk.TryIdentify(@"\\server\share\", out _), "a share has no local volume device and must not answer");
+
+        workspace.Dispose();
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// What the pipeline groups on is the physical disk behind a volume, so three volumes over two disks
+    /// are two groups rather than three of their own or two of a fixed size.
+    /// </summary>
+    /// <remarks>
+    /// The claim is the grouping and not the keys themselves — <see cref="VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot"/>
+    /// is what reads the keys off this machine, and which disk a letter sits on is a fact about the machine
+    /// rather than something this case can arrange. What is pinned here is that two volumes naming one disk
+    /// land in one group, that a third on another lands in a second, and that the groups carry the volumes
+    /// rather than a count of them.
+    /// <para>
+    /// The same three drives are required, for the same reason and by the same guard: a machine without
+    /// <c>D:</c>, <c>E:</c> and <c>C:</c> is a machine this case does not run on, and one where <c>D:</c> and
+    /// <c>E:</c> are not one disk fails the case rather than redefining it.
+    /// </para>
+    /// <para>
+    /// Nothing here is created, recycled, moved or deleted. The roots are data — the grouping asks each one
+    /// which disk it is a partition of and touches nothing else — so a case about what the engine would do
+    /// with the groups costs nothing on any of them.
+    /// </para>
+    /// <para>
+    /// The two shares are the conservative side of a volume nothing could name a disk for, and they are
+    /// asserted as one group rather than as two: a volume that would not say which disk it is on may be
+    /// sharing one with the other, so moving the two together is the answer that cannot be wrong.
+    /// </para>
+    /// </remarks>
+    private static Task VolumesAreGroupedByPhysicalDiskAndNotByCount(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        RequireVolumePresent('D');
+        RequireVolumePresent('E');
+        RequireVolumePresent('C');
+
+        var works = new List<RestoreVolumeWork>
+        {
+            new(@"D:\", []),
+            new(@"E:\", []),
+            new(@"C:\", [])
+        };
+
+        var groups = RestoreRunner.GroupByPhysicalDisk(works);
+
+        Check.Equal(2, groups.Count, "two physical disks behind three volumes");
+        Check.True(groups.Any(group => group.Volumes.Count == 2), "D: and E: are in one group");
+
+        var withUnknown = RestoreRunner.GroupByPhysicalDisk(
+        [
+            new RestoreVolumeWork(@"\\server\share", []),
+            new RestoreVolumeWork(@"\\other\share", [])
+        ]);
+
+        Check.Equal(1, withUnknown.Count, "volumes with no disk behind them share one group");
+        Check.Equal(2, withUnknown[0].Volumes.Count, "and both of them are in it");
+        Check.True(withUnknown[0].Disk is null, "which names no disk, because nothing named one");
 
         workspace.Dispose();
 
@@ -2331,6 +2395,92 @@ internal static class RestoreSuite
         Check.True(File.Exists(a) && File.Exists(b), "and both are back on disk");
         Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(b)), "one of them byte for byte");
         Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the bin is back to its baseline");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The lists a result is built from follow the order the caller passed the entries in, whatever order the
+    /// work itself finished in.
+    /// </summary>
+    /// <remarks>
+    /// The restore runs each disk's records through its own pipeline, so an entry becomes ready to move when
+    /// its record is read rather than when everything before it is done — and nothing about the answer may
+    /// be taken from the order the slots are filled in. Whether the work finishes in the caller's order is
+    /// the machine's business: one volume on one disk with one mover answers that way today, and the answer
+    /// must not depend on it.
+    /// <para>
+    /// <b>The list is reversed before it is handed in</b>, so that the caller's order and the order a walk
+    /// produced are not the same shape and a restore that reported in walk order would answer differently from
+    /// one that reported in the order it was given. Six entries is enough for the two orders to differ, and the
+    /// entries are this case's own: the bin holds whatever else this machine has put in it, and restoring an
+    /// entry nobody recycled is not a thing this suite may do.
+    /// </para>
+    /// <para>
+    /// <b>One of the six is read here and the other five are not.</b> A restore takes an entry that has
+    /// already been read out of memory and reads one that has not off the disk, and it reaches them by two
+    /// different passes — so a list of nothing but cold entries would leave one of those passes with nothing
+    /// to do. Finding an entry by the path it was deleted from would not give a mix: reading a record is what
+    /// makes an entry warm, so that search reads every entry in the group and leaves none of them cold, which
+    /// is exactly what the cases that use it to find their subject rely on.
+    /// </para>
+    /// <para>
+    /// The files are checked on disk as well as in the answer, because a pipeline that reported the paths in
+    /// the right order without having restored them would pass the join. Their bytes are not compared: that is
+    /// <c>ARecycledFileComesBackToThePathItCameFrom</c>'s claim, and repeating it here would only slow the case
+    /// down.
+    /// </para>
+    /// </remarks>
+    private static async Task TheResultFollowsTheOrderTheCallerPassed(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        // Told apart by payload path rather than by record, because reading a record is what makes an entry
+        // warm — asking which entries are this case's would read all six and leave nothing cold.
+        var before = Listing
+            .OnlyEntries(
+                await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+                ScratchWorkspace.VolumeRoot)
+            .Select(item => item.PayloadPath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var files = workspace.CreateRandomFiles(6, 64);
+
+        Check.True(
+            (await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken)).Succeeded,
+            "the six files reached the bin");
+
+        var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken);
+        var mine = Listing.OnlyEntries(contents, ScratchWorkspace.VolumeRoot)
+            .Where(item => !before.Contains(item.PayloadPath))
+            .ToArray();
+
+        Check.Equal(6, mine.Length, "six entries came back, and they are the six this case made");
+
+        // Reversed, so that the caller's order and the order the walk produced are not the same shape.
+        var items = mine.Reverse().ToArray();
+
+        // The first of them rather than the last, so that the five behind it are the entries the loader
+        // reads — and their order in the caller's list is then not the order they are read in, which is what
+        // catches a restore answering with the loader's own numbering.
+        var read = items[0];
+
+        Check.NotNull(read.OriginalPath, "the entry read here names the path it was deleted from");
+        Check.True(read.IsDetailsLoaded, "and reading it is what left it read");
+
+        var result = await RecycleBin.RestoreAsync(items, cancellationToken: context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(0, result.Failures.Count, "so nothing reached the failures list");
+        Check.Equal(0, result.Conflicts.Count, "and none of them collided with anything");
+
+        Check.Equal(
+            string.Join("|", items.Select(item => item.OriginalPath)),
+            string.Join("|", result.RestoredPaths),
+            "RestoredPaths is in the order the caller passed the entries in");
+        Check.Equal(6, files.Count(file => File.Exists(file)), "and all six files are back at the paths they were deleted from");
 
         workspace.Dispose();
     }

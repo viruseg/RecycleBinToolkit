@@ -67,10 +67,10 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 200 registered cases, of which four are load cases, so `--all` runs 196 of them. The rest is
+There are 202 registered cases, of which four are load cases, so `--all` runs 198 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
 cases that recycle one and runs the cases that are about a volume with no bin. Measured on `D:`, which
-has a bin: **186 pass and 10 skip**, with nothing failing. A volume with no bin and a share are both
+has a bin: **188 pass and 10 skip**, with nothing failing. A volume with no bin and a share are both
 unmeasured here: measure before quoting either. `--all` prints the counts, so a count in a document
 that disagrees with them is the document being wrong.
 
