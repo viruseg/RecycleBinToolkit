@@ -83,10 +83,10 @@ public enum RecycleFailureStage
     /// than a conflict to resolve.
     /// </summary>
     /// <remarks>
-    /// What was in the way was not touched, and the item stays in the Recycle Bin. Under
-    /// <see cref="RestoreFileConflict.Skip"/> or <see cref="RestoreDirectoryConflict.Skip"/> the same
-    /// situation arrives in <see cref="RecycleBinRestoreResult.Conflicts"/> alone, and the result still
-    /// succeeded.
+    /// What was in the way was not touched, and the item stays in the Recycle Bin. Every policy other than
+    /// this one arrives in <see cref="RecycleBinRestoreResult.Conflicts"/> alone — including the merging
+    /// ones, and including <see cref="RestoreDirectoryConflict.MergeSkip"/>, which is the default — so the
+    /// result still succeeded and this stage is what a caller opting into <c>Error</c> gets instead.
     /// </remarks>
     RestoreConflictRefused = 11
 }

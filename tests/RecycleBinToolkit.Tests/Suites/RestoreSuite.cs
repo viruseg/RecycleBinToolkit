@@ -21,6 +21,12 @@ internal static class RestoreSuite
     /// field by field, so an option it does not name is silently reset to the property initialiser's
     /// default on every internal call — a caller who asked for one behaviour would get another, with
     /// nothing raised and nothing reported.
+    /// <para>
+    /// The result half is read list by list rather than through its totals, because a constructor that
+    /// swapped two of them would answer every count correctly. <see cref="RecycleBinRestoreResult.Succeeded"/>
+    /// is read on both of its branches: a conflict alone must leave it true, which is what the remarks on
+    /// it promise.
+    /// </para>
     /// </remarks>
     private static Task DefaultsAreTheDocumentedOnes(TestContext context)
     {
@@ -43,11 +49,23 @@ internal static class RestoreSuite
         Check.Equal(10, (int)RecycleFailureStage.RestoreFailed, "RestoreFailed keeps clear of the removed Shell stages");
         Check.Equal(11, (int)RecycleFailureStage.RestoreConflictRefused, "RestoreConflictRefused follows it");
 
-        var result = new RecycleBinRestoreResult(["a"], [new RecycleRestoreConflict("b", true, RecycleRestoreConflictAction.Skipped)], [], 1, 42, TimeSpan.FromMilliseconds(3));
+        var conflict = new RecycleRestoreConflict("b", true, RecycleRestoreConflictAction.Skipped);
+        var result = new RecycleBinRestoreResult(["a"], [conflict], [], 1, 42, TimeSpan.FromMilliseconds(3));
         Check.Equal(1, result.ItemsRestored, "one item restored");
         Check.Equal(42, result.RestoredSize, "its bytes");
+        Check.Equal(1, result.RestoredPaths.Count, "the restored path is carried");
+        Check.Equal("a", result.RestoredPaths[0], "and it is the one handed in, not a path invented here");
+        Check.Equal(1, result.Conflicts.Count, "the conflict is carried");
+        Check.True(ReferenceEquals(conflict, result.Conflicts[0]), "and it is the one handed in");
+        Check.Equal(0, result.Failures.Count, "the failures list is carried, empty");
         Check.True(result.Succeeded, "nothing failed");
         Check.Equal(3, result.Elapsed.TotalMilliseconds, "elapsed carries");
+
+        // A conflict alone does not make the result fail, so the false branch is only reachable through
+        // a failure — and through any of them, whatever the reason recorded on it.
+        var failed = new RecycleBinRestoreResult([], [conflict], [new RecycleFailure("c", 0, 1, RecycleFailureStage.RestoreFailed)], 0, 0, TimeSpan.Zero);
+        Check.False(failed.Succeeded, "one failure makes the result not have succeeded");
+        Check.Equal(1, failed.Failures.Count, "and the failure is carried");
 
         workspace.Dispose();
 

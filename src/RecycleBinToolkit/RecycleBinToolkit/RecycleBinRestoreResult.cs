@@ -5,9 +5,13 @@ namespace RecycleBinToolkit;
 /// moved.
 /// </summary>
 /// <remarks>
-/// Every list is in the order the items were handed in, so a caller can line an answer up against what it
-/// asked for. Nothing here is undone afterwards: a directory whose merge did not finish stays merged, and
-/// this result is the only place that says so. There is no rollback.
+/// Each list keeps the relative order the items were handed in, so a caller reading two of them can still
+/// say which came before which. It is not an index a caller can line up against the input: a list holds
+/// only the items that belong in it, so one item of three may appear in none of the three.
+/// <para>
+/// Nothing here is undone afterwards: a directory whose merge did not finish stays merged, and this result
+/// is the only place that says so. There is no rollback.
+/// </para>
 /// </remarks>
 public sealed class RecycleBinRestoreResult
 {
@@ -46,6 +50,11 @@ public sealed class RecycleBinRestoreResult
     /// The path on disk, not the one inside the Recycle Bin, and for an item that was renamed the path it
     /// now has rather than the one it was deleted from. A stale path in a successful result is worse than
     /// one more thing the caller has to read.
+    /// <para>
+    /// An item that was skipped is not here — it is in <see cref="Conflicts"/> under
+    /// <see cref="RecycleRestoreConflictAction.Skipped"/>, and the relative order is the one it had among
+    /// the items that came back.
+    /// </para>
     /// </remarks>
     public IReadOnlyList<string> RestoredPaths { get; }
 
@@ -53,16 +62,17 @@ public sealed class RecycleBinRestoreResult
     /// Paths that were already occupied, and what was done about the items that wanted them.
     /// </summary>
     /// <remarks>
-    /// Empty when nothing was in the way. A conflict that <see cref="RestoreFileConflict.Skip"/> left
-    /// alone is here and not in <see cref="Failures"/>, so an item that stayed in the Recycle Bin does not
-    /// make <see cref="Succeeded"/> false — only <see cref="RestoreFileConflict.Error"/> and
-    /// <see cref="RestoreDirectoryConflict.Error"/> do that.
+    /// Empty when nothing was in the way. A conflict that <see cref="RestoreFileConflict.Skip"/> or one
+    /// of the merging policies left alone is here and not in <see cref="Failures"/>, so an item that stayed
+    /// in the Recycle Bin does not make <see cref="Succeeded"/> false — only
+    /// <see cref="RestoreFileConflict.Error"/> and <see cref="RestoreDirectoryConflict.Error"/> do that.
     /// </remarks>
     public IReadOnlyList<RecycleRestoreConflict> Conflicts { get; }
 
     /// <summary>
     /// Items that could not be restored: the payload would not move, its record would not go, or a
-    /// conflict was refused under <see cref="RestoreFileConflict.Error"/>.
+    /// conflict was refused under <see cref="RestoreFileConflict.Error"/> or
+    /// <see cref="RestoreDirectoryConflict.Error"/>.
     /// </summary>
     /// <remarks>
     /// Every item here is still in the Recycle Bin, which is what makes a second attempt worth making —
@@ -89,12 +99,12 @@ public sealed class RecycleBinRestoreResult
     public TimeSpan Elapsed { get; init; }
 
     /// <summary>
-    /// <see langword="true"/> when every item asked for was restored.
+    /// <see langword="true"/> when nothing failed.
     /// </summary>
     /// <remarks>
     /// Failures decide it, and conflicts do not: an item left in the Recycle Bin by
     /// <see cref="RestoreFileConflict.Skip"/> is an answer the caller asked for, not a failure to report
-    /// it as one.
+    /// it as one. So an item that was skipped leaves this <see langword="true"/>.
     /// </remarks>
     public bool Succeeded => Failures.Count == 0;
 }

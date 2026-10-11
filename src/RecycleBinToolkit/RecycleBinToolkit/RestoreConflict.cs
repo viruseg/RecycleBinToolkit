@@ -8,9 +8,9 @@ namespace RecycleBinToolkit;
 /// and a file do not have the same choices: a directory can be merged into what is already there, and a
 /// file cannot. One enumerator between them would carry values that are impossible for one of the two.
 /// <para>
-/// No value here puts an item anywhere the caller did not name. Each either leaves what is on disk alone,
-/// writes over it, or sets the incoming item down beside it under a free name this library picked, in the
-/// same directory and keeping the name the item arrived with.
+/// No value here writes outside the directory the caller named, and none touches a directory the restore
+/// was not restoring. What is already on disk is left alone, overwritten, or set beside — never renamed,
+/// moved or removed.
 /// </para>
 /// </remarks>
 public enum RestoreDirectoryConflict
@@ -23,9 +23,10 @@ public enum RestoreDirectoryConflict
     /// The default, and for the same reason <see cref="RestoreFileConflict.Skip"/> is: the incoming file
     /// is the one that gives way, so what is already on disk is never what is lost.
     /// <para>
-    /// A file that does not fit goes back into the Recycle Bin as an entry of its own rather than leaving
-    /// with the item it came in, which would destroy it. It is an ordinary item in the next listing, and
-    /// the same call restores it later.
+    /// A file that does not fit is not left inside the payload the directory came in, because that payload is
+    /// removed once the directory has been dealt with and the file would go with it. It goes back into the
+    /// Recycle Bin as an entry of its own instead: an ordinary item in the next listing, restorable later by
+    /// the same call.
     /// </para>
     /// </remarks>
     MergeSkip = 0,
