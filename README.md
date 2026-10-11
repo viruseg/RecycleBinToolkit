@@ -232,7 +232,7 @@ arguments after the first:
 | `items` | `IReadOnlyList<RecycleBinItem>` | Entries to restore, as a listing returned them. Repeated entries are restored once, the second one reported. |
 | `volumes` | `IReadOnlyList<RecycleBinVolumeContents>` | The volume groups of a listing, or any subset of them. Flattened group by group, in the order given, and restored as one batch. |
 | `options` | `RecycleBinOptions?` | As above. `DirectoryConflict` and `FileConflict` decide what happens to a path that is already occupied. |
-| `cancellationToken` | `CancellationToken` | Cancels the work between entries. A cancelled restore raises and returns nothing: what was already put back is found by listing the bin, not by reading a result. |
+| `cancellationToken` | `CancellationToken` | Cancels the work between entries and between volumes. A cancelled restore raises and returns nothing: what was already put back is found by listing the bin, not by reading a result. |
 
 **Returns** a [`RecycleBinRestoreResult`](#recyclebinrestoreresult), **never throws** for a per-entry
 problem, and applies no version gate: a restore reads records and moves payloads, so it is as available on
@@ -1110,7 +1110,10 @@ Stated plainly, because these are properties of Windows rather than choices.
   so there is no length limit, no staging, and no policy for long paths.
 - **Cancellation stops the batch, not the wait.** The token is checked between paths for a recycle and
   between entries for a restore and an empty, so a cancelled batch stops part way and raises
-  `OperationCanceledException` carrying no result: what it got through is found by reading the bin.
+  `OperationCanceledException` carrying no result: what it got through is found by reading the bin. Which
+  entry of a batch it stops at is up to the machine and is not witnessed by a test — cancelling part way
+  needs a hook inside the engine, not just a token, so every case here cancels before the call and pins the
+  raise rather than the stopping point.
 - **Temporary locks are retried, not eliminated.** An indexer, preview handler or antivirus holding a
   file open is transient; the retry policy absorbs it. A lock held for the whole run fails the item,
   and only that item.

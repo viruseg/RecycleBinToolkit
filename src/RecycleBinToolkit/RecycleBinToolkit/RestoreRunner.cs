@@ -29,13 +29,19 @@ namespace RecycleBinToolkit;
 /// batch.
 /// </para>
 /// <para>
-/// A cancellation is not one of those answers. It raises <see cref="OperationCanceledException"/> out of
-/// <see cref="Run"/> and returns nothing, because a restore is not transactional and so what it got through
-/// is found by listing the bin — the same answer
-/// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>
-/// gives for its own cancellation.
-/// </para>
-/// </remarks>
+    /// A cancellation is not one of those answers. It raises <see cref="OperationCanceledException"/> out of
+    /// <see cref="Run"/> and returns nothing, because a restore is not transactional and so what it got through
+    /// is found by listing the bin — the same answer
+    /// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>
+    /// gives for its own cancellation.
+    /// </para>
+    /// <para>
+    /// <b>Where a cancelled batch stops is not something a case here pins.</b> Cancelling between two entries
+    /// is a race against the machine's speed, and the way to ask it at a chosen entry would be a hook in this
+    /// class, which is a change to the library rather than to what is known about it. The checks above are
+    /// read, not witnessed; what a case witnesses is that a cancelled restore raises and leaves the bin alone.
+    /// </para>
+    /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class RestoreRunner
 {
@@ -74,12 +80,12 @@ internal static class RestoreRunner
     /// <para>
     /// <b>The slots are what a cancellation throws away.</b> A caller who cancels is told the call stopped,
     /// and the entries it had not reached are in the bin with their records still beside their payloads.
+    /// </para>
     /// <para>
     /// A merge is the exception, and the one that has moved something: its walk has already set down whatever
     /// children it placed before the cancellation reached it, and the payload holds the rest. Nothing rolls any
     /// of that back, and no slot is written for the entry either — so nothing reads the slots to say what went,
     /// and the caller who wants that reads the bin.
-    /// </para>
     /// </para>
     /// </remarks>
     internal static RecycleBinRestoreResult Run(
@@ -291,7 +297,7 @@ internal static class RestoreRunner
             // second of those is why this is reported and not acted on: the file is already where its caller
             // wanted it, and the entry is left in the bin to be recognised as restored next time.
             //
-// This filter must never gain an OperationCanceledException clause. The switch above calls Merge,
+            // This filter must never gain an OperationCanceledException clause. The switch above calls Merge,
             // which reaches PutBack, and that hands the token to a caller which raises it — so a live
             // cancellation raises inside this very try. Reported here it would be this entry's failure
             // rather than the caller's own cancellation, and the raise would go no further.

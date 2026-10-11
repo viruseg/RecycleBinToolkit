@@ -2521,6 +2521,13 @@ internal static class RestoreSuite
     /// filtering <c>catch (OperationCanceledException) when (ex.CancellationToken == mine)</c> that this is
     /// their own cancellation rather than something else carrying the same base type.
     /// </para>
+    /// <para>
+    /// <b>The cancellation is up front, and that is the only kind this suite witnesses.</b> Nothing here
+    /// stops between entries — that is a race against the machine's speed, or a hook in the engine, and the
+    /// second is a change to the library rather than to what is known about it. The limitation is stated on
+    /// the README's cancellation bullet and on <see cref="RestoreRunner"/> as well, since a reader of the
+    /// documentation meets the claim and not this file.
+    /// </para>
     /// </remarks>
     private static async Task ACancelledRestoreRaisesAndLeavesNoHalfAnswer(TestContext context)
     {

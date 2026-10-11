@@ -340,10 +340,17 @@ public static class RecycleBin
     /// failed leaves the entry whole and restorable, and a delete that failed leaves the file already back
     /// where its caller asked for it with its entry still in the bin.
     /// </para>
+    /// <para>
+    /// <b>Where a cancelled restore stops is not pinned by a case in this repository.</b> Every case cancels
+    /// before the call, because cancelling between two entries is a race against the machine's speed and
+    /// pinning it would need a hook inside the engine. What is witnessed is that a cancelled restore raises
+    /// and returns nothing, leaving the bin as it was found.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="items"/> is <see langword="null"/>.</exception>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled before the work started, or between entries.
+    /// <paramref name="cancellationToken"/> was cancelled before the work started, or between entries
+    /// and between volumes.
     /// </exception>
     public static async Task<RecycleBinRestoreResult> RestoreAsync(
         IReadOnlyList<RecycleBinItem> items,
@@ -412,7 +419,8 @@ public static class RecycleBin
     /// alone, because the argument is settled before any entry is read.
     /// </exception>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled before the work started, or between entries.
+    /// <paramref name="cancellationToken"/> was cancelled before the work started, or between entries
+    /// and between volumes.
     /// </exception>
     public static async Task<RecycleBinRestoreResult> RestoreAsync(
         IReadOnlyList<RecycleBinVolumeContents> volumes,

@@ -859,18 +859,29 @@ internal static class NativeBinSuite
     }
 
     /// <summary>
-    /// An empty honours cancellation between entries. The result then describes an operation that stopped
-    /// part way — so the counts have to say how far it got and nothing may be reported as failed.
+    /// An empty whose token is already cancelled raises rather than proceeding, so no operation runs and no
+    /// result is returned to describe one.
     /// </summary>
+    /// <remarks>
+    /// The title this case carried claimed a cancellation <em>between</em> entries and said the counts had to
+    /// report how far it got. The body does neither: the token is cancelled before the call, so the refusal
+    /// comes from <see cref="RecycleBin.EmptyAsync"/>'s own prologue, and the case has no counts to read.
+    /// What it pins is the raise, and nothing about a sweep that stops part way.
+    /// </remarks>
     private static async Task NativeEmptyHonoursCancellationBetweenEntries(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
-        ScratchWorkspace.RequireRecycling("a Recycle Bin holding enough entries for a cancellation to land between them");
+        ScratchWorkspace.RequireRecycling("entries for a cancelled empty to leave alone");
 
         var files = CreateMany(3, sizeBytes: 4096);
         var recycled = await RecycleBin.RecycleAsync(files, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
         Check.True(recycled.Succeeded, $"every file is recycled (first failure: {Describe(recycled.FirstFailure)})");
+
+        // Taken after the recycle rather than before it, so this counts what the case put in the bin and not
+        // what the machine already held — the same reason RestoreSuite.BaselineCount takes it before anything
+        // is recycled, read here as the count to compare against rather than as a baseline to subtract.
+        var before = RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot);
 
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync().ConfigureAwait(false);
@@ -879,7 +890,10 @@ internal static class NativeBinSuite
             () => RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, RecycleBinOptions.Default, cancelled.Token),
             "an empty whose token is already cancelled raises rather than proceeding");
 
-        Check.True(true, "and the bin is untouched, because the refusal comes before any work");
+        Check.Equal(
+            before,
+            RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot),
+            "and the bin is untouched, because the refusal comes before any work");
 
         workspace.Dispose();
     }
