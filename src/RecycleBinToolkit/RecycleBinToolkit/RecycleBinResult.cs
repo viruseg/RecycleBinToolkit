@@ -68,8 +68,10 @@ public enum RecycleFailureStage
     /// go, or the record could not be read to say where it belonged. Only reachable while restoring.
     /// </summary>
     /// <remarks>
-    /// While a directory is being merged this is also where a file of its tree that could not be placed
-    /// arrives, under that file's own path rather than the directory's.
+    /// To be reached twice over once the merge exists: while a directory is being merged, a file of its tree
+    /// that could not be placed would arrive here under that file's own path rather than the directory's.
+    /// <b>Not implemented yet</b> — a directory whose path is occupied arrives here as itself, under all
+    /// three <c>Merge*</c> values.
     /// <para>
     /// The item is still in the Recycle Bin, which is what makes a second attempt worth making. The one
     /// exception is a payload that had already moved and only its record was left: the file is on disk

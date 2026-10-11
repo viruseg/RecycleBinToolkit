@@ -74,7 +74,7 @@ internal static class ReadmeExamples
             ThrowOnError = false,
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
             FileConflict = RestoreFileConflict.Rename,
-            DirectoryConflict = RestoreDirectoryConflict.MergeReplace
+            DirectoryConflict = RestoreDirectoryConflict.RenameDirectory
         };
 
         // ThrowOnError is the global switch: with it off a refusal arrives in Failures instead of raising.

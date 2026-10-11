@@ -301,9 +301,9 @@ public static class RecycleBin
     /// Restores items from the Recycle Bin to the paths they were deleted from.
     /// </summary>
     /// <param name="items">
-    /// The entries to restore, as a listing returned them. Each is an object a listing produced, so an entry
-    /// whose record cannot be read raises rather than being described as a failure — the entry's own
-    /// <see cref="RecycleBinItem.OriginalPath"/> says so, and a restore that cannot say where a payload came
+    /// The entries to restore, as a listing returned them. An entry whose record cannot be read is a failure
+    /// rather than an exception, reported against the entry's own <c>$I</c> record inside the bin — the only
+    /// path it carries without reading that record — because a restore that cannot say where a payload came
     /// from has nothing to restore it to.
     /// </param>
     /// <param name="options">

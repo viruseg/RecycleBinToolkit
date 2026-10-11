@@ -322,8 +322,9 @@ Immutable; set with object initialisers. Every property has a production default
 | `FileConflict` | `RestoreFileConflict` | `Skip` | What a restore does with a **file** whose path is already occupied. See [`RestoreFileConflict`](#restorefileconflict). |
 | `DirectoryConflict` | `RestoreDirectoryConflict` | `MergeSkip` | What a restore does with a **directory** whose path is already occupied. See [`RestoreDirectoryConflict`](#restoredirectoryconflict). |
 
-Two properties rather than one shared policy, because a directory can be merged into what is
-already there and a file cannot. Neither has anything to do with `ThrowOnError`: a restore is a
+Two properties rather than one shared policy, because a directory can be **set down whole under a new
+name** and a file only ever under its own, and because merging a tree into what is already there is a
+question a file cannot be asked. Neither has anything to do with `ThrowOnError`: a restore is a
 batch, so a conflict is data — resolved ones in `Conflicts`, and the ones an `Error` policy refuses
 in `Failures` as well. No single entry of a restore raises.
 
@@ -338,7 +339,7 @@ var options = new RecycleBinOptions
     ThrowOnError = false,
     NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
     FileConflict = RestoreFileConflict.Rename,
-    DirectoryConflict = RestoreDirectoryConflict.MergeReplace
+    DirectoryConflict = RestoreDirectoryConflict.RenameDirectory
 };
 
 // ThrowOnError is the global switch: with it off a refusal arrives in Failures instead of raising.
@@ -406,7 +407,7 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `PermanentDeleteFailed` | You asked for a path to be removed for good — because its volume cannot recycle it and `NoRecycleBinAction` was `NoRecycleBinAction.DeletePermanently` — but the file system refused: a handle is held, the attributes are read-only. The file is exactly as you left it. |
 | `Enumeration` | An entry in the Recycle Bin could not be read or removed, or a volume could not be read. Only reachable while reading or emptying the Recycle Bin. |
 | `VolumeGuidPathNotAddressable` | The path names its volume by GUID, as `\\?\Volume{GUID}\…`. The volume has no drive letter to be measured, emptied or reported against, so the path was refused before anything was asked: `Attempts` is `0` and `HResult` is `0`. Address the same location by drive letter or mount point instead. |
-| `RestoreFailed` | Only reachable while restoring. An entry's payload would not move, its record would not go, or its record could not be read to say where it belonged — in which case `Path` is the entry's own `$I` record inside the bin, the only path it carries without reading that record. **A directory whose path is already occupied arrives here today**, whatever `DirectoryConflict` is set to, because the merge walk is not implemented — see [`RestoreDirectoryConflict`](#restoredirectoryconflict). The entry is still in the Recycle Bin, so a second attempt is worth making; the one exception is a payload that had already moved and only its record was left, and then the file is on disk and the next attempt meets a conflict instead. |
+| `RestoreFailed` | Only reachable while restoring. An entry's payload would not move, its record would not go, or its record could not be read to say where it belonged — in which case `Path` is the entry's own `$I` record inside the bin, the only path it carries without reading that record. **A directory whose path is already occupied arrives here today under any of the three `Merge*` values**, because the merge walk is not implemented — see [`RestoreDirectoryConflict`](#restoredirectoryconflict). The other three do not fail: `RenameDirectory` sets the tree down whole under a free name, and `Skip` and `Error` leave the entry in the bin. The entry is still in the Recycle Bin, so a second attempt is worth making; the one exception is a payload that had already moved and only its record was left, and then the file is on disk and the next attempt meets a conflict instead. |
 | `RestoreConflictRefused` | Only reachable while restoring, and only under `FileConflict` or `DirectoryConflict` set to `Error`. The path was already occupied, nothing on disk was touched, and the entry stays in the bin. Every other policy reports the same event in `Conflicts` alone and leaves `Succeeded` true, so this stage is what opting into `Error` gets instead. `Attempts` and `HResult` are both `0`: the refusal is settled before any move. |
 
 `HResult` carries the file system's code where the file system refused, or `0` where nothing was
@@ -643,7 +644,7 @@ What a restore does with a **directory** whose original path is already occupied
 
 | Value | Effect |
 | --- | --- |
-| `MergeSkip` | **Not implemented yet** — a directory whose path is occupied is reported at stage [`RestoreFailed`](#recyclefailurestage) and left whole in the bin, whatever this is set to. It is to become the default policy, for the same reason `RestoreFileConflict.Skip` is: the incoming tree is what gives way, so what is already on disk is never what is lost. Its merge is to put the directory's contents into the one already there and leave every file of the same name already there exactly as it is, with a file that does not fit going back into the Recycle Bin as an entry of its own rather than being left inside a payload that is about to be deleted. |
+| `MergeSkip` | **Not implemented yet** — a directory whose path is occupied is reported at stage [`RestoreFailed`](#recyclefailurestage) and left whole in the bin, under any of the three `Merge*` values. The other three behave today whatever this is set to: `RenameDirectory` sets the tree down under a free name, and `Skip` and `Error` leave it in the bin. `MergeSkip` is to become the default policy, for the same reason `RestoreFileConflict.Skip` is: the incoming tree is what gives way, so what is already on disk is never what is lost. Its merge is to put the directory's contents into the one already there and leave every file of the same name already there exactly as it is, with a file that does not fit going back into the Recycle Bin as an entry of its own rather than being left inside a payload that is about to be deleted. |
 | `MergeReplace` | **Not implemented yet**, as above. It is to become the same merge, overwriting each file of the same name already there, and merging a subdirectory of the same name rather than replacing it: the only way to replace a directory is to delete what is there first and find out afterwards whether the move was possible, and those bytes are yours. |
 | `MergeRename` | **Not implemented yet**, as above. It is to become the same merge, setting each incoming file that clashes down under a free name of its own. |
 | `RenameDirectory` | The whole tree is set down beside the one already there under a free name, contents merged with nothing. The tree arrives as it was, so nothing inside it has to agree with anything outside it. |
