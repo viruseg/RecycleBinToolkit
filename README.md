@@ -253,9 +253,9 @@ in the bin makes nothing.
 A move the file system refuses is **tried again**, up to `MaxAttempts` times, and what is in the way is
 asked about on each attempt rather than decided once before the first: a destination somebody lets go of half
 way through is restored, and one that stays held is reported carrying the number of attempts it was actually
-given in [`Attempts`](#recyclefailurestage). `OverallTimeout` bounds all of that, and it is **one budget for
-the whole call** — not one per entry and not one per volume — so a run of refused entries cannot each spend a
-budget of their own, and a slow disk cannot lengthen the one a fast disk is spending.
+given in [`RecycleFailure.Attempts`](#recyclefailure). `OverallTimeout` bounds all of that, and it is **one
+budget for the whole call** — not one per entry and not one per volume — so a run of refused entries cannot
+each spend a budget of their own, and a slow disk cannot lengthen the one a fast disk is spending.
 
 **Exceptions** `ArgumentNullException` when the list is null. `ArgumentException` when one of the
 volume groups is null: a group that is not there has no entries to restore and no volume root to name,
