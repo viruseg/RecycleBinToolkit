@@ -2612,9 +2612,9 @@ internal static class RestoreSuite
     /// <remarks>
     /// <c>NativeBinSuite</c> reads the same judgment over the refusals a recycle raises, and this reads it
     /// over the refusals a restore move raises — through the call <see cref="RestoreRunner"/>'s own place
-    /// makes, so each is raised by this machine's filesystem rather than written down by the case. It is the
-    /// restore path that carried a copy of this comparison which sat wrong for a while after the recycle one
-    /// had been corrected, and it went unnoticed because no case was reading it.
+    /// makes, so each is raised by this machine's filesystem rather than written down by the case. Both copies
+    /// were corrected by measurement, and only the recycle one was given a case: the remark this path's copy
+    /// carried said its comparison was witnessed, and nothing read it until here.
     /// <para>
     /// <b>The last of the four is the one the recycle side cannot raise.</b> An overwriting move onto a
     /// destination somebody is holding exclusively comes back as an

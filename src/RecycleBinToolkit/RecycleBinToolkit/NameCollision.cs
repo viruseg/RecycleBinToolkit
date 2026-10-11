@@ -6,10 +6,10 @@ namespace RecycleBinToolkit;
 /// <see cref="NativeRecycleRunner"/> and <see cref="RestoreRunner"/>.
 /// </summary>
 /// <remarks>
-/// <b>One judgment, because two of them is how this one stayed broken.</b> Each of those classes had its own
-/// copy of the comparison, they had drifted apart in the type they took, and a correction made in one left the
-/// other wrong long afterwards — so a reader who fixed the copy in front of them had no way to know a second
-/// one existed. They share this instead.
+/// <b>One judgment, because two of them is how this one was wrong twice.</b> Each of those classes had its
+/// own copy of the comparison, they had drifted apart in the type they took, and the masking landed on the
+/// restore path first and in the recycle runner afterwards — a case was written for the recycle runner and
+/// none for the other. They share this now, so there is a second copy to find.
 /// <para>
 /// <b>The comparison is witnessed from both call paths; the branch either of them takes is not.</b>
 /// <c>NativeBinSuite</c> and <c>RestoreSuite</c> each stage the refusals their own move raises and read them
@@ -48,21 +48,21 @@ internal static class NameCollision
     /// </returns>
     /// <remarks>
     /// Telling the two apart is what lets a collision be retried on a fresh name without a locked file being
-    /// retried too. A locked file and a source that is not there are facts about the caller's own data and are
-    /// reported on the first attempt; a taken name is a fact about this library's own generator and is its own
-    /// business.
+    /// charged for a name it never lost. A locked file and a source that is not there are facts about the
+    /// caller's own data, and the caller's own budget is what asks them again; a taken name is a fact about
+    /// this library's own generator and is its own business.
     /// <para>
     /// <b>The code is the low half of the HRESULT and not the whole of it.</b> <c>HRESULT_FROM_WIN32(e)</c> is
     /// <c>0x80070000 | e</c>, so a refusal carries the severity bit and the <c>ERROR_</c> facility on top of
     /// the bare errno: measured on this machine, a create over a name that is taken arrives as
     /// <c>0x80070050</c> and a move onto one as <c>0x800700B7</c>. Comparing the whole value against those two
-    /// constants is therefore never true, so every collision fell through to the failure path and
-    /// <see cref="RecycleBinOptions.MaxAttempts"/> spent its rounds re-drawing a name this library had drawn
-    /// itself. Masking is the <c>HRESULT_CODE</c> macro, and what it leaves behind is what keeps the answer
-    /// narrow: <c>0x80070005</c> is 5, <c>0x80070020</c> is 32 and <c>0x80070002</c> is 2, none of which is a
-    /// name — so a destination somebody is holding, a locked file and a source that is not there are never
-    /// answered with a different one, and the one that arrives as an <see cref="UnauthorizedAccessException"/>
-    /// is not asked about its code at all.
+    /// constants is therefore never true, so no collision was ever recognised — the recycle runner redrew
+    /// names it had drawn itself, and the restore never took the next free number. Masking is the
+    /// <c>HRESULT_CODE</c> macro, and what it leaves behind is what keeps the answer narrow: <c>0x80070005</c>
+    /// is 5, <c>0x80070020</c> is 32 and <c>0x80070002</c> is 2, none of which is a name — so a destination
+    /// somebody is holding, a locked file and a source that is not there are never answered with a different
+    /// one, and the one that arrives as an <see cref="UnauthorizedAccessException"/> is not asked about its code
+    /// at all.
     /// </para>
     /// </remarks>
     internal static bool IsTaken(Exception failure) =>
