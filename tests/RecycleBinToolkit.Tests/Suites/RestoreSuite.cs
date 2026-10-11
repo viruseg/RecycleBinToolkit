@@ -9,7 +9,8 @@ internal static class RestoreSuite
     internal static IReadOnlyList<TestCase> Cases =>
     [
         new TestCase("RestoreSuite." + nameof(DefaultsAreTheDocumentedOnes), DefaultsAreTheDocumentedOnes),
-        new TestCase("RestoreSuite." + nameof(VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot), VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot)
+        new TestCase("RestoreSuite." + nameof(VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot), VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot),
+        new TestCase("RestoreSuite." + nameof(EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode), EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode)
     ];
 
     /// <summary>
@@ -128,6 +129,159 @@ internal static class RestoreSuite
         workspace.Dispose();
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The loader says each entry as it reads its record, and says nothing for an entry it did not
+    /// read — which is why the two are asserted against the same list: an entry a listing already
+    /// warmed is skipped by the grouping, so the loader never reaches it, and the engine's own
+    /// pass over the list is what reports it.
+    /// </summary>
+    /// <remarks>
+    /// The claim is "once each", so a single call that must yield exactly one report per entry is
+    /// stronger than a count. The list is also the only thing that pins which entry each report is
+    /// about: an implementation that reported the same entry three times, or three entries in the
+    /// wrong order, would answer both counts correctly.
+    /// <para>
+    /// The bin is whatever this machine has put in it, so the entries this case recycled are told
+    /// from the rest by taking the listing before and after rather than by assuming an empty volume.
+    /// Filtering on the original path is not available: reading it is what warms an entry, so asking
+    /// which entries are this case's would make them all preloaded and leave the first half with
+    /// nothing to read.
+    /// </para>
+    /// <para>
+    /// The unreadable entry is built rather than made, for the reason
+    /// <c>NativeBinSuite</c> gives for building its own: taking a record away from a real bin leaves
+    /// a payload in the user's Recycle Bin with nothing that will ever collect it. Nothing is
+    /// written and nothing is deleted here at all.
+    /// </para>
+    /// </remarks>
+    private static async Task EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("entries to load");
+
+        var volumeRoot = ScratchWorkspace.VolumeRoot;
+
+        var before = Listing.OnlyEntries(
+            await RecycleBin.GetItemsAsync(volumeRoot, cancellationToken: context.CancellationToken),
+            volumeRoot).Select(item => item.PayloadPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var files = workspace.CreateRandomFiles(3, 4096);
+        var recycled = await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken);
+        Check.True(recycled.Succeeded, "the files reached the bin");
+
+        var listed = Listing.OnlyEntries(
+            await RecycleBin.GetItemsAsync(volumeRoot, cancellationToken: context.CancellationToken),
+            volumeRoot);
+        var cold = listed.Where(item => !before.Contains(item.PayloadPath)).ToArray();
+
+        Check.Equal(3, cold.Length, "three entries came back");
+        Check.False(cold.Any(item => item.IsDetailsLoaded), "and a listing that asked for no preloading read none of them");
+
+        var read = new CollectingSignal();
+
+        // One call over all four, so "once each" is asserted against a list that mixes an entry
+        // whose record is not there among the three whose records are. An entry whose record cannot
+        // be read is still an entry the caller has to hear about, so it is signalled with the code
+        // the read raised rather than skipped.
+        //
+        // Nothing is written and nothing is deleted for that entry, and nothing outside the scratch
+        // root is named: the path sits under the scratch root precisely because Path.GetPathRoot on
+        // it is what puts it in the group alongside the other three.
+        var missing = new RecycleBinItem(
+            Path.Combine(ScratchWorkspace.Root, "never-written-record.bin"),
+            Path.Combine(ScratchWorkspace.Root, "never-written-payload.bin"),
+            0,
+            false);
+
+        var withUnreadable = new[] { cold[0], missing, cold[1], cold[2] };
+
+        ItemDetailLoader.Load(withUnreadable, context.CancellationToken, in read);
+
+        Check.Equal(4, read.Seen, "every entry the loader read is signalled, once each");
+        Check.Equal(3, read.Items.Count(h => h.HResult == 0), "a record that reads carries no code: nothing was wrong with it");
+        Check.Equal(1, read.Items.Count(h => h.HResult != 0), "and the one that could not be read carries the code the read raised");
+
+        for (var index = 0; index < withUnreadable.Length; index++)
+        {
+            Check.True(
+                read.Items.Any(h => ReferenceEquals(h.Item, withUnreadable[index])),
+                $"the entry at index {index} is the one reported about it");
+        }
+
+        // Every entry is loaded now, which is the state a listing taken with PreloadItemDetails
+        // leaves them in. The loader skips them all and reads nothing, so the engine's own pass is
+        // the only thing reporting them — and it has no code to report, because there was no read.
+        Check.True(cold.All(item => item.IsDetailsLoaded), "the loader left every one of them read");
+
+        var passed = new CollectingSignal();
+
+        for (var index = 0; index < cold.Length; index++)
+        {
+            if (cold[index].IsDetailsLoaded)
+            {
+                passed.OnReady(index, cold[index], 0);
+            }
+        }
+
+        ItemDetailLoader.Load(cold, context.CancellationToken, in passed);
+
+        Check.Equal(3, passed.Seen, "the two passes together report every entry exactly once");
+        Check.Equal(0, passed.Items.Count(h => h.HResult != 0), "an entry the listing already read carries no code");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Keeps what it was told, so a case can read it back after the call returns.
+    /// </summary>
+    /// <remarks>
+    /// The loader reads one volume's records on as many threads as that volume answers for and calls
+    /// this from each of them, so the list is written under a lock rather than appended to.
+    /// </remarks>
+    private readonly struct CollectingSignal : IRestoreSignal
+    {
+        private readonly List<(RecycleBinItem Item, int HResult)> _collected;
+
+        public CollectingSignal()
+        {
+            _collected = [];
+        }
+
+        /// <summary>How many entries have been reported.</summary>
+        internal int Seen
+        {
+            get
+            {
+                lock (_collected)
+                {
+                    return _collected.Count;
+                }
+            }
+        }
+
+        /// <summary>What was reported, in the order the loader reached it.</summary>
+        internal List<(RecycleBinItem Item, int HResult)> Items
+        {
+            get
+            {
+                lock (_collected)
+                {
+                    return [.. _collected];
+                }
+            }
+        }
+
+        public void OnReady(int index, RecycleBinItem item, int hResult)
+        {
+            lock (_collected)
+            {
+                _collected.Add((item, hResult));
+            }
+        }
     }
 
     /// <summary>

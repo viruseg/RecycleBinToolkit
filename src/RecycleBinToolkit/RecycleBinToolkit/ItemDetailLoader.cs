@@ -61,6 +61,37 @@ internal static class ItemDetailLoader
     }
 
     /// <summary>
+    /// Reads every record in <paramref name="items"/> that has not been read yet, telling
+    /// <paramref name="onReady"/> about each one as it is read rather than after the last.
+    /// </summary>
+    /// <typeparam name="T">The signal's type. A <see langword="struct"/> keeps the call off the heap.</typeparam>
+    /// <param name="items">The entries of one listing.</param>
+    /// <param name="cancellationToken">Cancels the work between records, and between volumes.</param>
+    /// <param name="onReady">
+    /// Told about every entry this call reads, with the code that read reported. A caller that also
+    /// has preloaded entries to report signals those itself, from its own pass over
+    /// <paramref name="items"/> — <see cref="GroupByVolume"/> skips them, which is what saves a path
+    /// parse per preloaded entry, and a caller wanting them grouped would put that cost back.
+    /// </param>
+    /// <remarks>
+    /// The signal is inline and synchronous because a pipeline was measured against this loop and
+    /// lost on both volume types: there is nothing to overlap, because a read is three system calls
+    /// and about 47 microseconds while parsing one costs about a tenth of a microsecond. A queue
+    /// between the read and the signal would cost more than the whole parse.
+    /// </remarks>
+    internal static void Load<T>(IReadOnlyList<RecycleBinItem> items, CancellationToken cancellationToken, in T onReady)
+        where T : IRestoreSignal
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        foreach (var group in GroupByVolume(items, cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            LoadVolume(group.Key, group.Value, cancellationToken, in onReady);
+        }
+    }
+
+    /// <summary>
     /// The entries still waiting for a record, gathered under the root of the volume each one lives on.
     /// </summary>
     /// <remarks>
@@ -164,4 +195,102 @@ internal static class ItemDetailLoader
                 }
             });
     }
+
+    /// <summary>
+    /// Reads one volume's records, on as many threads as that volume answers for, telling
+    /// <paramref name="onReady"/> about each as it lands.
+    /// </summary>
+    /// <remarks>
+    /// A second copy rather than a parameter on <see cref="LoadVolume(string, List{RecycleBinItem}, CancellationToken)"/>,
+    /// because a parameter would put a test on the loop the measurements above were taken on: the
+    /// only way to skip that test is for the compiler to know the signal is a no-op, which means the
+    /// existing overload stops being the code those numbers describe.
+    /// </remarks>
+    private static void LoadVolume<T>(
+        string volumeRoot,
+        List<RecycleBinItem> items,
+        CancellationToken cancellationToken,
+        in T onReady)
+        where T : IRestoreSignal
+    {
+        var degree = VolumeSeekPenalty.DegreeOfParallelism(volumeRoot);
+
+        if (degree <= 1)
+        {
+            for (var i = 0; i < items.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Signal(items[i], i, in onReady);
+            }
+
+            return;
+        }
+
+        // Copied out of the `in` parameter because a lambda may not capture one. A signal is a struct
+        // that reaches shared state through a reference, so every copy names the same place.
+        var signal = onReady;
+
+        Parallel.For(
+            0,
+            items.Count,
+            new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken },
+            index =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    Signal(items[index], index, in signal);
+                }
+            });
+    }
+
+    /// <summary>
+    /// Reads one entry's record and tells the signal what the read reported.
+    /// </summary>
+    /// <remarks>
+    /// The signal is called whether or not the record was readable, and a read that failed is one
+    /// the caller needs to hear about as much as one that worked: an entry whose record cannot be
+    /// read is still an entry to move. The failure code is the only thing distinguishing them.
+    /// </remarks>
+    private static void Signal<T>(RecycleBinItem item, int index, in T onReady)
+        where T : IRestoreSignal
+    {
+        item.LoadDetails(out var hResult);
+        onReady.OnReady(index, item, hResult);
+    }
+}
+
+/// <summary>
+/// Told, once per entry, that its record has been read and what that read reported.
+/// </summary>
+/// <remarks>
+/// Called synchronously from the thread that read the record, so a signal that must not race itself
+/// needs no locking of its own.
+/// <para>
+/// An entry the listing already read is not reported through here. It reaches the caller through
+/// <see cref="RecycleBinItem.IsDetailsLoaded"/> instead, which costs one field read, because
+/// <c>ItemDetailLoader</c> skips it before it knows which volume it lives on.
+/// </para>
+/// </remarks>
+internal interface IRestoreSignal
+{
+    /// <summary>
+    /// Reports one entry whose record has now been read.
+    /// </summary>
+    /// <param name="index">
+    /// The entry's position among the entries read together on one volume. Entries arrive out of
+    /// order when a volume is read on several threads, so this is what tells two of them apart.
+    /// <para>
+    /// It is the position in the list the caller handed in only when that list holds one volume
+    /// and every entry before this one in it was unread. A caller that needs its own numbering
+    /// back — one placing results into slots — should hand over one volume's entries at a time,
+    /// which is also how it reads them.
+    /// </para>
+    /// </param>
+    /// <param name="item">The entry, carrying whatever the read resolved.</param>
+    /// <param name="hResult">
+    /// What the read reported: <c>0</c> when the record was readable or turned out not to be a
+    /// record, and the filesystem's own code when it could not be opened at all. An entry reported
+    /// by a caller's own preloaded pass carries <c>0</c>, because there was no read to report.
+    /// </param>
+    void OnReady(int index, RecycleBinItem item, int hResult);
 }
