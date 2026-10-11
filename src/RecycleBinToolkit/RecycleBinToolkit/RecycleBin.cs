@@ -311,7 +311,11 @@ public static class RecycleBin
     /// <see cref="RecycleBinOptions.DirectoryConflict"/> and <see cref="RecycleBinOptions.FileConflict"/>
     /// decide what a restore does about a path that is already occupied.
     /// </param>
-    /// <param name="cancellationToken">Cancels the work between entries.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the work between entries. A cancelled restore raises <see cref="OperationCanceledException"/>
+    /// without returning a result: a restore is not transactional, so what was already put back is found by
+    /// listing the bin rather than by reading a result.
+    /// </param>
     /// <returns>
     /// What every entry became, in the order the entries were passed in whatever order the work itself
     /// finished in.
@@ -380,7 +384,11 @@ public static class RecycleBin
     /// <see cref="RecycleBinOptions.DirectoryConflict"/> and <see cref="RecycleBinOptions.FileConflict"/>
     /// decide what a restore does about a path that is already occupied.
     /// </param>
-    /// <param name="cancellationToken">Cancels the work between entries.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the work between entries. A cancelled restore raises <see cref="OperationCanceledException"/>
+    /// without returning a result: a restore is not transactional, so what was already put back is found by
+    /// listing the bin rather than by reading a result.
+    /// </param>
     /// <returns>
     /// What every entry became, in the order the groups were passed in and the entries sat inside them.
     /// </returns>

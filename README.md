@@ -1108,9 +1108,8 @@ Stated plainly, because these are properties of Windows rather than choices.
 
 - **A path of any length recycles.** The destination inside the bin is short whatever the source was,
   so there is no length limit, no staging, and no policy for long paths.
-- **Cancellation stops the batch, not the wait.** The token is checked between paths, so a cancelled
-  batch stops part way and raises `OperationCanceledException` carrying no result: which files went is
-  found by reading the bin.
+- **Cancellation stops the batch, not the wait.** A cancelled batch stops part way and raises
+  `OperationCanceledException` carrying no result: what it got through is found by reading the bin.
 - **Temporary locks are retried, not eliminated.** An indexer, preview handler or antivirus holding a
   file open is transient; the retry policy absorbs it. A lock held for the whole run fails the item,
   and only that item.

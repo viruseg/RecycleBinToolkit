@@ -20,12 +20,20 @@ namespace RecycleBinToolkit;
 /// fixable by restoring that entry again.
 /// </para>
 /// <para>
-/// <b>Nothing one entry does ends the call.</b> A payload deleted since the listing, a destination occupied by
-/// the other kind, a record that cannot be read, an entry the caller named twice: each is one entry's answer,
-/// carried in <see cref="RecycleBinRestoreResult.Failures"/> with the code the filesystem gave where there was
-/// one, and the entries around it keep the outcomes they had. A caller restoring ninety entries gets ninety
-/// answers however many of them the disk would not allow, which is the only shape in which the failures list
-/// can be read as a list rather than as the exception that stopped the batch.
+/// <b>Nothing one entry does ends the call; the caller's own cancellation does.</b> A payload deleted since the
+/// listing, a destination occupied by the other kind, a record that cannot be read, an entry the caller named
+/// twice: each is one entry's answer, carried in <see cref="RecycleBinRestoreResult.Failures"/> with the code
+/// the filesystem gave where there was one, and the entries around it keep the outcomes they had. A caller
+/// restoring ninety entries gets ninety answers however many of them the disk would not allow, which is the
+/// only shape in which the failures list can be read as a list rather than as the exception that stopped the
+/// batch.
+/// </para>
+/// <para>
+/// A cancellation is not one of those answers. It raises <see cref="OperationCanceledException"/> out of
+/// <see cref="Run"/> and returns nothing, because a restore is not transactional and so what it got through
+/// is found by listing the bin — the same answer
+/// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>
+/// gives for its own cancellation.
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
@@ -42,7 +50,11 @@ internal static class RestoreRunner
     /// Settings, normalised here rather than trusted: a caller-supplied <see cref="RecycleBinOptions"/> is
     /// not obliged to have been through <see cref="RecycleBinOptions.Normalize"/>.
     /// </param>
-    /// <param name="cancellationToken">Cancels the operation between entries.</param>
+    /// <param name="cancellationToken">
+    /// Cancels the operation between entries and between volumes. A cancellation raises
+    /// <see cref="OperationCanceledException"/> rather than returning a result, and the entries already put
+    /// back are left where they are.
+    /// </param>
     /// <returns>
     /// What every entry became. The elapsed time is zero because the caller measures the wait instead.
     /// </returns>
@@ -58,6 +70,12 @@ internal static class RestoreRunner
     /// volume's own measured parallelism, because that is the part of the work a disk's hardware answers
     /// for; moving is one entry at a time, because how many moves a disk takes well is a separate question
     /// that is measured rather than borrowed from the reading figures.
+    /// </para>
+    /// <para>
+    /// <b>The slots are what a cancellation throws away.</b> A caller who cancels is told the call stopped,
+    /// and the entries it had not reached are in the bin with their records and payloads untouched. Nothing
+    /// rolls a placed payload back, and nothing reads the slots on that path, so there is no partial answer
+    /// to hand back.
     /// </para>
     /// </remarks>
     internal static RecycleBinRestoreResult Run(

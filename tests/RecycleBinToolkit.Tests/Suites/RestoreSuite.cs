@@ -41,6 +41,8 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(ANullVolumeIsRefusedRatherThanRestoredAround), ANullVolumeIsRefusedRatherThanRestoredAround),
         new TestCase("RestoreSuite." + nameof(AnEmptyListOfVolumesIsAnEmptyResult), AnEmptyListOfVolumesIsAnEmptyResult),
         new TestCase("RestoreSuite." + nameof(ARestoredPathIsTheOneItsRecordNamed), ARestoredPathIsTheOneItsRecordNamed),
+        new TestCase("RestoreSuite." + nameof(ACancelledRestoreRaisesAndLeavesNoHalfAnswer), ACancelledRestoreRaisesAndLeavesNoHalfAnswer),
+        new TestCase("RestoreSuite." + nameof(ACancelledEngineRaisesRatherThanAnswering), ACancelledEngineRaisesRatherThanAnswering),
     ];
 
     /// <summary>
@@ -2497,6 +2499,132 @@ internal static class RestoreSuite
         Check.True(Directory.Exists(root), $"the directory is back at {root}");
         Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(leaf)), "with its file inside it, byte for byte");
         Check.False(File.Exists(result.RestoredPaths[0]), "and File.Exists is false of the reported spelling, which is why the README says Directory.Exists is the check for it");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A restore whose token is cancelled before it begins raises rather than answering, and nothing has
+    /// moved: every entry is still in the Recycle Bin with its payload, and every file is still off the disk.
+    /// </summary>
+    /// <remarks>
+    /// The half answer the name is for is the one a caller would get from a result rather than an
+    /// exception. Nothing restored, nothing conflicted and nothing failed is what a restore of nothing at
+    /// all answers, so an empty result could not be both "no partial result" and a result.
+    /// <para>
+    /// The entries handed in are this case's own rather than the volume's whole bin, for the reason
+    /// <see cref="TheVolumeOverloadRestoresEveryVolumeItWasGiven"/> gives: a call that did not raise would
+    /// put the owner's own deleted files back, which is the one thing no restore case here may be able to do.
+    /// </para>
+    /// <para>
+    /// The token on the exception is asserted as well as its type, because it is what tells a caller
+    /// filtering <c>catch (OperationCanceledException) when (ex.CancellationToken == mine)</c> that this is
+    /// their own cancellation rather than something else carrying the same base type.
+    /// </para>
+    /// </remarks>
+    private static async Task ACancelledRestoreRaisesAndLeavesNoHalfAnswer(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var baseline = BaselineCount();
+
+        var files = workspace.CreateRandomFiles(8, 4096);
+        Check.True((await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken)).Succeeded, "they reached the bin");
+
+        var listed = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken);
+
+        var items = files.Select(file => FindTheEntryFor(listed, file)).ToArray();
+
+        using var cancelling = new CancellationTokenSource();
+        await cancelling.CancelAsync();
+
+        var thrown = await Check
+            .ThrowsAsync<OperationCanceledException>(
+                () => RecycleBin.RestoreAsync(items, cancellationToken: cancelling.Token),
+                "a restore cancelled up front raises rather than answering")
+            .ConfigureAwait(false);
+
+        Check.Equal(cancelling.Token, thrown.CancellationToken, "and the exception carries the token the caller cancelled");
+
+        foreach (var file in files)
+        {
+            Check.False(File.Exists(file), $"{Path.GetFileName(file)} is still off the disk, so nothing was put back");
+        }
+
+        Check.Equal(
+            files.Count,
+            RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline,
+            "and the bin holds every entry this case put in it");
+
+        var after = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken);
+
+        foreach (var file in files)
+        {
+            var entry = FindTheEntryFor(after, file);
+
+            Check.True(File.Exists(entry.PayloadPath), $"the payload behind {Path.GetFileName(file)} is still in the bin, so the entry is whole rather than half moved");
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The engine raises a cancelled batch rather than flattening the entries it never decided into an
+    /// answer, and the entries are left in the bin exactly as they were handed in.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RecycleBinOptions?, CancellationToken)"/>
+    /// answers an already-cancelled token from its own prologue and never reaches the engine, so this is the
+    /// case that pins what the engine does with one.
+    /// <para>
+    /// The answer a runner that reported it as data would produce is specific rather than general. A slot
+    /// nothing has been decided for belongs to no list the result is built from, so every entry would land in
+    /// none of them and the call would report nothing restored, nothing conflicted and nothing failed, and say
+    /// it had done what it was asked. The batch never ran.
+    /// </para>
+    /// <para>
+    /// <b>A cancellation part way through a batch is not what this case shows.</b> Timing one is a race
+    /// against the machine's speed, and the way to ask the engine a question at a chosen entry would be a
+    /// hook in it, which is a change to the library rather than to what is known about it. What is asked
+    /// here is that the engine reads the token at all and answers with an exception, and the checks it
+    /// carries between entries are the same one.
+    /// </para>
+    /// </remarks>
+    private static async Task ACancelledEngineRaisesRatherThanAnswering(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var baseline = BaselineCount();
+
+        var files = workspace.CreateRandomFiles(3, 4096);
+        Check.True((await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken)).Succeeded, "they reached the bin");
+
+        var listed = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken);
+
+        var items = files.Select(file => FindTheEntryFor(listed, file)).ToArray();
+
+        using var cancelling = new CancellationTokenSource();
+        await cancelling.CancelAsync();
+
+        var thrown = Check.Throws<OperationCanceledException>(
+            () => RestoreRunner.Run(items, RecycleBinOptions.Default, cancelling.Token),
+            "the engine raises rather than reporting entries it never decided about");
+
+        Check.Equal(cancelling.Token, thrown.CancellationToken, "carrying the token the caller cancelled");
+
+        foreach (var file in files)
+        {
+            Check.False(File.Exists(file), $"{Path.GetFileName(file)} is still off the disk, so the engine moved nothing");
+        }
+
+        Check.Equal(
+            files.Count,
+            RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline,
+            "and every entry is still in the bin");
 
         workspace.Dispose();
     }
