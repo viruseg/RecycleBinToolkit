@@ -20,7 +20,14 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(ATakenFilePathIsRefusedAsBothAConflictAndAFailure), ATakenFilePathIsRefusedAsBothAConflictAndAFailure),
         new TestCase("RestoreSuite." + nameof(ADirectoryComesBackWithItsTree), ADirectoryComesBackWithItsTree),
         new TestCase("RestoreSuite." + nameof(ADirectoryComesBackUnderParentsThatAreGone), ADirectoryComesBackUnderParentsThatAreGone),
-        new TestCase("RestoreSuite." + nameof(AFileComesBackUnderAParentThatIsGone), AFileComesBackUnderAParentThatIsGone)
+        new TestCase("RestoreSuite." + nameof(AFileComesBackUnderAParentThatIsGone), AFileComesBackUnderAParentThatIsGone),
+        new TestCase("RestoreSuite." + nameof(AnEntryWhosePayloadIsGoneIsAFailureAndNothingElse), AnEntryWhosePayloadIsGoneIsAFailureAndNothingElse),
+        new TestCase("RestoreSuite." + nameof(TheSameEntryTwiceIsRestoredOnce), TheSameEntryTwiceIsRestoredOnce),
+        new TestCase("RestoreSuite." + nameof(AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow), AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow),
+        new TestCase("RestoreSuite." + nameof(ADirectoryRestoringOntoAFileIsAConflict), ADirectoryRestoringOntoAFileIsAConflict),
+        new TestCase("RestoreSuite." + nameof(AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing), AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing),
+        new TestCase("RestoreSuite." + nameof(OneEntryFailingDoesNotCostTheOthersTheirAnswers), OneEntryFailingDoesNotCostTheOthersTheirAnswers),
+        new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure)
     ];
 
     /// <summary>
@@ -953,6 +960,445 @@ internal static class RestoreSuite
         Check.True(File.Exists(original), $"and it is back at {original}");
         Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(original)), "byte for byte");
         Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the entry has left the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An entry is a snapshot: its payload was deleted out of the Recycle Bin after the listing that produced
+    /// it, so there is nothing to move. That is reported as one item's failure and the rest of the answer is
+    /// still an answer — nothing is invented at the destination and the entry is left exactly as it was.
+    /// </summary>
+    /// <remarks>
+    /// The payload is deleted with <see cref="File.Delete(string)"/> rather than by emptying the volume,
+    /// which is the only way to make a listing stale without touching anything else in the owner's bin.
+    /// <para>
+    /// The entry is shown to be untouched by its own record still being there rather than by a count against
+    /// the baseline: <see cref="RecycleBinProbe"/> counts a record and its payload as one entry and skips
+    /// whichever of the two is missing, so once this case has deleted the payload its count is already one
+    /// below the baseline and would not move whatever the restore did.
+    /// </para>
+    /// <para>
+    /// The code on the failure is asserted to carry the severity bit rather than to be a particular value:
+    /// that the code is the filesystem's own, and not a zero standing in for one, is the claim, and which
+    /// refusal Windows raises for a missing source is not.
+    /// </para>
+    /// </remarks>
+    private static async Task AnEntryWhosePayloadIsGoneIsAFailureAndNothingElse(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(4096);
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the file reached the bin");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        // The listing is now a snapshot of something that is not there, which is what a caller hands over
+        // whenever anything else emptied the bin between the listing and the restore.
+        File.Delete(item.PayloadPath);
+        Check.False(File.Exists(target), "and the file is not on disk either, so there is nowhere else it could be");
+
+        var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+
+        Check.False(result.Succeeded, "the restore did not succeed");
+        Check.Equal(0, result.ItemsRestored, "nothing was restored");
+        Check.Equal(0, result.RestoredPaths.Count, "so nothing is named as restored");
+
+        Check.Equal(1, result.Failures.Count, "exactly one failure");
+        Check.Equal(target, result.Failures[0].Path, "under the path the entry wanted");
+        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "reported as a restore failure");
+        Check.True(
+            (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
+            $"the file system's own code rather than none: 0x{result.Failures[0].HResult:X8}");
+        Check.Equal(1, result.Failures[0].Attempts, "one move was attempted, and it is what failed");
+        Check.Equal(0, result.Conflicts.Count, "a move that would not happen is not a conflict to resolve");
+
+        Check.False(File.Exists(target), "and the file was not invented at the destination");
+        Check.True(File.Exists(item.IndexPath), "while the entry itself is untouched, so it can be tried again");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The same entry twice in one call is restored once: the first occurrence takes it and the second is
+    /// reported, because a second restore of the same entry could only conflict with the first one's own work.
+    /// </summary>
+    /// <remarks>
+    /// The failure rather than a conflict is the whole of the claim. An implementation that looked at the
+    /// destination each time would find the path occupied — by what this same call had just put back — and
+    /// report a skip, which is a different answer about an entry that never had anything in its way.
+    /// <para>
+    /// Two references to one entry are what a caller gets from filtering a listing twice or from handing the
+    /// same variable in twice; identity is <see cref="RecycleBinItem"/>'s own, the <c>$I</c> path, and no
+    /// record is read to decide it.
+    /// </para>
+    /// <para>
+    /// The restored list and the failure are asserted apart from one another, and both are needed: a runner
+    /// that reported the repeat without restoring anything would pass the failure assertions, and one that
+    /// restored the entry twice would pass the restored-path ones. The second restore has no second path to
+    /// land on, so neither list can stand in for the other.
+    /// </para>
+    /// </remarks>
+    private static async Task TheSameEntryTwiceIsRestoredOnce(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(4096);
+        var bytes = File.ReadAllBytes(target);
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the file reached the bin");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        var result = await RecycleBin.RestoreAsync([item, item], cancellationToken: context.CancellationToken);
+
+        Check.Equal(1, result.ItemsRestored, "the entry was restored once");
+        Check.Equal(1, result.RestoredPaths.Count, "and named once");
+        Check.Equal(target, result.RestoredPaths[0], "at the path it was deleted from");
+        Check.Equal(4096, result.RestoredSize, "its bytes counted once");
+        Check.True(File.Exists(target), $"and it is back at {target}");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(target)), "byte for byte");
+
+        Check.Equal(1, result.Failures.Count, "and the repeat is reported");
+        Check.Equal(target, result.Failures[0].Path, "under the path the entry came from");
+        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "as a restore failure");
+        Check.Equal(0, result.Failures[0].HResult, "with no code of its own, because the filesystem was never asked");
+        Check.Equal(0, result.Failures[0].Attempts, "and nothing was attempted for it");
+        Check.False(result.Succeeded, "so a call that was handed one entry twice does not report having done what it was asked");
+
+        Check.Equal(0, result.Conflicts.Count, "one entry wanting one path twice is not two entries wanting one path");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the entry left the bin once");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An entry whose <c>$I</c> record cannot be read is reported as a failure under its own path, because
+    /// that record is the only thing that says where the entry came from and there is nothing else to report
+    /// it at.
+    /// </summary>
+    /// <remarks>
+    /// The entry is built rather than made, for the reason
+    /// <see cref="EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode"/> gives: taking a record away from a
+    /// real bin leaves a payload in the owner's Recycle Bin with nothing that will ever collect it. Both paths
+    /// here sit under the scratch root so that the entry is grouped under the volume the run is on and read
+    /// there, exactly as an entry out of a listing is, and neither of them is ever created.
+    /// <para>
+    /// What is being asked is that the entry's own documented behaviour — raising
+    /// <see cref="IOException"/> when a caller asks for <see cref="RecycleBinItem.OriginalPath"/> of a
+    /// record that cannot be read — stops at the boundary of a batch. A caller restoring ninety entries must
+    /// not lose the eighty-nine answers because the ninetieth was purged by something else in the meantime.
+    /// </para>
+    /// <para>
+    /// No volume requirement is declared: nothing here is written to or read from the Recycle Bin. The record
+    /// is looked for, is not there, and that is the whole of the case.
+    /// </para>
+    /// </remarks>
+    private static async Task AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var neverWritten = new RecycleBinItem(
+            Path.Combine(ScratchWorkspace.Root, "never-written-record.bin"),
+            Path.Combine(ScratchWorkspace.Root, "never-written-payload.bin"),
+            0,
+            false);
+
+        var result = await RecycleBin.RestoreAsync([neverWritten], cancellationToken: context.CancellationToken);
+
+        Check.False(result.Succeeded, "the restore did not succeed");
+        Check.Equal(0, result.ItemsRestored, "nothing was restored");
+        Check.Equal(0, result.RestoredPaths.Count, "so nothing is named as restored");
+
+        Check.Equal(1, result.Failures.Count, "the entry is reported rather than raised out of the call");
+        Check.Equal(neverWritten.IndexPath, result.Failures[0].Path, "under the only path an entry carries without reading its record");
+        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a restore failure is reported");
+        Check.True(
+            (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
+            $"and with the file system's own code for a record that is not there: 0x{result.Failures[0].HResult:X8}");
+        Check.Equal(0, result.Failures[0].Attempts, "nothing was placed, because nothing could be read about where to put it");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A directory restoring onto a path a <em>file</em> is standing on: the occupant is the other kind, so it
+    /// is a conflict like any other, and <see cref="RestoreDirectoryConflict.RenameDirectory"/> sets the tree
+    /// down beside the file under the first free name rather than touching the file.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RecycleRestoreConflict.OccupiedByDirectory"/> is asserted to be <see langword="false"/> and
+    /// not merely true or false: it is the flag that tells a caller which kind was in the way, and an
+    /// implementation that reported the arriving kind, or that left the flag at its default, would answer this
+    /// exactly as it answers a same-kind occupant.
+    /// <para>
+    /// The tree is checked at its deepest file and not at its root, because the root is the one directory
+    /// <see cref="Directory.Move(string, string)"/> creates whether anything was inside it or not, and the
+    /// depth is what a whole move owes.
+    /// </para>
+    /// </remarks>
+    private static async Task ADirectoryRestoringOntoAFileIsAConflict(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var root = Path.Combine(ScratchWorkspace.Root, "tree");
+
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        var bytes = RandomBytes(4096);
+        File.WriteAllBytes(Path.Combine(root, "nested", "leaf.bin"), bytes);
+
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(root, cancellationToken: context.CancellationToken),
+            "the tree reached the bin");
+
+        // At the path the tree was deleted from, the other kind: what a file left behind under that name would
+        // be for this library to find, and what the planner answers by the policy for the kind arriving.
+        File.WriteAllText(root, "a file where a directory used to be");
+
+        // Taken while the squatter holds the name the first number would take, which is what makes the answer
+        // the same string the restore lands on rather than the next one after it.
+        var renamed = RestorePathPlanner.WithFreeNumber(root);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            root);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory },
+            context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(0, result.Failures.Count, "so nothing reached the failures list");
+        Check.Equal(1, result.ItemsRestored, "the tree was restored");
+        Check.Equal(1, result.RestoredPaths.Count, "and is named");
+        Check.Equal(renamed, result.RestoredPaths[0], "under the first free name beside the one it wanted");
+        Check.True(
+            bytes.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(renamed, "nested", "leaf.bin"))),
+            "the tree landed whole, its deepest file and all");
+        Check.True(Directory.Exists(Path.Combine(renamed, "nested")), "and the directory in between it");
+        Check.Equal("a file where a directory used to be", File.ReadAllText(root), "while the file in the way is untouched");
+
+        Check.Equal(1, result.Conflicts.Count, "and the occupant is reported as one conflict");
+        Check.Equal(renamed, result.Conflicts[0].Path, "naming where the tree landed rather than what it collided with");
+        Check.False(result.Conflicts[0].OccupiedByDirectory, "with what was in the way reported as a file, not a directory");
+        Check.Equal(RecycleRestoreConflictAction.RestoredRenamed, result.Conflicts[0].Action, "and the action taken");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry has left the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The other cross-kind case: a file restoring onto a path a <em>directory</em> is standing on under
+    /// <see cref="RestoreFileConflict.Replace"/>. There is nothing to overwrite — the occupant is not a file —
+    /// so the move is refused, the directory is left exactly as it was, and the entry is reported as a failed
+    /// restore rather than raising out of the call.
+    /// </summary>
+    /// <remarks>
+    /// What <see cref="File.Move(string, string, bool)"/> does when its destination is a directory was measured
+    /// on this machine rather than assumed, and it is not an overwrite: it raises
+    /// <see cref="UnauthorizedAccessException"/> with <c>0x80070005</c> — the same refusal for an empty
+    /// directory as for a full one — and leaves the source, the destination and everything inside it untouched.
+    /// That is why the case asserts a reported failure and an untouched disk rather than a replaced path, and
+    /// why the code is checked for its severity bit and not against a constant: which refusal Windows raises
+    /// is a property of Windows, and what this library owes is that the refusal is reported.
+    /// <para>
+    /// <see cref="UnauthorizedAccessException"/> is not an <see cref="IOException"/>, which is the reason the
+    /// catch around a move lists it separately: a filter naming <see cref="IOException"/> alone would let this
+    /// case escape the batch entirely.
+    /// </para>
+    /// <para>
+    /// The payload is checked for still being in the Recycle Bin, which is the other half of the claim — a
+    /// move that raised is a move that did not happen, so nothing was lost and the entry is still restorable.
+    /// </para>
+    /// </remarks>
+    private static async Task AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(4096);
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the file reached the bin");
+
+        // At the path the file was deleted from, the other kind again.
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "inside.bin"), "inside the directory");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { FileConflict = RestoreFileConflict.Replace },
+            context.CancellationToken);
+
+        Check.False(result.Succeeded, "the restore did not succeed");
+        Check.Equal(0, result.ItemsRestored, "nothing was restored");
+        Check.Equal(0, result.RestoredPaths.Count, "so nothing is named as restored");
+
+        Check.Equal(1, result.Failures.Count, "the file is reported as one failure");
+        Check.Equal(target, result.Failures[0].Path, "under the path it wanted");
+        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a failed move is reported");
+        Check.True(
+            (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
+            $"carrying the file system's own code rather than none: 0x{result.Failures[0].HResult:X8}");
+        Check.Equal(1, result.Failures[0].Attempts, "the overwrite was attempted once, and it is what failed");
+        Check.Equal(0, result.Conflicts.Count, "and it is not a conflict to resolve: the overwrite resolved nothing");
+
+        Check.True(Directory.Exists(target), "the directory in the way is still there");
+        Check.Equal("inside the directory", File.ReadAllText(Path.Combine(target, "inside.bin")), "with everything in it");
+        Check.True(File.Exists(item.PayloadPath), "and the payload never left the Recycle Bin, so nothing was lost");
+        Check.Equal(1, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the entry is still there to try again");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A batch is only as good as the entry that goes wrong in it: one entry the disk will not take leaves
+    /// every other entry's answer intact, and the caller is told which one it was.
+    /// </summary>
+    /// <remarks>
+    /// This is the claim every single-entry case above cannot make. Each of them proves that one entry's
+    /// refusal is reported; nothing in them would notice a runner that reported it by ending the call, because
+    /// the call had nothing left to report. Two entries in one call, the first of which cannot be moved, is
+    /// what says the refusal cost the second entry nothing.
+    /// <para>
+    /// The entry that fails is handed in first on purpose. A runner that gave up at the first refusal has
+    /// nothing to answer for the second entry at all, while one that carried on names the path the second
+    /// came back to — and only the presence of that path tells the two apart.
+    /// </para>
+    /// <para>
+    /// The entry that could not be moved is shown to be left in the bin by its record still being there
+    /// rather than by a count, because <see cref="RecycleBinProbe"/> counts an entry only when both of its
+    /// halves are present: one payload is gone because this case deleted it and the other is gone because it
+    /// was restored, so the count is back at its baseline either way and says nothing about what was left.
+    /// </para>
+    /// </remarks>
+    private static async Task OneEntryFailingDoesNotCostTheOthersTheirAnswers(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var stale = workspace.CreateRandomFile(1024);
+        var fine = workspace.CreateRandomFile(2048);
+        var bytes = File.ReadAllBytes(fine);
+
+        Check.True(
+            (await RecycleBin.RecycleAsync([stale, fine], cancellationToken: context.CancellationToken)).Succeeded,
+            "both files reached the bin");
+
+        var listed = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken);
+
+        var staleItem = FindTheEntryFor(listed, stale);
+        var fineItem = FindTheEntryFor(listed, fine);
+
+        File.Delete(staleItem.PayloadPath);
+
+        var result = await RecycleBin.RestoreAsync([staleItem, fineItem], cancellationToken: context.CancellationToken);
+
+        Check.Equal(1, result.ItemsRestored, "the entry that could be restored was");
+        Check.Equal(1, result.RestoredPaths.Count, "and is named");
+        Check.Equal(fine, result.RestoredPaths[0], "at the path it was deleted from");
+        Check.True(File.Exists(fine), $"so it is back at {fine}");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(fine)), "byte for byte, even though the first entry failed");
+
+        Check.Equal(1, result.Failures.Count, "and only the other one failed");
+        Check.Equal(stale, result.Failures[0].Path, "reported under its own path");
+        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a failed move is reported");
+        Check.False(result.Succeeded, "so the result still says the batch did not do everything it was asked");
+
+        Check.False(File.Exists(stale), "while nothing was invented at the destination of the one that could not be moved");
+        Check.True(File.Exists(staleItem.IndexPath), "and that entry's record is still in the bin, so it can be tried again");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The narrow window the move-then-delete order leaves open: the payload is back where its caller wanted
+    /// it, its record could not go, and the result says so rather than reporting a restore that did not finish.
+    /// </summary>
+    /// <remarks>
+    /// The record is held open with nothing shared, which is what makes deleting it fail here. The handle is
+    /// read-only and asks for no delete access, so the record is not touched, and it is released before the
+    /// case ends whichever way the assertions went.
+    /// <para>
+    /// This is the failure the chosen order is for, and it is the reason the order is not the other way round:
+    /// the file is already where the caller asked for it, the entry is still in the Recycle Bin, and a caller
+    /// reading the result can tell that apart from an entry that never moved. A restore that reported this as
+    /// a success would leave the file back and the bin still claiming it, with nothing to say so.
+    /// </para>
+    /// <para>
+    /// The record is checked for still being there rather than counted in the bin, because
+    /// <see cref="RecycleBinProbe"/> skips a record whose payload has gone — which is exactly the state this
+    /// case produces. The record is then removed, so the case leaves nothing in the owner's Recycle Bin; that
+    /// is cleanup of material this case itself put there, not a second operation on the bin.
+    /// </para>
+    /// </remarks>
+    private static async Task APayloadThatMovedAndARecordThatWouldNotGoIsAFailure(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(4096);
+        var bytes = File.ReadAllBytes(target);
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the file reached the bin");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        using (File.Open(item.IndexPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+
+            Check.False(result.Succeeded, "the restore did not succeed");
+            Check.Equal(0, result.ItemsRestored, "and nothing is reported as restored, because the entry has not left the bin");
+            Check.Equal(0, result.RestoredPaths.Count, "so no path is named as restored either");
+
+            Check.Equal(1, result.Failures.Count, "the entry is reported as one failure");
+            Check.Equal(target, result.Failures[0].Path, "under the path it wanted");
+            Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a restore that did not finish is reported");
+            Check.True(
+                (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
+                $"with the file system's own code for a record that is held: 0x{result.Failures[0].HResult:X8}");
+            Check.Equal(1, result.Failures[0].Attempts, "the move was attempted once, and the delete is what failed");
+
+            Check.True(File.Exists(target), $"while the payload is back at {target}");
+            Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(target)), "byte for byte");
+            Check.True(File.Exists(item.IndexPath), "and the record is still there, so the entry still shows in the bin");
+        }
+
+        File.Delete(item.IndexPath);
 
         workspace.Dispose();
     }

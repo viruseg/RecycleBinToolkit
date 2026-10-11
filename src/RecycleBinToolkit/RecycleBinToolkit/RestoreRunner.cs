@@ -19,6 +19,14 @@ namespace RecycleBinToolkit;
 /// expects it while its entry still shows in the bin — visible in a listing, reported by the result, and
 /// fixable by restoring that entry again.
 /// </para>
+/// <para>
+/// <b>Nothing one entry does ends the call.</b> A payload deleted since the listing, a destination occupied by
+/// the other kind, a record that cannot be read, an entry the caller named twice: each is one entry's answer,
+/// carried in <see cref="RecycleBinRestoreResult.Failures"/> with the code the filesystem gave where there was
+/// one, and the entries around it keep the outcomes they had. A caller restoring ninety entries gets ninety
+/// answers however many of them the disk would not allow, which is the only shape in which the failures list
+/// can be read as a list rather than as the exception that stopped the batch.
+/// </para>
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class RestoreRunner
@@ -66,11 +74,15 @@ internal static class RestoreRunner
         // nothing has been decided for.
         var slots = new RestoreOutcome[items.Count];
 
+        // Every entry this call has already answered, so that a list naming one twice moves it once. Keyed by
+        // the entry's own identity — its $I path — which is one string comparison and reads no record.
+        var settled = new HashSet<RecycleBinItem>();
+
         foreach (var volume in GroupByVolume(items, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            RestoreVolume(items, volume.Value, options, slots, cancellationToken);
+            RestoreVolume(items, volume.Value, options, slots, settled, cancellationToken);
         }
 
         return Flatten(slots);
@@ -87,6 +99,7 @@ internal static class RestoreRunner
     /// </param>
     /// <param name="options">The normalised settings the restore runs under.</param>
     /// <param name="slots">Where each entry's outcome is written, by position in the caller's list.</param>
+    /// <param name="settled">The entries this call has already answered, carried across volumes so that a list naming one twice answers it once.</param>
     /// <param name="cancellationToken">Cancels the operation between entries.</param>
     /// <remarks>
     /// Records are read before anything moves, through <see cref="ItemDetailLoader"/>, so a move is never
@@ -94,12 +107,17 @@ internal static class RestoreRunner
     /// <see cref="RecycleBinOptions.PreloadItemDetails"/> left its entries already read, and the loader
     /// reads nothing for those again — which is why they cost one field read each here and a file read
     /// each in a cold listing.
+    /// <para>
+    /// One volume holds every copy of one entry: an entry's volume is a prefix of its own record path, so two
+    /// equal entries are answered in the same group and the first of them really does come first.
+    /// </para>
     /// </remarks>
     private static void RestoreVolume(
         IReadOnlyList<RecycleBinItem> items,
         List<int> positions,
         RecycleBinOptions options,
         RestoreOutcome[] slots,
+        HashSet<RecycleBinItem> settled,
         CancellationToken cancellationToken)
     {
         var entries = new List<RecycleBinItem>(positions.Count);
@@ -115,7 +133,7 @@ internal static class RestoreRunner
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            Restore(entries[i], options, slots, positions[i]);
+            Restore(entries[i], options, slots, settled, positions[i]);
         }
     }
 
@@ -126,6 +144,7 @@ internal static class RestoreRunner
     /// <param name="item">The entry, whose record has been read.</param>
     /// <param name="options">The normalised settings the restore runs under.</param>
     /// <param name="slots">Where the outcome is written, by position in the caller's list.</param>
+    /// <param name="settled">The entries this call has already answered.</param>
     /// <param name="position">That entry's position in the caller's list.</param>
     /// <remarks>
     /// What is in the way is asked about rather than assumed, because it is a fact about the disk and not
@@ -141,46 +160,107 @@ internal static class RestoreRunner
     /// <see cref="RestoreAction.Skip"/>, and only one of them also lands in
     /// <see cref="RecycleBinRestoreResult.Failures"/>.
     /// </para>
+    /// <para>
+    /// <b>What goes wrong here is an answer rather than an exception.</b> An entry the caller named twice is
+    /// reported the second time and not moved, because the first has already been answered and a second
+    /// would move one payload twice or report one collision twice. And a refusal from the filesystem — a
+    /// payload deleted since the listing, a destination occupied by the other kind under a policy that asked
+    /// to overwrite it, a record that cannot be read — becomes a
+    /// <see cref="RecycleFailureStage.RestoreFailed"/> carrying the code it raised, whichever policy asked
+    /// for the move. Only what the filesystem itself raises on these paths is caught, so a defect here still
+    /// surfaces rather than being reported as a disk that said no.
+    /// </para>
     /// </remarks>
     private static void Restore(
         RecycleBinItem item,
         RecycleBinOptions options,
         RestoreOutcome[] slots,
+        HashSet<RecycleBinItem> settled,
         int position)
     {
-        var decision = RestorePathPlanner.Decide(item.OriginalPath, item.IsDirectory, options);
+        RestoreDecision decision;
 
-        switch (decision.Action)
+        try
         {
-            case RestoreAction.Move:
-                Place(item, decision.TargetPath);
-                slots[position] = new RestoreOutcome(RestoreOutcomeKind.Restored, decision.TargetPath, item.Size);
-                break;
+            var originalPath = item.OriginalPath;
 
-            case RestoreAction.Replace:
-                Place(item, decision.TargetPath, overwrite: true);
-                slots[position] = new RestoreOutcome(RestoreOutcomeKind.Replaced, decision.TargetPath, item.Size);
-                break;
+            // Answered before the destination is looked at, which is the only order in which the answer is the
+            // truth: the first of two identical entries has already been answered by the time the second is
+            // reached, and asking the planner about that would move one payload twice or report one collision
+            // twice.
+            if (!settled.Add(item))
+            {
+                slots[position] = Failed(originalPath, item.Size, hResult: 0, attempts: 0);
+                return;
+            }
 
-            case RestoreAction.Rename:
-                Place(item, decision.TargetPath);
-                slots[position] = new RestoreOutcome(RestoreOutcomeKind.RestoredRenamed, decision.TargetPath, item.Size)
-                {
-                    OccupiedByDirectory = decision.OccupiedByDirectory
-                };
-                break;
+            decision = RestorePathPlanner.Decide(originalPath, item.IsDirectory, options);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Nothing was placed and there is no path to report it at: a record that cannot be read is the one
+            // thing an entry needs to say where it came from, and its own $I path is the only path an entry
+            // carries without reading one.
+            slots[position] = Failed(item.IndexPath, item.Size, ex.HResult, attempts: 0);
+            return;
+        }
 
-            default:
-                slots[position] = new RestoreOutcome(
-                    IsRefusal(item, options) ? RestoreOutcomeKind.Refused : RestoreOutcomeKind.Skipped,
-                    decision.TargetPath,
-                    item.Size)
-                {
-                    OccupiedByDirectory = decision.OccupiedByDirectory
-                };
-                break;
+        try
+        {
+            switch (decision.Action)
+            {
+                case RestoreAction.Move:
+                    Place(item, decision.TargetPath);
+                    slots[position] = new RestoreOutcome(RestoreOutcomeKind.Restored, decision.TargetPath, item.Size);
+                    break;
+
+                case RestoreAction.Replace:
+                    Place(item, decision.TargetPath, overwrite: true);
+                    slots[position] = new RestoreOutcome(RestoreOutcomeKind.Replaced, decision.TargetPath, item.Size);
+                    break;
+
+                case RestoreAction.Rename:
+                    Place(item, decision.TargetPath);
+                    slots[position] = new RestoreOutcome(RestoreOutcomeKind.RestoredRenamed, decision.TargetPath, item.Size)
+                    {
+                        OccupiedByDirectory = decision.OccupiedByDirectory
+                    };
+                    break;
+
+                default:
+                    slots[position] = new RestoreOutcome(
+                        IsRefusal(item, options) ? RestoreOutcomeKind.Refused : RestoreOutcomeKind.Skipped,
+                        decision.TargetPath,
+                        item.Size)
+                    {
+                        OccupiedByDirectory = decision.OccupiedByDirectory
+                    };
+                    break;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // The move, or the delete of a record whose payload has already been put back, is what raised. The
+            // second of those is why this is reported and not acted on: the file is already where its caller
+            // wanted it, and the entry is left in the bin to be recognised as restored next time.
+            slots[position] = Failed(decision.TargetPath, item.Size, ex.HResult, attempts: 1);
         }
     }
+
+    /// <summary>
+    /// An entry that did not come back, under the path it is to be reported at and the code the filesystem
+    /// gave for it.
+    /// </summary>
+    /// <param name="path">The path the failure names: the destination where there was one, and the entry's own record otherwise.</param>
+    /// <param name="size">The bytes the entry carries, as its record measured them.</param>
+    /// <param name="hResult">The code the filesystem raised, or <c>0</c> where nothing was asked of it.</param>
+    /// <param name="attempts">How many times the payload was put down for this entry before it was given up on.</param>
+    private static RestoreOutcome Failed(string path, long size, int hResult, int attempts) =>
+        new(RestoreOutcomeKind.Failed, path, size)
+        {
+            HResult = hResult,
+            Attempts = attempts
+        };
 
     /// <summary>
     /// Puts the payload down at <paramref name="targetPath"/> and takes the record away, in that order.
@@ -364,7 +444,21 @@ internal static class RestoreRunner
         /// one as well as as a conflict — the only way a caller reading the conflicts alone could tell it
         /// from a skip.
         /// </summary>
-        Refused
+        Refused,
+
+        /// <summary>
+        /// The filesystem refused to put the entry back, or would not say where it came from, and the refusal
+        /// is carried with the code it raised.
+        /// </summary>
+        /// <remarks>
+        /// Distinct from <see cref="Refused"/> in that nothing was in the way and nothing was chosen: this is
+        /// what a payload deleted since the listing, a destination holding the other kind under a policy that
+        /// asked to overwrite it, and a record that cannot be read all arrive as. The stage is the same either
+        /// way — <see cref="RecycleFailureStage.RestoreFailed"/> is where a restore that did not happen is
+        /// reported, and <see cref="RecycleFailureStage.RestoreConflictRefused"/> is where a conflict the
+        /// caller asked to be told about is.
+        /// </remarks>
+        Failed
     }
 
     /// <summary>
@@ -383,6 +477,23 @@ internal static class RestoreRunner
     {
         /// <summary>Whether what occupies the path the entry wanted is a directory rather than a file.</summary>
         internal bool OccupiedByDirectory { get; init; }
+
+        /// <summary>
+        /// The code the filesystem raised for this entry, or <c>0</c> when nothing was asked of it.
+        /// </summary>
+        /// <remarks>
+        /// Carried through exactly as the exception carried it, because <see cref="RecycleFailure.HResult"/>
+        /// promises a caller the same code. A kind that never failed never sets it, and neither does a failure
+        /// nothing was attempted for.
+        /// </remarks>
+        internal int HResult { get; init; }
+
+        /// <summary>
+        /// How many times the payload was put down for this entry before it was given up on, which is
+        /// <c>0</c> for every kind but <see cref="RestoreOutcomeKind.Failed"/> and for a failure nothing was
+        /// attempted for.
+        /// </summary>
+        internal int Attempts { get; init; }
     }
 
     /// <summary>
@@ -426,6 +537,10 @@ internal static class RestoreRunner
                 case RestoreOutcomeKind.Refused:
                     conflicts.Add(new RecycleRestoreConflict(slot.Path, slot.OccupiedByDirectory, RecycleRestoreConflictAction.Skipped));
                     failures.Add(new RecycleFailure(slot.Path, 0, 0, RecycleFailureStage.RestoreConflictRefused));
+                    break;
+
+                case RestoreOutcomeKind.Failed:
+                    failures.Add(new RecycleFailure(slot.Path, slot.HResult, slot.Attempts, RecycleFailureStage.RestoreFailed));
                     break;
             }
         }
