@@ -320,10 +320,12 @@ public static class RecycleBin
     /// An entry's payload is moved back to the path its record names and its record is then deleted, so a
     /// restored item leaves the Recycle Bin rather than being copied out of it.
     /// <para>
-    /// Nothing here writes an index record, which is why this carries none of the machine gate
-    /// <see cref="RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/> does: that
-    /// one leaves records the Explorer's own Restore has to be able to read, and this one only takes them
-    /// away.
+    /// A restore takes index records away rather than leaving them, which is why this carries none of the
+    /// machine gate <see cref="RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>
+    /// does — with one exception. A merge that cannot place a file of its tree puts that file back into the
+    /// Recycle Bin with a record of its own, because the payload it is lying in is about to be deleted. That
+    /// record is this library's version 2 like any other, so on a machine whose Explorer cannot read one,
+    /// the put-back entry is restorable through this library and not through Explorer's own Restore.
     /// </para>
     /// <para>
     /// A payload that would not move, a record that would not go and a record that could not be read are
@@ -390,8 +392,8 @@ public static class RecycleBin
     /// <para>
     /// Everything else is as
     /// <see cref="RestoreAsync(IReadOnlyList{RecycleBinItem}, RecycleBinOptions?, CancellationToken)"/>
-    /// promises: each entry's outcome is reported on its own, the elapsed time covers the wait, and no
-    /// machine gate applies because nothing here writes an index record.
+    /// promises: each entry's outcome is reported on its own, the elapsed time covers the wait, and the
+    /// machine gate is as absent here as it is there.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="volumes"/> is <see langword="null"/>.</exception>

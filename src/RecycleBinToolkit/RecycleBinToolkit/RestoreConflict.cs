@@ -9,16 +9,22 @@ namespace RecycleBinToolkit;
 /// only ever under its own, and merging a tree into what is already there is a question a file cannot be
 /// asked. One enumerator between them would carry values that are impossible for one of the two.
 /// <para>
-/// No value here writes outside the directory the caller named, and none touches a directory the restore
-/// was not restoring. What is already on disk is left alone, overwritten, or set beside — never renamed,
-/// moved or removed.
-/// </para>
-/// </remarks>
+    /// No value here writes outside the directory the caller named, and none touches a directory the restore
+    /// was not restoring. What is already on disk is left alone, overwritten, or set beside — never renamed,
+    /// moved or removed.
+    /// </para>
+/// <para>
+    /// A destination occupied by a <em>file</em> is a conflict like any other, and the three merge values
+    /// have no tree to merge into: the move is refused and the entry is reported at
+    /// <see cref="RecycleFailureStage.RestoreFailed"/> with the file left exactly as it was, where
+    /// <see cref="RenameDirectory"/> takes a free name instead.
+    /// </para>
+    /// </remarks>
 public enum RestoreDirectoryConflict
 {
     /// <summary>
-    /// To merge the directory's contents into the one already there, leaving every file of the same name
-    /// that is already there exactly as it is. <b>Not implemented yet.</b>
+    /// Merge the directory's contents into the one already there, leaving every file of the same name
+    /// that is already there exactly as it is.
     /// </summary>
     /// <remarks>
     /// The default, and for the same reason <see cref="RestoreFileConflict.Skip"/> is: the incoming file
@@ -26,47 +32,45 @@ public enum RestoreDirectoryConflict
     /// <para>
     /// A file that does not fit is not left inside the payload the directory came in, because that payload is
     /// removed once the directory has been dealt with and the file would go with it. It goes back into the
-    /// Recycle Bin as an entry of its own instead: an ordinary item in the next listing, restorable later by
-    /// the same call.
+    /// Recycle Bin as an entry of its own instead: an ordinary item in the next listing, under the path it
+    /// wanted, restorable later by the same call once the squatter has moved on.
     /// </para>
     /// <para>
-    /// <b>Not implemented yet.</b> This is the default, and until the merge walk exists a directory whose
-    /// path is occupied arrives as a <see cref="RecycleFailureStage.RestoreFailed"/> with its payload and
-    /// record both left in the Recycle Bin, under this value and under the other two <c>Merge*</c> ones.
-    /// <see cref="RenameDirectory"/>, <see cref="Skip"/> and <see cref="Error"/> answer before anything moves
-    /// and behave as documented today.
+    /// Reported as one <see cref="RecycleRestoreConflictAction.MergedSkipped"/> for the directory rather than
+    /// one per file that gave way, because nothing about those files was resolved here — each is an entry in
+    /// the next listing, and the directory is in
+    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/>. The merge itself reaches no failure stage.
     /// </para>
     /// </remarks>
     MergeSkip = 0,
 
     /// <summary>
-    /// To merge the directory's contents into the one already there, overwriting every file of the same
-    /// name that is already there. <b>Not implemented yet.</b>
+    /// Merge the directory's contents into the one already there, overwriting every file of the same name
+    /// that is already there.
     /// </summary>
     /// <remarks>
-    /// To merge a subdirectory of the same name rather than replace it: the only way to replace a
+    /// A subdirectory of the same name is merged into rather than replaced: the only way to replace a
     /// directory is to delete what is there first and find out afterwards whether the move was possible at
     /// all, and the bytes destroyed by that are the caller's. Overwriting a file is the caller's own
     /// instruction and happens on the caller's file; it does not extend to directories, which is why there
     /// is no value here that replaces one whole.
     /// <para>
-    /// <b>Not implemented yet.</b> Until the merge walk exists, a directory whose path is occupied arrives as
-    /// a <see cref="RecycleFailureStage.RestoreFailed"/> under this value and under the other two
-    /// <c>Merge*</c> ones, with its payload and record both left in the Recycle Bin.
+    /// Reported as one <see cref="RecycleRestoreConflictAction.MergedReplaced"/> per file that was
+    /// overwritten, under the path it was overwritten at, and reaches no failure stage.
     /// </para>
     /// </remarks>
     MergeReplace,
 
     /// <summary>
-    /// To merge the directory's contents into the one already there, setting each incoming file that clashes
+    /// Merge the directory's contents into the one already there, setting each incoming file that clashes
     /// down under a free name of its own — <c>report.txt</c> becoming <c>report (1).txt</c>.
-    /// <b>Not implemented yet.</b>
     /// </summary>
     /// <remarks>
     /// Only what comes out of the Recycle Bin is ever renamed. What is already on disk is not renamed,
     /// moved or removed.
     /// <para>
-    /// <b>Not implemented yet.</b> See <see cref="MergeReplace"/>.
+    /// Reported as one <see cref="RecycleRestoreConflictAction.MergedRenamed"/> per file that was renamed,
+    /// under the free name it landed at rather than the one it collided at, and reaches no failure stage.
     /// </para>
     /// </remarks>
     MergeRename,

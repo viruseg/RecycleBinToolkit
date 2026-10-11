@@ -78,11 +78,19 @@ internal static class RestoreRunner
         // the entry's own identity — its $I path — which is one string comparison and reads no record.
         var settled = new HashSet<RecycleBinItem>();
 
+        // The one slot a merge's put-back is written behind. A Recycle Bin is one directory per volume and
+        // every record lands in it, so writers in it contend: recycling 3,000 records measured 542 files a
+        // second on one thread against 189 on eight. Nothing here runs in parallel and so nothing contends
+        // for this; it is taken because the put-back is the one part of a restore that writes into that
+        // directory, and a walk that gained threads would need it to be one guard per physical disk rather
+        // than one for the call.
+        using var putBack = new SemaphoreSlim(1, 1);
+
         foreach (var volume in GroupByVolume(items, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            RestoreVolume(items, volume.Value, options, slots, settled, cancellationToken);
+            RestoreVolume(items, volume.Value, options, slots, settled, putBack, cancellationToken);
         }
 
         return Flatten(slots);
@@ -100,6 +108,7 @@ internal static class RestoreRunner
     /// <param name="options">The normalised settings the restore runs under.</param>
     /// <param name="slots">Where each entry's outcome is written, by position in the caller's list.</param>
     /// <param name="settled">The entries this call has already answered, carried across volumes so that a list naming one twice answers it once.</param>
+    /// <param name="putBack">The guard a merge writes its put-back behind.</param>
     /// <param name="cancellationToken">Cancels the operation between entries.</param>
     /// <remarks>
     /// Records are read before anything moves, through <see cref="ItemDetailLoader"/>, so a move is never
@@ -118,6 +127,7 @@ internal static class RestoreRunner
         RecycleBinOptions options,
         RestoreOutcome[] slots,
         HashSet<RecycleBinItem> settled,
+        SemaphoreSlim putBack,
         CancellationToken cancellationToken)
     {
         var entries = new List<RecycleBinItem>(positions.Count);
@@ -133,7 +143,7 @@ internal static class RestoreRunner
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            Restore(entries[i], options, slots, settled, positions[i]);
+            Restore(entries[i], options, slots, settled, putBack, positions[i], cancellationToken);
         }
     }
 
@@ -145,7 +155,9 @@ internal static class RestoreRunner
     /// <param name="options">The normalised settings the restore runs under.</param>
     /// <param name="slots">Where the outcome is written, by position in the caller's list.</param>
     /// <param name="settled">The entries this call has already answered.</param>
+    /// <param name="putBack">The guard a merge writes its put-back behind.</param>
     /// <param name="position">That entry's position in the caller's list.</param>
+    /// <param name="cancellationToken">Cancels the operation between this entry and the next.</param>
     /// <remarks>
     /// What is in the way is asked about rather than assumed, because it is a fact about the disk and not
     /// about this call: an entry whose path was taken again while it sat in the Recycle Bin must not be
@@ -176,7 +188,9 @@ internal static class RestoreRunner
         RecycleBinOptions options,
         RestoreOutcome[] slots,
         HashSet<RecycleBinItem> settled,
-        int position)
+        SemaphoreSlim putBack,
+        int position,
+        CancellationToken cancellationToken)
     {
         // Hoisted so that a refusal on the way to a decision can still be reported against the path the entry
         // came from. Reading the record and deciding where to put it are one try because one of them being the
@@ -216,6 +230,10 @@ internal static class RestoreRunner
         {
             switch (decision.Action)
             {
+                case RestoreAction.Move when Merges(item, decision, options):
+                    slots[position] = Merge(item, decision.TargetPath, options, putBack, cancellationToken);
+                    break;
+
                 case RestoreAction.Move:
                     Place(item, decision.TargetPath);
                     slots[position] = new RestoreOutcome(RestoreOutcomeKind.Restored, decision.TargetPath, item.Size);
@@ -368,6 +386,389 @@ internal static class RestoreRunner
             : options.FileConflict == RestoreFileConflict.Error;
 
     /// <summary>
+    /// Whether this decision is a merge: a directory arriving at a directory that is already there, under
+    /// one of the three policies that ask to be merged rather than to take a name of its own.
+    /// </summary>
+    /// <param name="item">The entry, whose record has been read.</param>
+    /// <param name="decision">What the planner answered for it.</param>
+    /// <param name="options">The normalised settings the restore is running under.</param>
+    /// <returns>
+    /// <see langword="true"/> when the destination is occupied by a directory and the caller asked for the
+    /// tree to be merged into it.
+    /// </returns>
+    /// <remarks>
+    /// Both halves are needed and neither answers for the other. The occupant's kind is what separates a
+    /// merge from a directory arriving at a <em>file</em>, which
+    /// <see cref="RestorePathPlanner.Decide"/> answers with the same <see cref="RestoreAction.Move"/> under
+    /// every merge value: there is no tree to merge into, and the move is refused. The policy is the third,
+    /// and the planner already implies it — among occupied destinations it answers
+    /// <see cref="RestoreAction.Move"/> for the three merge values and for nothing else. It is asked anyway
+    /// because a value from outside the set is answered as a skip everywhere else in this library, and a
+    /// walk driven by one would put nothing anywhere.
+    /// </remarks>
+    private static bool Merges(RecycleBinItem item, RestoreDecision decision, RecycleBinOptions options) =>
+        item.IsDirectory
+            && decision.OccupiedByDirectory
+            && options.DirectoryConflict is RestoreDirectoryConflict.MergeSkip
+                or RestoreDirectoryConflict.MergeReplace
+                or RestoreDirectoryConflict.MergeRename;
+
+    /// <summary>
+    /// Puts a directory's tree into the directory already standing at its path, and takes the entry's own
+    /// record away once everything inside the payload has been dealt with.
+    /// </summary>
+    /// <param name="item">The entry, whose record has been read.</param>
+    /// <param name="targetPath">The path the record named, which is a directory that is already there.</param>
+    /// <param name="options">The normalised settings the restore runs under.</param>
+    /// <param name="putBack">The guard the put-back is written behind.</param>
+    /// <param name="cancellationToken">Cancels the walk between entries.</param>
+    /// <returns>
+    /// What became of the entry. A merge that could not finish is
+    /// <see cref="RestoreOutcomeKind.Failed"/> whether it failed in the walk or in the removal afterwards,
+    /// and it carries the same conflicts and failures either way: what happened to each file is true of the
+    /// directory's outcome as much as of the directory's own.
+    /// </returns>
+    /// <remarks>
+    /// <b>Windows cannot merge two directories in one move,</b> so this is a walk rather than a call:
+    /// everything inside the payload is placed one entry at a time and then the payload, now holding nothing
+    /// but empty folders, is removed. The payload goes before the record, for the reason this class is
+    /// documented with.
+    /// <para>
+    /// A file the policy would not place is <em>still lying inside the payload</em>, and removing the
+    /// payload afterwards is what would take it with it. Leaving it there and keeping the entry was
+    /// considered and rejected: the record would then describe a directory whose payload no longer holds
+    /// what the record's size says, and the entry would look restorable for ever while never restoring.
+    /// So it goes back into the Recycle Bin as an entry of its own — through
+    /// <see cref="NativeRecycleRunner"/>, the machinery <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?},
+    /// RecycleBinOptions?, CancellationToken)"/> uses, rather than through a second implementation of writing
+    /// a record — and the caller is handed back a directory whose files are either at their paths or in the
+    /// bin again, with the answer saying which is which.
+    /// </para>
+    /// <para>
+    /// Which is also why the payload is removed only once the put-back has emptied it: a file left inside it
+    /// is a file the caller has already been told about and then lost, which is the one outcome a Recycle
+    /// Bin exists to prevent. An entry the walk could not even describe stops the removal outright for the
+    /// same reason.
+    /// </para>
+    /// </remarks>
+    private static RestoreOutcome Merge(
+        RecycleBinItem item,
+        string targetPath,
+        RecycleBinOptions options,
+        SemaphoreSlim putBack,
+        CancellationToken cancellationToken)
+    {
+        var state = new MergeState();
+
+        WalkInto(item.PayloadPath, Path.TrimEndingDirectorySeparator(targetPath), options, state, cancellationToken);
+
+        if (state.GaveWay)
+        {
+            // One record for the directory rather than one per file that gave way: nothing about those files
+            // was resolved here — each is an ordinary entry in the next listing, under the path it wanted.
+            state.Conflicts.Add(new RecycleRestoreConflict(
+                targetPath,
+                occupiedByDirectory: true,
+                RecycleRestoreConflictAction.MergedSkipped));
+        }
+
+        // The put-back runs whether or not anything was left undescribable, because an entry the
+        // filesystem would not describe is not one to give up on — everything else in the payload can
+        // still be taken out of it. What stops the removal is the code it left behind.
+        var refused = PutBack(state.LeftBehind, options, putBack, state, cancellationToken) ?? state.Incomplete;
+
+        if (refused is null)
+        {
+            try
+            {
+                Directory.Delete(item.PayloadPath, recursive: true);
+                File.Delete(item.IndexPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // The files are already back; the item stays in the bin and the failure is reported, which is
+                // the same restored-but-still-listed state the move-then-delete order leaves everywhere else.
+                refused = ex.HResult;
+            }
+        }
+
+        if (refused is not null)
+        {
+            return new RestoreOutcome(RestoreOutcomeKind.Failed, targetPath, item.Size)
+            {
+                OccupiedByDirectory = true,
+                HResult = refused.Value,
+                Attempts = 1,
+                MergeConflicts = state.Conflicts,
+                MergeFailures = state.Failures
+            };
+        }
+
+        return new RestoreOutcome(RestoreOutcomeKind.Merged, targetPath, item.Size)
+        {
+            OccupiedByDirectory = true,
+            MergeConflicts = state.Conflicts,
+            MergeFailures = state.Failures
+        };
+    }
+
+    /// <summary>
+    /// Moves everything inside <paramref name="source"/> out to <paramref name="destination"/>, one entry at
+    /// a time, and records what it could not place.
+    /// </summary>
+    /// <param name="source">A directory inside the payload, which the caller's entry is restoring.</param>
+    /// <param name="destination">Where that directory's contents belong, which is always there already.</param>
+    /// <param name="options">The normalised settings the restore runs under.</param>
+    /// <param name="state">What the walk has done so far, carried down through the recursion.</param>
+    /// <param name="cancellationToken">Cancels the walk between entries.</param>
+    /// <remarks>
+    /// <b>An entry whose destination is free moves whole,</b> contents and all, which is what makes a
+    /// directory that is empty arrive: there is no file in it to put anywhere, so a walk that only ever made
+    /// the folders on the way to a file would leave it behind. An entry whose destination is taken by a
+    /// directory is merged into it, and everything else is settled by
+    /// <see cref="RestorePathPlanner.DecideMerged"/>.
+    /// <para>
+    /// A directory junction is moved rather than walked into. Walking one would leave the tree and put files
+    /// back at paths the caller never named, which is the one thing no value of either policy may do; moving
+    /// it renames the link and nothing behind it.
+    /// </para>
+    /// <para>
+    /// One file that cannot be placed is reported and left in the payload for the put-back rather than
+    /// ending the walk, because everything else in the tree still has an answer to give and a caller
+    /// restoring ninety entries does not lose the eighty-nine because the ninetieth was held.
+    /// </para>
+    /// </remarks>
+    private static void WalkInto(
+        string source,
+        string destination,
+        RecycleBinOptions options,
+        MergeState state,
+        CancellationToken cancellationToken)
+    {
+        // Read out before anything is moved, rather than enumerated lazily: this walk moves entries out of
+        // the directory it is reading, and a directory the payload is losing is not what to be halfway
+        // through discovering.
+        foreach (var entry in Directory.GetFileSystemEntries(source))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var wanted = Path.Combine(destination, Path.GetFileName(entry));
+
+            try
+            {
+                var attributes = File.GetAttributes(entry);
+                var isDirectory = (attributes & FileAttributes.Directory) != 0;
+                var occupiedByDirectory = Directory.Exists(wanted);
+
+                if (!occupiedByDirectory && !File.Exists(wanted))
+                {
+                    MoveEntry(entry, wanted, isDirectory);
+                    continue;
+                }
+
+                if (isDirectory && (attributes & FileAttributes.ReparsePoint) == 0)
+                {
+                    // Two directories are a merge. Neither is replaced: the only way to replace one is to
+                    // delete what is there first and find out afterwards whether the move was possible at
+                    // all, and those bytes are the caller's.
+                    WalkInto(entry, wanted, options, state, cancellationToken);
+                    continue;
+                }
+
+                switch (RestorePathPlanner.DecideMerged(wanted, options.DirectoryConflict))
+                {
+                    case RestoreAction.Replace:
+                        // A file arriving where a directory stands is refused by the move itself rather
+                        // than arranged: no merge value replaces a directory, and taking one out would be
+                        // deleting the caller's files to make room for the caller's file.
+                        MoveEntry(entry, wanted, isDirectory, overwrite: true);
+                        state.Conflicts.Add(new RecycleRestoreConflict(
+                            wanted,
+                            occupiedByDirectory,
+                            RecycleRestoreConflictAction.MergedReplaced));
+                        break;
+
+                    case RestoreAction.Rename:
+                        var free = RestorePathPlanner.WithFreeNumber(wanted);
+
+                        MoveEntry(entry, free, isDirectory);
+                        state.Conflicts.Add(new RecycleRestoreConflict(
+                            free,
+                            occupiedByDirectory,
+                            RecycleRestoreConflictAction.MergedRenamed));
+                        break;
+
+                    default:
+                        state.GaveWay = true;
+                        LeaveBehind(entry, wanted, state);
+                        break;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                state.Failures.Add(new RecycleFailure(wanted, ex.HResult, 1, RecycleFailureStage.RestoreFailed));
+                LeaveBehind(entry, wanted, state);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sends the entries a merge could not place back into the Recycle Bin, each with a record of its own.
+    /// </summary>
+    /// <param name="leftBehind">The entries still inside the payload when the walk finished.</param>
+    /// <param name="options">The normalised settings the restore runs under, which carry the retry budget.</param>
+    /// <param name="putBack">The guard the recycle is written behind.</param>
+    /// <param name="state">Collects one failure per entry the recycle would not take.</param>
+    /// <param name="cancellationToken">Cancels the put-back between entries.</param>
+    /// <returns>
+    /// The code the filesystem raised, or <see langword="null"/> when the payload was emptied and can be
+    /// removed.
+    /// </returns>
+    /// <remarks>
+    /// Straight to <see cref="NativeRecycleRunner"/> rather than through <see cref="RecycleBatch"/>, and the
+    /// difference that matters is the volume gate in between: this volume is asked to take a file back into
+    /// the bin it is already holding one file back into, and a gate that refused would leave the file in a
+    /// payload the caller is about to be told was dealt with.
+    /// <para>
+    /// One call for every entry, rather than one per file, so that the whole put-back is the single writer
+    /// it is documented to be and this library's own record writer is the only one in the business.
+    /// </para>
+    /// </remarks>
+    private static int? PutBack(
+        List<RecycleTarget> leftBehind,
+        RecycleBinOptions options,
+        SemaphoreSlim putBack,
+        MergeState state,
+        CancellationToken cancellationToken)
+    {
+        if (leftBehind.Count == 0)
+        {
+            return null;
+        }
+
+        RecycleBinResult recycled;
+
+        putBack.Wait(cancellationToken);
+
+        try
+        {
+            recycled = NativeRecycleRunner.Run(leftBehind, options, cancellationToken);
+        }
+        finally
+        {
+            putBack.Release();
+        }
+
+        if (recycled.Failures.Count == 0)
+        {
+            return null;
+        }
+
+        // Reported under the path each entry wanted rather than under where it was lying, which is the only
+        // path the caller can do anything with — the other one is inside the bin.
+        var wanted = new Dictionary<string, string>(leftBehind.Count, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var target in leftBehind)
+        {
+            wanted[target.InputPath] = target.RecordPath;
+        }
+
+        foreach (var failure in recycled.Failures)
+        {
+            state.Failures.Add(new RecycleFailure(
+                wanted.GetValueOrDefault(failure.Path, failure.Path),
+                failure.HResult,
+                failure.Attempts,
+                RecycleFailureStage.RestoreFailed));
+        }
+
+        return recycled.Failures[0].HResult;
+    }
+
+    /// <summary>
+    /// Keeps one entry of the payload for the put-back, or stops the payload from being removed at all when
+    /// the entry cannot even be described well enough to put back.
+    /// </summary>
+    /// <param name="entry">Where the entry is inside the payload.</param>
+    /// <param name="wanted">
+    /// Where the entry belongs, which is what its record will name rather than <paramref name="entry"/> — an
+    /// entry whose recorded path is inside <c>$RECYCLE.BIN</c> restores into the bin.
+    /// </param>
+    /// <param name="state">The walk's state, marked incomplete when the entry could not be described.</param>
+    private static void LeaveBehind(string entry, string wanted, MergeState state)
+    {
+        try
+        {
+            var attributes = File.GetAttributes(entry);
+
+            state.LeftBehind.Add(new RecycleTarget(
+                entry,
+                Path.GetFullPath(entry),
+                attributes,
+                (attributes & FileAttributes.Directory) != 0 ? 0 : LengthOf(entry),
+                wanted));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // Nothing here can be written down, and an entry that cannot be written down cannot be moved out
+            // of a payload the caller is about to be told is empty. The payload is left whole, and the
+            // refusal is reported under the path the entry wanted rather than lost with it.
+            state.Incomplete = ex.HResult;
+            state.Failures.Add(new RecycleFailure(wanted, ex.HResult, 1, RecycleFailureStage.RestoreFailed));
+        }
+    }
+
+    /// <summary>
+    /// The length an entry's new record carries, or zero for a directory and for a file whose length the
+    /// filesystem would not report.
+    /// </summary>
+    /// <param name="entry">A file inside the payload.</param>
+    /// <remarks>
+    /// The answer is zero rather than a raised exception because the alternative is an entry that cannot be
+    /// put back at all: the record is written from this number, and a file with no record is a file that
+    /// stops being restorable. A record that understates a size costs a listing its byte count; a file that
+    /// is destroyed costs the caller the file.
+    /// </remarks>
+    private static long LengthOf(string entry)
+    {
+        try
+        {
+            return new FileInfo(entry).Length;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Puts one entry of the payload down at its destination, as the kind it is.
+    /// </summary>
+    /// <param name="source">Where the entry is inside the payload.</param>
+    /// <param name="destination">Where it is to land, which is either free or has been cleared for it.</param>
+    /// <param name="isDirectory">Whether the entry is a directory.</param>
+    /// <param name="overwrite">
+    /// Whether a file is to overwrite what is at <paramref name="destination"/>. Set only under
+    /// <see cref="RestoreAction.Replace"/>, which is the caller's own instruction and reaches a file occupant
+    /// only because a directory occupant takes the merge instead.
+    /// </param>
+    /// <remarks>
+    /// The two kinds are moved by their own calls because that is all the difference between them, and a
+    /// merge is the only place in the library where both are called back to back.
+    /// </remarks>
+    private static void MoveEntry(string source, string destination, bool isDirectory, bool overwrite = false)
+    {
+        if (isDirectory)
+        {
+            Directory.Move(source, destination);
+        }
+        else
+        {
+            File.Move(source, destination, overwrite);
+        }
+    }
+
+    /// <summary>
     /// Where each entry sits in the caller's list, under the volume its record lives on.
     /// </summary>
     /// <param name="items">The caller's entries, in their order.</param>
@@ -441,6 +842,18 @@ internal static class RestoreRunner
         RestoredRenamed,
 
         /// <summary>
+        /// The entry was a directory whose path was already taken by a directory, and its contents were
+        /// merged into what was there. What each of its files did is carried beside the slot rather than
+        /// being the slot, because one entry can settle any number of them.
+        /// </summary>
+        /// <remarks>
+        /// Counted as one restored entry — one record left the Recycle Bin — whatever the tree held. A file
+        /// the merge could not place went back into the bin as an entry of its own, which is one more record
+        /// <em>arriving</em> and nothing about this one.
+        /// </remarks>
+        Merged,
+
+        /// <summary>
         /// The entry stays in the bin and the caller asked for that to be a conflict to read rather than a
         /// failure, so nothing failed.
         /// </summary>
@@ -448,7 +861,7 @@ internal static class RestoreRunner
 
         /// <summary>
         /// The entry stays in the bin and the caller asked for that to be a failure, so it is reported as
-        /// one as well as as a conflict — the only way a caller reading the conflicts alone could tell it
+        /// one as well as a conflict — the only way a caller reading the conflicts alone could tell it
         /// from a skip.
         /// </summary>
         Refused,
@@ -503,6 +916,66 @@ internal static class RestoreRunner
         /// attempted for.
         /// </summary>
         internal int Attempts { get; init; }
+
+        /// <summary>
+        /// The conflicts one merged entry settled that are not about the entry itself: what a merge did
+        /// about each file of the tree it was restoring. <see langword="null"/> for every entry that was not
+        /// a directory merged into one already there, including an entry nothing was decided for at all.
+        /// </summary>
+        /// <remarks>
+        /// Carried beside the slot rather than being one of them, because one entry can settle any number of
+        /// files — a tree of ninety collisions is ninety conflicts and one outcome — and a slot per file would
+        /// have to be indexed by something the caller's list does not have.
+        /// </remarks>
+        internal IReadOnlyList<RecycleRestoreConflict>? MergeConflicts { get; init; }
+
+        /// <summary>
+        /// The failures one merged entry's own files produced, for the same reason: a file of a merged tree
+        /// that could not be placed is reported under that file's own path rather than the directory's, and
+        /// the directory's outcome says nothing about whether that happened.
+        /// </summary>
+        internal IReadOnlyList<RecycleFailure>? MergeFailures { get; init; }
+    }
+
+    /// <summary>
+    /// What one merge has done so far, carried down through the walk and read once the walk is over.
+    /// </summary>
+    /// <remarks>
+    /// Held rather than passed as four parameters because the walk recurses and every level would otherwise
+    /// be handing the same four collections on without adding anything.
+    /// </remarks>
+    private sealed class MergeState
+    {
+        /// <summary>
+        /// What each entry of the tree that found something in the way did about it — and, under
+        /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, the one record the directory itself is reported
+        /// under rather than one for each of its files.
+        /// </summary>
+        internal List<RecycleRestoreConflict> Conflicts { get; } = [];
+
+        /// <summary>
+        /// The files of the tree the filesystem would not take, each under the path it wanted.
+        /// </summary>
+        internal List<RecycleFailure> Failures { get; } = [];
+
+        /// <summary>
+        /// The entries still inside the payload when the walk finished, which the put-back takes out of it.
+        /// </summary>
+        internal List<RecycleTarget> LeftBehind { get; } = [];
+
+        /// <summary>
+        /// Whether anything was left alone on purpose because the policy would not place it — which is what
+        /// <see cref="RestoreDirectoryConflict.MergeSkip"/> answers, and what the directory itself is then
+        /// reported under.
+        /// </summary>
+        internal bool GaveWay { get; set; }
+
+        /// <summary>
+        /// Whether something inside the payload could not be accounted for at all: the code the filesystem
+        /// raised for an entry that will not describe, or <see langword="null"/> while nothing like that has
+        /// happened. It stops the payload from being removed rather than deciding where its contents went.
+        /// </summary>
+        internal int? Incomplete { get; set; }
     }
 
     /// <summary>
@@ -512,6 +985,12 @@ internal static class RestoreRunner
     /// Each slot goes to the lists its kind names, and to two of them where two is the answer the caller
     /// asked for. The switch is the whole of the mapping rather than something spread through the loop, so
     /// a kind with no arm is reported nowhere instead of in the wrong list.
+    /// <para>
+    /// What a merge settled goes in before the switch rather than in an arm of it, and reaches the lists
+    /// whatever became of the directory itself. A merge can be reported as a failure — because a file of its
+    /// tree could not be dealt with, or because its payload would not go — while having overwritten two
+    /// files on the way, and a caller reading only the directory's own verdict would be told about neither.
+    /// </para>
     /// </remarks>
     private static RecycleBinRestoreResult Flatten(RestoreOutcome[] slots)
     {
@@ -523,10 +1002,21 @@ internal static class RestoreRunner
 
         foreach (var slot in slots)
         {
+            if (slot.MergeConflicts is not null)
+            {
+                conflicts.AddRange(slot.MergeConflicts);
+
+                if (slot.MergeFailures is not null)
+                {
+                    failures.AddRange(slot.MergeFailures);
+                }
+            }
+
             switch (slot.Kind)
             {
                 case RestoreOutcomeKind.Restored:
                 case RestoreOutcomeKind.Replaced:
+                case RestoreOutcomeKind.Merged:
                     restoredPaths.Add(slot.Path);
                     itemsRestored++;
                     restoredSize += slot.Size;

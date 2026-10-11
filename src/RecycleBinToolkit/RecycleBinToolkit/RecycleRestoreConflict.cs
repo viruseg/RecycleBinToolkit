@@ -27,40 +27,30 @@ public enum RecycleRestoreConflictAction
 
     /// <summary>
     /// A merge that left a file in the way alone: the incoming file did not fit and went back into the
-    /// Recycle Bin as an entry of its own. <b>Never produced today.</b>
+    /// Recycle Bin as an entry of its own.
     /// </summary>
     /// <remarks>
-    /// Under <see cref="RestoreDirectoryConflict.MergeSkip"/> this is to be one record for the directory
-    /// rather than one for each file that gave way, because nothing about those files was resolved — each is
-    /// an ordinary item in the next listing. The directory itself was restored, so
+    /// Under <see cref="RestoreDirectoryConflict.MergeSkip"/> this is one record for the directory rather
+    /// than one for each file that gave way, because nothing about those files was resolved — each is an
+    /// ordinary item in the next listing. The directory itself was restored, so
     /// <see cref="RecycleBinRestoreResult.RestoredPaths"/> names it, and
     /// <see cref="RecycleRestoreConflict.Path"/> is that directory's path.
-    /// <para>
-    /// <b>Never produced today</b> — the merge walk is not implemented, so nothing reaches this value. A
-    /// directory whose path is occupied arrives as a <see cref="RecycleFailureStage.RestoreFailed"/> instead.
-    /// </para>
     /// </remarks>
     MergedSkipped,
 
-    /// <summary>A merge that overwrote the file that was in the way. <b>Never produced today.</b></summary>
+    /// <summary>A merge that overwrote the file that was in the way.</summary>
     /// <remarks>
-    /// To be one record per file that was overwritten, under
+    /// One record per file that was overwritten, under
     /// <see cref="RestoreDirectoryConflict.MergeReplace"/>, and
     /// <see cref="RecycleRestoreConflict.Path"/> is the path it was overwritten at.
-    /// <para>
-    /// <b>Never produced today</b> — see <see cref="MergedSkipped"/>.
-    /// </para>
     /// </remarks>
     MergedReplaced,
 
-    /// <summary>A merge that set the incoming file down under a free name. <b>Never produced today.</b></summary>
+    /// <summary>A merge that set the incoming file down under a free name.</summary>
     /// <remarks>
-    /// To be one record per file that was renamed, under <see cref="RestoreDirectoryConflict.MergeRename"/>,
+    /// One record per file that was renamed, under <see cref="RestoreDirectoryConflict.MergeRename"/>,
     /// and <see cref="RecycleRestoreConflict.Path"/> is where that file ended up rather than where it
     /// collided.
-    /// <para>
-    /// <b>Never produced today</b> — see <see cref="MergedSkipped"/>.
-    /// </para>
     /// </remarks>
     MergedRenamed
 }

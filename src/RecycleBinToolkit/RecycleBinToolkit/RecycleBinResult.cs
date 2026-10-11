@@ -68,10 +68,10 @@ public enum RecycleFailureStage
     /// go, or the record could not be read to say where it belonged. Only reachable while restoring.
     /// </summary>
     /// <remarks>
-    /// To be reached twice over once the merge exists: while a directory is being merged, a file of its tree
-    /// that could not be placed would arrive here under that file's own path rather than the directory's.
-    /// <b>Not implemented yet</b> — a directory whose path is occupied arrives here as itself, under all
-    /// three <c>Merge*</c> values.
+    /// Reached twice over while a directory is being merged: once for the directory, and once for each
+    /// file of its tree that could not be placed — the second under that file's own path rather than the
+    /// directory's, and under any of the three <c>Merge*</c> values whatever the merge was doing with that
+    /// file.
     /// <para>
     /// The item is still in the Recycle Bin, which is what makes a second attempt worth making. The one
     /// exception is a payload that had already moved and only its record was left: the file is on disk
@@ -85,18 +85,21 @@ public enum RecycleFailureStage
     /// than a conflict to resolve.
     /// </summary>
     /// <remarks>
-    /// What was in the way was not touched, and the item stays in the Recycle Bin. Four of the policies that
-    /// answer an occupied path reach <see cref="RecycleBinRestoreResult.Conflicts"/> and leave
-    /// <see cref="RecycleBinRestoreResult.Succeeded"/> true instead — <see cref="RestoreFileConflict.Skip"/>
-    /// and <see cref="RestoreDirectoryConflict.Skip"/>, and the two renames,
-    /// <see cref="RestoreFileConflict.Rename"/> and <see cref="RestoreDirectoryConflict.RenameDirectory"/> —
-    /// so this stage is what a caller opting into <c>Error</c> gets instead.
+    /// What was in the way was not touched, and the item stays in the Recycle Bin. Every other policy that
+    /// answers an occupied path resolves it, reports what it did in
+    /// <see cref="RecycleBinRestoreResult.Conflicts"/> and leaves
+    /// <see cref="RecycleBinRestoreResult.Succeeded"/> true, and nothing else does —
+    /// <see cref="RestoreFileConflict.Skip"/> and <see cref="RestoreDirectoryConflict.Skip"/>, the two
+    /// renames <see cref="RestoreFileConflict.Rename"/> and
+    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/>, and the three <c>Merge*</c> values, which
+    /// report one record per file of the tree they settle and one for the directory itself under
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>. So this stage is what a caller opting into
+    /// <c>Error</c> gets instead.
     /// <para>
-    /// Two kinds of policy reach neither list. <see cref="RestoreFileConflict.Replace"/> takes the
-    /// occupant's place — where the occupant is a file, so there is nothing left to report a conflict about,
-    /// though a destination holding a <em>directory</em> has nothing to overwrite and that one fails at
-    /// <see cref="RestoreFailed"/> instead. A directory's three <c>Merge*</c> values do not merge at all yet,
-    /// so a directory onto an occupied directory arrives as a <see cref="RestoreFailed"/> as well.
+    /// One policy reaches neither list. <see cref="RestoreFileConflict.Replace"/> takes the occupant's
+    /// place — where the occupant is a file, so there is nothing left to report a conflict about, though a
+    /// destination holding a <em>directory</em> has nothing to overwrite and that one fails at
+    /// <see cref="RestoreFailed"/> instead.
     /// </para>
     /// </remarks>
     RestoreConflictRefused = 11

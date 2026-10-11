@@ -213,7 +213,7 @@ internal static class NativeRecycleRunner
                 // No query at all. Validation already read the size, and it read it from the same query
                 // that told it the path is a file — which is why the record costs nothing to produce beyond
                 // the write itself.
-                NativeIndexFile.Write(indexPath, target.FullPath, target.Size, DateTime.UtcNow);
+                NativeIndexFile.Write(indexPath, target.RecordPath, target.Size, DateTime.UtcNow);
             }
             catch (IOException ex) when (attempt < NameAttempts && IsNameTaken(ex))
             {

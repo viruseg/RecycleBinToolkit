@@ -62,13 +62,13 @@ public sealed class RecycleBinRestoreResult
     /// </para>
     /// <para>
     /// An item the caller handed in that was skipped is not here — it is in <see cref="Conflicts"/> under
-    /// <see cref="RecycleRestoreConflictAction.Skipped"/>. A file that was inside a directory that gave way
-    /// is not such an item either: under <see cref="RestoreDirectoryConflict.MergeSkip"/> the directory would
-    /// carry its own conflict record and a file of its tree that gave way would have no record of its own
-    /// anywhere in this result, where the merging policies that settle each file are the exception — they
-    /// would answer in <see cref="Conflicts"/> one record per file, and the directory would be in here.
-    /// <b>None of that is reachable yet:</b> the merge walk is not implemented, so a directory whose path is
-    /// occupied arrives as a failure under the three <c>Merge*</c> values rather than as any of this.
+    /// <see cref="RecycleRestoreConflictAction.Skipped"/>. A file that was inside a directory that was
+    /// merged is not such an item either: under <see cref="RestoreDirectoryConflict.MergeSkip"/> the
+    /// directory carries its own conflict record and a file of its tree that gave way has no record of its
+    /// own anywhere in this result — it is an ordinary entry in the next listing, under the path it wanted.
+    /// The directory itself is in here, because it was restored. A file a merge set down under a free name
+    /// is not: it is in <see cref="Conflicts"/> under that name and nowhere else, because this list names
+    /// what the caller handed in and one entry was one directory.
     /// </para>
     /// </remarks>
     public IReadOnlyList<string> RestoredPaths { get; }
@@ -77,25 +77,33 @@ public sealed class RecycleBinRestoreResult
     /// Paths that were already occupied, and what was done about the items that wanted them.
     /// </summary>
     /// <remarks>
-    /// Empty when nothing was in the way. Four of the six policies that answer an occupied path put a
-    /// conflict here:
-    /// <see cref="RestoreFileConflict.Skip"/> and <see cref="RestoreDirectoryConflict.Skip"/> leave the item
-    /// in the Recycle Bin under <see cref="RecycleRestoreConflictAction.Skipped"/>, while the two renames,
-    /// <see cref="RestoreFileConflict.Rename"/> and
-    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/>, also restore the item and add it here under
-    /// <see cref="RecycleRestoreConflictAction.RestoredRenamed"/> naming the free name it landed under.
+    /// Empty when nothing was in the way. Every policy that answers an occupied path reports what it
+    /// did about it here, and nothing else does — <see cref="RestoreFileConflict.Replace"/> excepted,
+    /// which resolves its own conflict by taking the occupant's place: where the occupant is a file there
+    /// is nothing left to report about, and a destination holding a <em>directory</em> has nothing to
+    /// overwrite and fails at <see cref="RecycleFailureStage.RestoreFailed"/> instead.
     /// <para>
-    /// Neither of those makes <see cref="Succeeded"/> false: a conflict here is an outcome the caller asked
+    /// Once for the entry, except under the three merge policies. The two
+    /// <c>Skip</c> values leave the entry in the Recycle Bin under
+    /// <see cref="RecycleRestoreConflictAction.Skipped"/>, and the two renames,
+    /// <see cref="RestoreFileConflict.Rename"/> and
+    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/>, also restore the entry and add it here under
+    /// <see cref="RecycleRestoreConflictAction.RestoredRenamed"/> naming the free name it landed under.
+    /// A merge settles one entry of a tree at a time and reports each it settled — one
+    /// <see cref="RecycleRestoreConflictAction.MergedSkipped"/> for the directory under
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, one
+    /// <see cref="RecycleRestoreConflictAction.MergedReplaced"/> per overwritten file under
+    /// <see cref="RestoreDirectoryConflict.MergeReplace"/>, and one
+    /// <see cref="RecycleRestoreConflictAction.MergedRenamed"/> per renamed file under
+    /// <see cref="RestoreDirectoryConflict.MergeRename"/>, the last naming where the file landed rather
+    /// than where it collided. A tree that collides with nothing reports nothing, which is the same answer
+    /// every policy here gives when there was in fact nothing in the way.
+    /// </para>
+    /// <para>
+    /// None of that makes <see cref="Succeeded"/> false: a conflict here is an outcome the caller asked
     /// about by choosing a policy. Only <see cref="RestoreFileConflict.Error"/> and
     /// <see cref="RestoreDirectoryConflict.Error"/> add a failure as well, which is the whole difference
     /// between them and the two <c>Skip</c> values.
-    /// </para>
-    /// <para>
-    /// The three <c>Merge*</c> values are named for the shape they will have rather than for today: a
-    /// directory whose path is occupied under <see cref="RestoreDirectoryConflict.MergeSkip"/> arrives as a
-    /// <see cref="RecycleFailureStage.RestoreFailed"/> and lands in neither list until the merge exists.
-    /// <see cref="RestoreFileConflict.Replace"/> reaches neither either, taking the occupant's place where
-    /// the occupant is a file.
     /// </para>
     /// </remarks>
     public IReadOnlyList<RecycleRestoreConflict> Conflicts { get; }
@@ -109,6 +117,13 @@ public sealed class RecycleBinRestoreResult
     /// Every item here is still in the Recycle Bin, which is what makes a second attempt worth making —
     /// except where the payload had already moved and only its record was left, and then the file is
     /// already on disk and the next attempt finds a conflict instead.
+    /// <para>
+    /// A merge reports one of these per file of its tree that the filesystem would not take, under that
+    /// file's own path rather than the directory's, alongside the directory's own outcome. Such a file is
+    /// put back into the Recycle Bin with a record of its own, so it is there as an entry of its own; where
+    /// even that could not be done the payload is left whole and the directory's own entry is still in the
+    /// bin with it inside.
+    /// </para>
     /// </remarks>
     public IReadOnlyList<RecycleFailure> Failures { get; }
 

@@ -26,13 +26,21 @@ internal readonly struct RecycleTarget
     /// The item's size in bytes as it was then, or 0 for a directory and for a path that could not be
     /// measured.
     /// </param>
-    internal RecycleTarget(string inputPath, string fullPath, FileAttributes attributes, long size)
+    /// <param name="recordPath">
+    /// The path to write into the <c>$I</c> record, where that is not <paramref name="fullPath"/>. Left
+    /// <see langword="null"/> by everything a caller recycles, and named by the one caller that moves an
+    /// item from somewhere it will never be restored from.
+    /// </param>
+    internal RecycleTarget(string inputPath, string fullPath, FileAttributes attributes, long size, string? recordPath = null)
     {
         InputPath = inputPath;
         FullPath = fullPath;
         Attributes = attributes;
         Size = size;
+        _recordPath = recordPath;
     }
+
+    private readonly string? _recordPath;
 
     /// <summary>The caller's path, kept verbatim so diagnostics point at what they wrote.</summary>
     public string InputPath { get; }
@@ -42,6 +50,18 @@ internal readonly struct RecycleTarget
     /// <see cref="Directory"/> take, and what decides whether the item is gone after the move.
     /// </summary>
     public string FullPath { get; }
+
+    /// <summary>
+    /// The path the <c>$I</c> record names as the one the item was deleted from, which is
+    /// <see cref="FullPath"/> unless this target was given another.
+    /// </summary>
+    /// <remarks>
+    /// A restore's put-back is the only thing here that needs the two to differ: a file a merge could not
+    /// place is sitting inside the payload it came out of, which is a path under <c>$RECYCLE.BIN</c> that
+    /// the record must never name — an entry whose recorded path is inside the bin restores into the bin.
+    /// The path the caller means is the one the file wanted, and it is this that carries it.
+    /// </remarks>
+    public string RecordPath => _recordPath ?? FullPath;
 
     /// <summary>
     /// What the filesystem said about the path when it was validated.

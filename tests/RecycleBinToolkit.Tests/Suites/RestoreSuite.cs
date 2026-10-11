@@ -25,7 +25,10 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(TheSameEntryTwiceIsRestoredOnce), TheSameEntryTwiceIsRestoredOnce),
         new TestCase("RestoreSuite." + nameof(AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow), AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow),
         new TestCase("RestoreSuite." + nameof(ADirectoryRestoringOntoAFileIsAConflict), ADirectoryRestoringOntoAFileIsAConflict),
-        new TestCase("RestoreSuite." + nameof(ADirectoryOntoAnOccupiedDirectoryIsAFailureUntilTheMergeLands), ADirectoryOntoAnOccupiedDirectoryIsAFailureUntilTheMergeLands),
+        new TestCase("RestoreSuite." + nameof(AMergedTreeLeavesWhatWasThereAndPutsTheRestBack), AMergedTreeLeavesWhatWasThereAndPutsTheRestBack),
+        new TestCase("RestoreSuite." + nameof(AMergedTreeOverwritesEveryFileItCollidesWith), AMergedTreeOverwritesEveryFileItCollidesWith),
+        new TestCase("RestoreSuite." + nameof(AMergedTreeSetsEachCollidingFileUnderAFreeName), AMergedTreeSetsEachCollidingFileUnderAFreeName),
+        new TestCase("RestoreSuite." + nameof(AMergedDirectoryWithNothingInItStillArrives), AMergedDirectoryWithNothingInItStillArrives),
         new TestCase("RestoreSuite." + nameof(AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing), AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing),
         new TestCase("RestoreSuite." + nameof(OneEntryFailingDoesNotCostTheOthersTheirAnswers), OneEntryFailingDoesNotCostTheOthersTheirAnswers),
         new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure),
@@ -1213,38 +1216,241 @@ internal static class RestoreSuite
     }
 
     /// <summary>
-    /// A directory restoring onto an occupied directory under the default policy is answered as a move, and
-    /// the move is refused — so the entry is reported at <see cref="RecycleFailureStage.RestoreFailed"/> and
-    /// stays whole in the bin. That is what README.md says a directory restore does today, and the reason
-    /// its three <c>Merge*</c> rows are marked as not implemented.
+    /// A directory restoring onto one that is already there under <see cref="RestoreDirectoryConflict.MergeSkip"/>:
+    /// every file of the tree that fits arrives, every file that does not leaves what is there alone, and the
+    /// ones that did not fit go back into the Recycle Bin as entries of their own rather than being destroyed
+    /// with the payload they were lying in.
     /// </summary>
     /// <remarks>
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> is the default, so it is the value a caller who reads
-    /// nothing is running, and it is the one the options table has to be honest about.
-    /// <see cref="RestorePathPlanner.DecideMerged"/> answers the question a merge walk asks of each file
-    /// inside the tree, and nothing in the engine calls it: <c>Decide</c> answers
-    /// <see cref="RestoreAction.Move"/> for all three merge values whatever is standing there, and
-    /// <see cref="Directory.Move(string, string)"/> refuses an existing destination.
+    /// The put-back is the half of this that has no other case. A file the policy would not move is still
+    /// inside the payload <c>$R</c>, and removing that payload afterwards takes the file with it — so it goes
+    /// back into the bin with a record of its own, under the path it wanted, where a later
+    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RecycleBinOptions?, CancellationToken)"/>
+    /// can bring it back once the squatter has moved on.
     /// <para>
-    /// Both halves are asserted, as every restore case does: the entry is reported as a failure, and it is
-    /// still in the bin with its payload intact — so nothing was lost and a second attempt is worth making.
-    /// The squatter is checked byte for byte as well, because a move that raised is a move that did not
-    /// happen and the directory it was aimed at is the caller's own.
+    /// The entry is found again by that recorded path rather than counted, because "it is in the bin" and
+    /// "it is in the bin saying where it came from" are different claims and only the second one makes the
+    /// entry restorable: a record naming a path inside <c>$RECYCLE.BIN</c> would restore into the bin
+    /// itself. The bytes are read back out of the new payload, which is the only way to tell this entry
+    /// from any other the machine holds.
     /// </para>
     /// <para>
-    /// <b>This is the case Task 10 replaces.</b> It asserts the failure that exists now; when the merge
-    /// walk lands it goes red and becomes a merge case, and the README rows go back to describing
-    /// behaviour rather than its absence.
+    /// The conflict is asserted as one record naming the directory rather than two naming files, because
+    /// that is what <see cref="RecycleRestoreConflictAction.MergedSkipped"/> is documented to be: nothing
+    /// about the two files was resolved — each is an ordinary entry in the next listing.
     /// </para>
     /// </remarks>
-    private static async Task ADirectoryOntoAnOccupiedDirectoryIsAFailureUntilTheMergeLands(TestContext context)
+    private static async Task AMergedTreeLeavesWhatWasThereAndPutsTheRestBack(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
-        ScratchWorkspace.RequireRecycling("a directory to restore");
+        ScratchWorkspace.RequireRecycling("entries to restore");
 
-        var root = Path.Combine(ScratchWorkspace.Root, "onto-a-directory");
+        var shape = BuildMergeShape("merge-skip");
+        var baseline = BaselineCount();
 
+        Check.True(
+            await RecycleBin.RecycleAsync(shape.Root, cancellationToken: context.CancellationToken),
+            "the tree reached the bin");
+        Check.False(Directory.Exists(shape.Root), "and left the disk");
+
+        // Something at the very path the record names, and of the same kind: this is not the cross-kind case
+        // above, where the planner refuses outright. Here it is the merge the default is meant to be.
+        StandTheSquatter(shape);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            shape.Root);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip },
+            context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(0, result.Failures.Count, "so nothing reached the failures list");
+        Check.Equal(1, result.ItemsRestored, "the directory entry was restored");
+        Check.Equal(1, result.RestoredPaths.Count, "and is named");
+        Check.Equal(shape.Root, result.RestoredPaths[0], "at the path it was deleted from");
+
+        Check.True(shape.Keep.AsSpan().SequenceEqual(File.ReadAllBytes(shape.KeepPath)), "a file nothing was in the way of came back byte for byte");
+        Check.True(shape.NestedMid.AsSpan().SequenceEqual(File.ReadAllBytes(shape.NestedMidPath)), "and so did one inside a directory that had to be merged into");
+
+        Check.True(shape.SquatterShared.AsSpan().SequenceEqual(File.ReadAllBytes(shape.SharedPath)), "the file already there is untouched");
+        Check.True(shape.SquatterNestedKeep.AsSpan().SequenceEqual(File.ReadAllBytes(shape.NestedKeepPath)), "and so is the one in the subdirectory");
+
+        Check.Equal(1, result.Conflicts.Count, "the directory is reported once rather than once per file that gave way");
+        Check.Equal(shape.Root, result.Conflicts[0].Path, "naming the directory rather than any file inside it");
+        Check.True(result.Conflicts[0].OccupiedByDirectory, "and what was in its way was a directory");
+        Check.Equal(RecycleRestoreConflictAction.MergedSkipped, result.Conflicts[0].Action, "under the action a merge that skips reports");
+
+        Check.False(File.Exists(item.IndexPath), "the directory's own record has gone, so its entry left the bin");
+        Check.False(Directory.Exists(item.PayloadPath), "and so did the payload it was in");
+
+        var after = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken);
+
+        var sharedBack = FindTheEntryFor(after, shape.SharedPath);
+        Check.False(sharedBack.IsDirectory, "the file that did not fit is an entry of its own");
+        Check.True(shape.Shared.AsSpan().SequenceEqual(File.ReadAllBytes(sharedBack.PayloadPath)), "with its own bytes");
+
+        var nestedKeepBack = FindTheEntryFor(after, shape.NestedKeepPath);
+        Check.False(nestedKeepBack.IsDirectory, "and so is the one in the subdirectory");
+        Check.True(shape.NestedKeep.AsSpan().SequenceEqual(File.ReadAllBytes(nestedKeepBack.PayloadPath)), "with its own bytes as well");
+
+        // Two entries came back and one left. The two records above are what says they are restorable; the
+        // count is what says nothing else was written into the bin and nothing else was left behind.
+        Check.Equal(2, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the bin holds the two files that gave way and nothing else");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The same tree under <see cref="RestoreDirectoryConflict.MergeReplace"/>: every file of the same name
+    /// already there is overwritten with the tree's, the files that fit arrive, and each overwrite is reported
+    /// under the path it happened at.
+    /// </summary>
+    /// <remarks>
+    /// The conflicts are matched as a set rather than by position, because a merge walks the tree in whatever
+    /// order the filesystem hands the entries back and does not sort them — what each record names is the
+    /// claim, and which of the two came first is not one.
+    /// <para>
+    /// The subdirectory is merged rather than replaced, which is why <c>nested\keep.txt</c> is overwritten
+    /// while <c>nested</c> itself is untouched: the only way to replace a directory is to delete what is
+    /// there first and find out afterwards whether the move was possible, and those bytes are the caller's.
+    /// </para>
+    /// </remarks>
+    private static async Task AMergedTreeOverwritesEveryFileItCollidesWith(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var shape = BuildMergeShape("merge-replace");
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(shape.Root, cancellationToken: context.CancellationToken),
+            "the tree reached the bin");
+
+        StandTheSquatter(shape);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            shape.Root);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeReplace },
+            context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(0, result.Failures.Count, "so nothing reached the failures list");
+        Check.Equal(1, result.ItemsRestored, "the directory entry was restored");
+        Check.Equal(1, result.RestoredPaths.Count, "and is named");
+        Check.Equal(shape.Root, result.RestoredPaths[0], "at the path it was deleted from");
+
+        Check.True(shape.Keep.AsSpan().SequenceEqual(File.ReadAllBytes(shape.KeepPath)), "a file nothing was in the way of came back byte for byte");
+        Check.True(shape.NestedMid.AsSpan().SequenceEqual(File.ReadAllBytes(shape.NestedMidPath)), "and so did one inside a directory that had to be merged into");
+
+        Check.True(shape.Shared.AsSpan().SequenceEqual(File.ReadAllBytes(shape.SharedPath)), "the squatter's file is the tree's file now, byte for byte");
+        Check.True(shape.NestedKeep.AsSpan().SequenceEqual(File.ReadAllBytes(shape.NestedKeepPath)), "and so is the one in the subdirectory, which was merged into rather than replaced");
+        Check.True(Directory.Exists(Path.Combine(shape.Root, "nested")), "and the subdirectory it was merged into is still the squatter's");
+
+        Check.Equal(2, result.Conflicts.Count, "one record per overwritten file and nothing else");
+        Check.True(PathsWith(result, RecycleRestoreConflictAction.MergedReplaced).Contains(shape.SharedPath), "the top-level one is reported");
+        Check.True(PathsWith(result, RecycleRestoreConflictAction.MergedReplaced).Contains(shape.NestedKeepPath), "and so is the one in the subdirectory, at its own path");
+        Check.True(result.Conflicts.All(conflict => !conflict.OccupiedByDirectory), "each naming a file rather than a directory, which is what it overwrote");
+
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry has left the bin and nothing was left behind");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The same tree under <see cref="RestoreDirectoryConflict.MergeRename"/>: what is already there is left
+    /// exactly as it is, each incoming file that clashes is set down beside it under the first free name, and
+    /// each is reported under the name it landed at.
+    /// </summary>
+    /// <remarks>
+    /// The free names are taken before the restore rather than read back out of the answer, for the reason
+    /// the file rename case gives: once the payload is lying there, the same call counts on to the next
+    /// number.
+    /// <para>
+    /// The conflict's path is the new one rather than the collided one, which is what
+    /// <see cref="RecycleRestoreConflictAction.MergedRenamed"/> reports — and it is the only thing that
+    /// tells a caller which of the two files on disk is theirs.
+    /// </para>
+    /// </remarks>
+    private static async Task AMergedTreeSetsEachCollidingFileUnderAFreeName(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var shape = BuildMergeShape("merge-rename");
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(shape.Root, cancellationToken: context.CancellationToken),
+            "the tree reached the bin");
+
+        StandTheSquatter(shape);
+
+        // Taken while the squatters hold the names the first numbers would take.
+        var sharedRenamed = RestorePathPlanner.WithFreeNumber(shape.SharedPath);
+        var nestedKeepRenamed = RestorePathPlanner.WithFreeNumber(shape.NestedKeepPath);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            shape.Root);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeRename },
+            context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(0, result.Failures.Count, "so nothing reached the failures list");
+        Check.Equal(1, result.ItemsRestored, "the directory entry was restored");
+        Check.Equal(1, result.RestoredPaths.Count, "and is named");
+        Check.Equal(shape.Root, result.RestoredPaths[0], "at the path it was deleted from");
+
+        Check.True(shape.Keep.AsSpan().SequenceEqual(File.ReadAllBytes(shape.KeepPath)), "a file nothing was in the way of came back byte for byte at its own name");
+        Check.True(shape.NestedMid.AsSpan().SequenceEqual(File.ReadAllBytes(shape.NestedMidPath)), "and so did one inside a directory that had to be merged into");
+
+        Check.True(shape.SquatterShared.AsSpan().SequenceEqual(File.ReadAllBytes(shape.SharedPath)), "the file already there is untouched");
+        Check.True(shape.SquatterNestedKeep.AsSpan().SequenceEqual(File.ReadAllBytes(shape.NestedKeepPath)), "and so is the one in the subdirectory");
+
+        Check.True(shape.Shared.AsSpan().SequenceEqual(File.ReadAllBytes(sharedRenamed)), "the file that clashed is set down beside it, byte for byte");
+        Check.True(shape.NestedKeep.AsSpan().SequenceEqual(File.ReadAllBytes(nestedKeepRenamed)), "and so is the one in the subdirectory, under its own free name");
+
+        Check.Equal(2, result.Conflicts.Count, "one record per renamed file and nothing else");
+        Check.True(PathsWith(result, RecycleRestoreConflictAction.MergedRenamed).Contains(sharedRenamed), "reported under the name it landed at");
+        Check.True(PathsWith(result, RecycleRestoreConflictAction.MergedRenamed).Contains(nestedKeepRenamed), "and so is the one in the subdirectory, also under the name it landed at");
+
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry has left the bin and nothing was left behind");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A directory the restored tree holds and the directory already there does not is created for its own
+    /// sake, under <see cref="RestoreDirectoryConflict.MergeSkip"/> and with nothing in it to carry there.
+    /// </summary>
+    /// <remarks>
+    /// This is the case that says the walk creates directories rather than only the ones it has a file for.
+    /// A walk that made each destination folder on the way to a file it was placing would drop this one
+    /// entirely, and the tree would come back a directory lighter with nothing in the answer to say so.
+    /// </remarks>
+    private static async Task AMergedDirectoryWithNothingInItStillArrives(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var root = Path.Combine(ScratchWorkspace.Root, "merge-empty");
+
+        Directory.CreateDirectory(Path.Combine(root, "empty"));
         Directory.CreateDirectory(Path.Combine(root, "nested"));
         var bytes = RandomBytes(4096);
         File.WriteAllBytes(Path.Combine(root, "nested", "leaf.bin"), bytes);
@@ -1253,35 +1459,138 @@ internal static class RestoreSuite
             await RecycleBin.RecycleAsync(root, cancellationToken: context.CancellationToken),
             "the tree reached the bin");
 
-        // Something at the very path the record names, and of the same kind: this is not the cross-kind case
-        // above, where the planner refuses outright. Here it is the merge the default is meant to be.
-        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        // A squatter under the tree's own name, so the merge really is a merge and not a whole move, and one
+        // file that clashes inside it, so the walk has something to settle as well as somewhere to put. The
+        // folders went with the tree and are made again, because the squatter is what is standing there when
+        // the tree comes back.
         var squatter = RandomBytes(2048);
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
         File.WriteAllBytes(Path.Combine(root, "nested", "leaf.bin"), squatter);
 
         var item = FindTheEntryFor(
             await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
             root);
 
-        var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip },
+            context.CancellationToken);
 
-        Check.False(result.Succeeded, "the default policy cannot merge yet, so the call reports having failed");
-        Check.Equal(1, result.Failures.Count, "the directory is the one failure");
-        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move arrives");
-        Check.Equal(root, result.Failures[0].Path, "under the path it wanted");
-        Check.Equal(0, result.ItemsRestored, "nothing left the bin");
-        Check.Equal(0, result.RestoredPaths.Count, "so no path is named as restored");
-        Check.Equal(0, result.Conflicts.Count, "and an occupied directory is not reported as a conflict, because no policy resolved it");
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.True(Directory.Exists(Path.Combine(root, "empty")), $"the directory with nothing in it is at {Path.Combine(root, "empty")}");
+        Check.True(squatter.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(root, "nested", "leaf.bin"))), "and the file that clashed gave way to the one already there");
+        Check.Equal(1, result.Conflicts.Count, "the directory is still reported once, whatever it settled inside itself");
+        Check.Equal(RecycleRestoreConflictAction.MergedSkipped, result.Conflicts[0].Action, "under the action a merge that skips reports");
 
-        Check.True(
-            squatter.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(root, "nested", "leaf.bin"))),
-            "the directory already there is byte for byte what it was");
+        // The file that gave way is not in the payload any more, and nothing about it is in the answer
+        // either, so the bin is the only place a caller could find it.
+        var back = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            Path.Combine(root, "nested", "leaf.bin"));
 
-        // A directory's $R is a directory, so this is the probe that answers for it rather than File.Exists.
-        Check.True(Directory.Exists(item.PayloadPath), "and the payload is still in the bin");
-        Check.True(File.Exists(item.IndexPath), "with its record, so the entry is still restorable");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(back.PayloadPath)), "and the tree's own file is back in the bin under the path it wanted");
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The paths the result's conflicts carry for one action, so a case can ask which files were reported
+    /// without depending on the order the walk reached them in.
+    /// </summary>
+    private static string[] PathsWith(RecycleBinRestoreResult result, RecycleRestoreConflictAction action) =>
+        [.. result.Conflicts.Where(conflict => conflict.Action == action).Select(conflict => conflict.Path)];
+
+    /// <summary>
+    /// One tree recycled whole, with the squatter's own bytes for the two files it will be standing behind
+    /// when that tree comes back.
+    /// </summary>
+    /// <param name="Root">The path the tree was deleted from, which is also where the squatter stands.</param>
+    /// <param name="KeepPath">A file of the tree nothing will be in the way of.</param>
+    /// <param name="Keep">The bytes <paramref name="KeepPath"/> held.</param>
+    /// <param name="SharedPath">A file of the tree the squatter takes the same name of.</param>
+    /// <param name="Shared">The bytes <paramref name="SharedPath"/> held in the tree.</param>
+    /// <param name="NestedKeepPath">A file inside the tree's own subdirectory that the squatter also holds.</param>
+    /// <param name="NestedKeep">The bytes <paramref name="NestedKeepPath"/> held.</param>
+    /// <param name="NestedMidPath">A file inside the tree's subdirectory that nothing will be in the way of.</param>
+    /// <param name="NestedMid">The bytes <paramref name="NestedMidPath"/> held.</param>
+    /// <param name="SquatterShared">What the squatter writes at <paramref name="SharedPath"/>.</param>
+    /// <param name="SquatterNestedKeep">What the squatter writes at <paramref name="NestedKeepPath"/>.</param>
+    /// <remarks>
+    /// The shape the three merge policies are told apart on: two files that fit and two that do not, one of
+    /// the two inside a subdirectory that has to be merged into rather than moved over. A tree of one file
+    /// per policy would answer which files arrived and nothing about what happens to the ones already there.
+    /// <para>
+    /// Every file holds random bytes rather than a word the case could compare by name, for the reason
+    /// <see cref="RandomBytes"/> gives: a payload that arrived holding its neighbour's content is a payload
+    /// that arrived.
+    /// </para>
+    /// </remarks>
+    private readonly record struct MergeShape(
+        string Root,
+        string KeepPath,
+        byte[] Keep,
+        string SharedPath,
+        byte[] Shared,
+        string NestedKeepPath,
+        byte[] NestedKeep,
+        string NestedMidPath,
+        byte[] NestedMid,
+        byte[] SquatterShared,
+        byte[] SquatterNestedKeep);
+
+    /// <summary>
+    /// Writes the tree the merge cases restore, under a name of its own so one case cannot meet another's.
+    /// </summary>
+    /// <param name="name">The directory name under the scratch root this case works in.</param>
+    /// <returns>The shape <see cref="MergeShape"/> describes.</returns>
+    private static MergeShape BuildMergeShape(string name)
+    {
+        var root = Path.Combine(ScratchWorkspace.Root, name);
+
+        var keepPath = Path.Combine(root, "keep.txt");
+        var sharedPath = Path.Combine(root, "shared.txt");
+        var nestedKeepPath = Path.Combine(root, "nested", "keep.txt");
+        var nestedMidPath = Path.Combine(root, "nested", "mid.txt");
+
+        var keep = RandomBytes(1024);
+        var shared = RandomBytes(2048);
+        var nestedKeep = RandomBytes(4096);
+        var nestedMid = RandomBytes(8192);
+
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+
+        File.WriteAllBytes(keepPath, keep);
+        File.WriteAllBytes(sharedPath, shared);
+        File.WriteAllBytes(nestedKeepPath, nestedKeep);
+        File.WriteAllBytes(nestedMidPath, nestedMid);
+
+        return new MergeShape(
+            root,
+            keepPath,
+            keep,
+            sharedPath,
+            shared,
+            nestedKeepPath,
+            nestedKeep,
+            nestedMidPath,
+            nestedMid,
+            SquatterShared: RandomBytes(512),
+            SquatterNestedKeep: RandomBytes(1024));
+    }
+
+    /// <summary>
+    /// Puts the squatter back at the path the tree was deleted from, once the tree is in the bin and the
+    /// path is free for something else to take.
+    /// </summary>
+    /// <param name="shape">The tree the case built.</param>
+    private static void StandTheSquatter(MergeShape shape)
+    {
+        // The folders went with the tree, and the squatter is what is standing there when the tree comes
+        // back — so they are made again rather than left from the build.
+        Directory.CreateDirectory(Path.Combine(shape.Root, "nested"));
+
+        File.WriteAllBytes(shape.SharedPath, shape.SquatterShared);
+        File.WriteAllBytes(shape.NestedKeepPath, shape.SquatterNestedKeep);
     }
 
     /// <summary>

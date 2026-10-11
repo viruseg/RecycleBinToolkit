@@ -83,14 +83,20 @@ public sealed class RecycleBinOptions
     /// <summary>
     /// What a restore does with a directory whose original path is already occupied. The default is
     /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, which is to merge and leave what is already there
-    /// as it is — <b>not implemented yet</b>, so under that default a directory onto an occupied directory
-    /// is a failure.
+    /// as it is — a file of the tree that does not fit goes back into the Recycle Bin as an entry of its own
+    /// rather than being lost with the payload it was in.
     /// </summary>
     /// <remarks>
     /// It says nothing about <see cref="ThrowOnError"/>: a restore is a batch, so a conflict is data —
     /// resolved ones in <see cref="RecycleBinRestoreResult.Conflicts"/>, and the ones
     /// <see cref="RestoreDirectoryConflict.Error"/> refuses in <see cref="RecycleBinRestoreResult.Failures"/>
     /// as well. No single item raises.
+    /// <para>
+    /// A merge reports a conflict per file it settles rather than per entry: one
+    /// <see cref="RecycleRestoreConflictAction.MergedSkipped"/> for the directory under
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, and one record per overwritten or renamed file
+    /// under the other two. None of the three reaches a failure stage.
+    /// </para>
     /// </remarks>
     public RestoreDirectoryConflict DirectoryConflict { get; init; } = RestoreDirectoryConflict.MergeSkip;
 

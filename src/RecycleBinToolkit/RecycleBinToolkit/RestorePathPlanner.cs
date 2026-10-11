@@ -13,8 +13,8 @@ namespace RecycleBinToolkit;
 internal enum RestoreAction
 {
     /// <summary>
-    /// Put the item at the destination path, which is either free or — once a merge exists — already there to
-    /// merge into.
+    /// Put the item at the destination path, which is either free or — under a merge policy — a directory
+    /// that is already there to merge into.
     /// </summary>
     Move,
 
@@ -191,11 +191,11 @@ internal static class RestorePathPlanner
     }
 
     /// <summary>
-    /// What a merge does with one file inside it whose destination is already occupied.
+    /// What a merge does with one entry inside the tree whose destination is already occupied.
     /// </summary>
-    /// <param name="destinationPath">The path the file inside the restored tree wants.</param>
+    /// <param name="destinationPath">The path the entry inside the restored tree wants.</param>
     /// <param name="mode">The directory policy the restore was asked for.</param>
-    /// <returns>The action to take about that file.</returns>
+    /// <returns>The action to take about that entry.</returns>
     /// <remarks>
     /// The three merge modes answer, and nothing else reaches here:
     /// <see cref="RestoreDirectoryConflict.MergeReplace"/> overwrites the file in the way,
@@ -210,10 +210,9 @@ internal static class RestorePathPlanner
     /// <see cref="WithFreeNumber"/> renames into, not something the policy turns on.
     /// </para>
     /// <para>
-    /// <b>The walk that would call this does not exist yet.</b> Nothing in production reaches this method —
-    /// a directory onto an occupied directory resolves to <see cref="RestoreAction.Move"/> and the move is
-    /// refused — so what is documented above is the answer this gives, not a policy any restore currently
-    /// applies.
+    /// Asked of every entry whose destination is taken that is not a directory to merge into — a file under
+    /// the squatter's own tree, a junction. Whether what occupies the path is a file or a directory is the
+    /// walk's answer to carry, not this one's, and it is what the conflict record names.
     /// </para>
     /// </remarks>
     internal static RestoreAction DecideMerged(string destinationPath, RestoreDirectoryConflict mode)
@@ -248,11 +247,12 @@ internal static class RestorePathPlanner
     /// answered by the same branch a same-kind occupant is.
     /// <para>
     /// A destination holding a directory answers <see cref="RestoreAction.Move"/> under every merge mode.
-    /// That is not the same as moving a free directory whole: a tree walk is to merge into what is there and
-    /// ask <see cref="DecideMerged"/> about each file inside it, and that walk does not exist yet — so today
-    /// an occupied directory reaches the move and the move refuses. A directory is never replaced whole,
+    /// That is not the same as moving a free directory whole: the tree is walked into what is there and each
+    /// entry inside it is settled by <see cref="DecideMerged"/>. A directory is never replaced whole,
     /// because the only way to replace one is to delete it first and find out afterwards whether the move
-    /// was possible at all, and the bytes destroyed by that are the caller's.
+    /// was possible at all, and the bytes destroyed by that are the caller's. The same answer under all
+    /// three modes is what puts the policy in the right place: it decides what happens to each file, and
+    /// the destination is one directory either way.
     /// </para>
     /// <para>
     /// Both <c>Error</c> policies answer <see cref="RestoreAction.Skip"/>, as does an enum value from
