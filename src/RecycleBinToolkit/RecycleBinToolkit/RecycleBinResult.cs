@@ -85,13 +85,17 @@ public enum RecycleFailureStage
     /// than a conflict to resolve.
     /// </summary>
     /// <remarks>
-    /// What was in the way was not touched, and the item stays in the Recycle Bin. Every policy other than
-    /// this one arrives in <see cref="RecycleBinRestoreResult.Conflicts"/> alone, so the result still
-    /// succeeded and this stage is what a caller opting into <c>Error</c> gets instead.
+    /// What was in the way was not touched, and the item stays in the Recycle Bin. Four of the policies that
+    /// answer an occupied path reach <see cref="RecycleBinRestoreResult.Conflicts"/> and leave
+    /// <see cref="RecycleBinRestoreResult.Succeeded"/> true instead — <see cref="RestoreFileConflict.Skip"/>
+    /// and <see cref="RestoreDirectoryConflict.Skip"/>, and the two renames,
+    /// <see cref="RestoreFileConflict.Rename"/> and <see cref="RestoreDirectoryConflict.RenameDirectory"/> —
+    /// so this stage is what a caller opting into <c>Error</c> gets instead.
     /// <para>
-    /// The one group of policies that reports neither is a directory's three <c>Merge*</c> values, because
-    /// the merge walk is not implemented: a directory onto an occupied directory arrives as a
-    /// <see cref="RestoreFailed"/> and lands in no conflict list at all.
+    /// Two kinds of policy reach neither list. <see cref="RestoreFileConflict.Replace"/> takes the
+    /// occupant's place, so there is nothing left to report a conflict about; and a directory's three
+    /// <c>Merge*</c> values do not merge at all yet, so a directory onto an occupied directory arrives as a
+    /// <see cref="RestoreFailed"/> instead.
     /// </para>
     /// </remarks>
     RestoreConflictRefused = 11

@@ -13,9 +13,9 @@ namespace RecycleBinToolkit;
 internal enum RestoreAction
 {
     /// <summary>
-/// Put the item at the destination path, which is either free or — once a merge exists — already there to
-/// merge into.
-/// </summary>
+    /// Put the item at the destination path, which is either free or — once a merge exists — already there to
+    /// merge into.
+    /// </summary>
     Move,
 
     /// <summary>Leave the item in the Recycle Bin and touch nothing on disk.</summary>
