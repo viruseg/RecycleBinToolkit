@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.Versioning;
 using Windows.Win32;
-using Windows.Win32.Foundation;
 using Windows.Win32.Storage.FileSystem;
 using Windows.Win32.System.Ioctl;
 
@@ -43,6 +42,11 @@ internal readonly record struct PhysicalDiskKey(int DeviceType, int DeviceNumber
 /// remembered for the life of the process. A disk is not repartitioned under a run, and a caller that asked
 /// per item would pay a device control for every one of ninety thousand entries.
 /// </para>
+/// <para>
+/// What a root answered <em>not</em> is remembered the same way, because a root that names no disk is the
+/// one that would cost most to ask about again: a share and a volume whose driver declines both take a
+/// handle and a device control to reach the same refusal, and neither refusal changes under a run.
+/// </para>
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class PhysicalVolumeDisk
@@ -66,7 +70,12 @@ internal static class PhysicalVolumeDisk
     /// </summary>
     private const int CacheLimit = 64;
 
-    private static readonly ConcurrentDictionary<string, PhysicalDiskKey> Cache =
+    /// <summary>
+    /// What each root was last answered, <see langword="null"/> for one that named no disk. Every outcome is
+    /// kept, the refusals included: a root that never answers would otherwise be asked again on every call,
+    /// and each asking is a handle opened and a device control sent.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, PhysicalDiskKey?> Cache =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -87,17 +96,25 @@ internal static class PhysicalVolumeDisk
     /// volume at all. Neither raises: what this decides is how much of a machine may work at once, so a
     /// volume that could not say is one a caller groups on its own rather than a failed operation.
     /// </para>
+    /// <para>
+    /// A refusal is remembered as well as an answer, so a second call about a root that will not answer
+    /// costs nothing. That matters most for the volumes a machine has but cannot describe — a share asked
+    /// once per item would be a question ninety thousand times over for an answer already known.
+    /// </para>
     /// </remarks>
     internal static bool TryIdentify(string volumeRoot, out PhysicalDiskKey key)
     {
-        if (Cache.TryGetValue(volumeRoot, out key))
+        if (Cache.TryGetValue(volumeRoot, out var remembered))
         {
-            return true;
+            key = remembered.GetValueOrDefault();
+            return remembered.HasValue;
         }
 
-        if (RecycleBinVolumeState.IsUncRoot(volumeRoot) || !Query(volumeRoot, out key))
+        PhysicalDiskKey? answered = null;
+
+        if (!RecycleBinVolumeState.IsUncRoot(volumeRoot) && Query(volumeRoot, out var found))
         {
-            return false;
+            answered = found;
         }
 
         // Dropped whole rather than evicted one at a time: an answer is a device control, and re-asking one
@@ -109,8 +126,10 @@ internal static class PhysicalVolumeDisk
             Cache.Clear();
         }
 
-        Cache[volumeRoot] = key;
-        return true;
+        Cache[volumeRoot] = answered;
+
+        key = answered.GetValueOrDefault();
+        return answered.HasValue;
     }
 
     private static unsafe bool Query(string volumeRoot, out PhysicalDiskKey key)
@@ -132,21 +151,21 @@ internal static class PhysicalVolumeDisk
             return false;
         }
 
-        // The question carries nothing in and one fixed layout out, so the call's own success is the whole of
-        // the answer: there is nothing to interpret and no second request to make about a short one.
+        // The question carries nothing in and one fixed layout out. The count comes back and is checked, because a
+        // driver that reports success having written less than it promised has answered nothing at all:
+        // `number` is left as it was declared, and (0, 0) is no volume's disk, so taking it would hand a
+        // caller a key that is unlike every other volume's — one that groups alone, and looks like an answer.
         var number = default(STORAGE_DEVICE_NUMBER);
 
         var filled = PInvoke.DeviceIoControl(
-            new HANDLE(volume.DangerousGetHandle()),
+            volume,
             PInvoke.IOCTL_STORAGE_GET_DEVICE_NUMBER,
             null,
-            0,
-            &number,
-            (uint)sizeof(STORAGE_DEVICE_NUMBER),
-            null,
+            new Span<byte>(&number, sizeof(STORAGE_DEVICE_NUMBER)),
+            out var written,
             null);
 
-        if (!filled)
+        if (!filled || written != sizeof(STORAGE_DEVICE_NUMBER))
         {
             key = default;
             return false;

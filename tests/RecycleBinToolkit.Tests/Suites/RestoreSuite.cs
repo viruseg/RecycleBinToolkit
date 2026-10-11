@@ -97,11 +97,22 @@ internal static class RestoreSuite
     /// asymmetry: the key is not a per-volume identity, or the two names would differ for a reason that has
     /// nothing to do with where the bytes are.
     /// </para>
+    /// <para>
+    /// Which volumes sit on which disk is a fact about this machine and nothing here can arrange it, so a
+    /// machine without these three drives is a machine this case does not run on. What it asks about is
+    /// three named volumes, which is why <see cref="RequireVolumePresent"/> stands in for them. When they
+    /// are all here the assertions are the claim and they stand unweakened: a machine where <c>D:</c> and
+    /// <c>E:</c> are not one disk fails this case rather than redefining it.
+    /// </para>
     /// </remarks>
-    private static async Task VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot(TestContext context)
+    private static Task VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+
+        RequireVolumePresent('D');
+        RequireVolumePresent('E');
+        RequireVolumePresent('C');
 
         // Data, not targets: nothing is created, recycled, moved or deleted on any of these paths, exactly as
         // the existing cases that put W:\ into a path predicate do.
@@ -115,5 +126,38 @@ internal static class RestoreSuite
         Check.False(PhysicalVolumeDisk.TryIdentify(@"\\server\share\", out _), "a share has no local volume device and must not answer");
 
         workspace.Dispose();
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Ends the calling case as not run when <paramref name="letter"/> is not a volume this machine has.
+    /// </summary>
+    /// <remarks>
+    /// The volumes this case compares are named in the source, so what it needs is a fact about the machine
+    /// rather than anything the run can arrange — and a case that read a machine's partition layout as a
+    /// defect would be the repository's rule against asking a run to be the right kind of disk, with the
+    /// letters as the "right kind".
+    /// <para>
+    /// Presence is read from the root resolving rather than from <see cref="DriveInfo"/> alone, for the
+    /// reason <see cref="AbsentVolume.RequireAbsent"/> checks both ways: an enumeration omits roots Windows
+    /// still resolves, and a root that resolves is a volume whichever way the enumeration reads.
+    /// </para>
+    /// </remarks>
+    /// <param name="letter">The letter the case needs to be able to ask about.</param>
+    /// <exception cref="CheckSkippedException">
+    /// Nothing is mounted on <paramref name="letter"/>. The message names the volume and what the case
+    /// needed from it, and reads as a fact about this machine.
+    /// </exception>
+    private static void RequireVolumePresent(char letter)
+    {
+        var root = AbsentVolume.RootOf(letter);
+
+        if (!Directory.Exists(root))
+        {
+            Check.Skip(
+                $"{root} is not a volume on this machine. This case needs D:, E: and C: all present, "
+                + "to read which physical disk each one sits on");
+        }
     }
 }
