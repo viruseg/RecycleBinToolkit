@@ -95,11 +95,11 @@ public sealed class RecycleRestoreConflict
     /// ended up and not where it collided — it was set down elsewhere on purpose, and the path it collided
     /// at is named by no record in this result.
     /// <para>
-    /// <b>It is in <see cref="RecycleBinRestoreResult.RestoredPaths"/> only when the item is the one that was
-    /// handed in.</b> That is true of both renamed actions above, where the renamed item *is* the entry the
-    /// caller restored — and false of <see cref="RecycleRestoreConflictAction.MergedRenamed"/>, which names
-    /// a file <em>inside</em> a directory that was merged: that record names one entry's file, and
-    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/> holds the one path for the directory.
+    /// Under <see cref="RecycleRestoreConflictAction.RestoredRenamed"/> the item *is* the entry the caller
+    /// restored, and <see cref="RecycleBinRestoreResult.RestoredPaths"/> names it. Under
+    /// <see cref="RecycleRestoreConflictAction.MergedRenamed"/> it is a file <em>inside</em> a merged
+    /// directory, and that list holds the directory's path instead —
+    /// <c>AMergedTreeSetsEachCollidingFileUnderAFreeName</c> restores one entry and reads two of these.
     /// </para>
     /// </remarks>
     public string Path { get; }

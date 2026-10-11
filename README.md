@@ -31,7 +31,7 @@ that tell you *why* an item failed:
 | A single bad path aborts the whole queue | Path problems are reported per item and never abort a batch |
 | A path that cannot be described is deleted **permanently** while reporting success | Detected before the move happens; the policy is yours to choose |
 | A delete that lands outside the Recycle Bin is reported as success | The destination is chosen by the library itself, so there is no reported location to disagree with |
-| A delete that cannot be taken back, because nothing knows where the item came from | A restore puts the entry back where its own record says it was deleted from, and reports what happened to every path it touched — which is not one record per entry: see [`RecycleBinRestoreResult`](#recyclebinrestoreresult) |
+| A delete that cannot be taken back, because nothing knows where the item came from | A restore puts the entry back where its own record says it was deleted from, and reports the outcome in [`RecycleBinRestoreResult`](#recyclebinrestoreresult) |
 
 ## Why it exists
 
@@ -409,7 +409,7 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `PermanentDeleteFailed` | You asked for a path to be removed for good — because its volume cannot recycle it and `NoRecycleBinAction` was `NoRecycleBinAction.DeletePermanently` — but the file system refused: a handle is held, the attributes are read-only. The file is exactly as you left it. |
 | `Enumeration` | An entry in the Recycle Bin could not be read or removed, or a volume could not be read. Only reachable while reading or emptying the Recycle Bin. |
 | `VolumeGuidPathNotAddressable` | The path names its volume by GUID, as `\\?\Volume{GUID}\…`. The volume has no drive letter to be measured, emptied or reported against, so the path was refused before anything was asked: `Attempts` is `0` and `HResult` is `0`. Address the same location by drive letter or mount point instead. |
-| `RestoreFailed` | Only reachable while restoring. An entry's payload would not move, its record would not go, or its record could not be read to say where it belonged — in which case `Path` is the entry's own `$I` record inside the bin, the only path it carries without reading that record. A merge reports one per file of its tree the filesystem would not take, under **that file's own path** rather than the directory's — under any of the three `Merge*` values, and whichever way the merge was settling that file. **A file that refused both — the move, and then the put-back that would have taken it out of the payload — accounts for two records under the same path, and the directory accounts for a third under its own**, each a separate refusal with its own code; group by path rather than counting if you want one failure per file. **None of the six directory policies fails *because of the collision*** — `RenameDirectory` sets the tree down whole under a free name, and `Skip` and `Error` leave the entry in the bin — but all three, and every other policy, still reach this stage through the three routes that have nothing to do with the collision: a record that could not be read, a payload that would not move, a payload that moved and a record that would not go. The entry is still in the Recycle Bin, so a second attempt is worth making; the one exception is that last one, where the file is already on disk and the next attempt meets a conflict instead. |
+| `RestoreFailed` | Only reachable while restoring. An entry's payload would not move, its record would not go, or its record could not be read to say where it belonged — in which case `Path` is the entry's own `$I` record inside the bin, the only path it carries without reading that record. A merge reports one per file of its tree the filesystem would not take, under **that file's own path** rather than the directory's — under any of the three `Merge*` values, and whichever way the merge was settling that file. **A file that refused both — the move, and then the put-back that would have taken it out of the payload — accounts for two records under the same path, and the directory accounts for a third under its own**, each a separate refusal with its own code; group by path rather than counting if you want one failure per file. `RenameDirectory` sets the tree down whole under a free name, and `Skip` and `Error` leave the entry in the bin; the `Merge*` values fail on the collision itself when the destination holds a **file** — see [`RestoreDirectoryConflict`](#restoredirectoryconflict). Whatever the policy, the entry can also reach this stage for reasons of its own — an unreadable record, a payload that will not move, a record left behind a payload that already moved — and it is still in the Recycle Bin when it does, so a second attempt is worth making. The exception is that last one, where the file is already on disk and the next attempt meets a conflict instead. |
 | `RestoreConflictRefused` | Only reachable while restoring, and only under `FileConflict` or `DirectoryConflict` set to `Error`. The path was already occupied, nothing on disk was touched, and the entry stays in the bin. Every other policy that answers an occupied path settles it and reports what it did in `Conflicts`, and nothing else does — `Skip` under either policy, the two renames `Rename` and `RenameDirectory`, and the three `Merge*` values, which report one record per file of the tree they settle and one for the directory itself under `MergeSkip` **where the destination is a directory**. Where it holds a **file** the merge values have no tree to merge into and fail at [`RestoreFailed`](#recyclefailurestage) instead, where `RenameDirectory` takes a free name. So this stage is what opting into `Error` gets instead. `Attempts` and `HResult` are both `0`: the refusal is settled before any move. **None of those policies puts an entry in `Failures` *because of* the conflict — that is the whole difference `Error` makes, and it does not follow that such a restore reads `Succeeded`: what it does about everything else can still fail one, a record that could not be read, a payload that moved and a record that would not go, a merge whose put-back or whose payload removal was refused. A merge is the plain case of it, having reported what it settled and then failing to deal with one file; its conflicts are unchanged by that failure and both lists carry it.** **Two kinds of policy reach no conflict at all: `FileConflict = Replace`, which takes the occupant's place — where the occupant is a file, so there is nothing left to report a conflict about, though a destination holding a *directory* has nothing to overwrite and that one fails at `RestoreFailed` instead — and a `Merge*` value whose destination holds a file, which fails rather than settling anything.** |
 
 `HResult` carries the file system's code where the file system refused, or `0` where nothing was
@@ -588,9 +588,8 @@ the entries that belong in it, so one entry of three may appear in none of the t
 because its path was taken is the answer `Skip` asks for, not a failure to report it as one; only the two
 `Error` policies move an entry into `Failures` **because of the conflict it resolved**. That is a statement
 about the policy, not about the outcome: a restore that has reported a conflict can still read `false`, and
-what it does about everything else is what decides — a record that could not be read, a payload that moved
-and a record that would not go, a merge that reported what it settled and then could not deal with one file
-of its tree. A conflict never makes `Succeeded` false; a failure does, wherever it came from.
+what it does about everything else is what decides it. A conflict never makes `Succeeded` false; a failure
+does, wherever it came from.
 
 `Conflicts` is not one record per entry you handed in. A directory merged into one that is already there
 reports one record per file it settled, which under `MergeSkip` means one record for the whole tree however
@@ -600,8 +599,8 @@ and one entry; under `MergeSkip` it is one record, ninety entries back in the bi
 that collides with nothing reports nothing at all. They sit with the directory's own entry in the order you
 handed the entries in; which files of one tree come first follows the order the filesystem hands them over,
 which is not a property of the tree. `RestoredPaths` is unaffected: it names what you handed in, so a merged
-directory is one path on that list however many files it settled, and a file set down under a free name is
-named in `Conflicts` and nowhere else.
+directory is one path on that list however many files it settled, and a file **a merge** set down under a
+free name is named in `Conflicts` and nowhere else.
 
 **An entry that was put back where its record says is reported under that path — your own spelling from
 the day it was deleted, trailing separator and all.** The payload is moved to the trimmed name, because a
@@ -689,11 +688,8 @@ bring it back. If even that could not be done, the payload is left whole rather 
 inside it, and the directory's own entry stays in the bin.
 
 **A merge can also fail having dealt with every file in its tree.** If the removal of the payload, or the
-deletion of the record after it, is what the filesystem refuses — and both happen after the walk has
-finished — then there is no file to name and the entry's own record is the only one in `Failures`. That is
-the same three routes every policy has, not a fourth thing a merge does: whatever the policy, the entry
-reaches [`RestoreFailed`](#recyclefailurestage) when its record cannot be read, when its payload will not
-move, and when a payload that moved leaves a record behind.
+deletion of the record after it, is what the filesystem refuses — both happen after the walk has finished —
+then there is no file to name, and the entry's own record is the only one in `Failures`.
 
 ### `RecycleBinStatus`
 

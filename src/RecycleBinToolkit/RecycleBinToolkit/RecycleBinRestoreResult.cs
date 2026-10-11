@@ -114,10 +114,8 @@ public sealed class RecycleBinRestoreResult
     /// <para>
     /// Which is a statement about the policy and not about the outcome. A restore that has reported here can
     /// still read <see langword="false"/>: a merge that reported what it settled and then could not deal with
-    /// one file of its tree — its put-back, or the removal of its payload — carries records in both lists at
-    /// once, and this list is unchanged by that failure. So is every other thing a restore can be refused:
-    /// a record that could not be read to say where an entry came from, a payload that moved and a record
-    /// that would not go.
+    /// one file of its tree carries records in both lists at once, and this list is unchanged by that
+    /// failure.
     /// </para>
     /// </remarks>
     public IReadOnlyList<RecycleRestoreConflict> Conflicts { get; }

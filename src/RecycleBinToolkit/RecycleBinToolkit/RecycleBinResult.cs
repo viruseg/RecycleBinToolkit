@@ -68,16 +68,9 @@ public enum RecycleFailureStage
     /// go, or the record could not be read to say where it belonged. Only reachable while restoring.
     /// </summary>
     /// <remarks>
-    /// Reached **once for the directory and once for each file of its tree that could not be dealt with**
-    /// while a directory is being merged — the file under that file's own path rather than the directory's,
-    /// and the directory under its own, under any of the three <c>Merge*</c> values whatever the merge was
-    /// doing with that file.
-    /// <para>
-    /// <b>Which is zero of them in a merge that works.</b> Nothing here is reached by a collision at all:
-    /// a tree whose every file is placed arrives at neither the directory's record nor a file's, under
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> as much as under the other two, because a file the
-    /// policy leaves alone is not a file that failed. The three routes below are the ones that reach it.
-    /// </para>
+    /// While a directory is being merged, a file of its tree that could not be dealt with reaches this stage
+    /// under that file's own path; the directory itself reaches it only when the merge could not finish.
+    /// A merge that deals with every file of its tree does not reach it at all.
     /// <para>
     /// <b>Once for the file, and once more for the directory, is not the whole count.</b> A file whose move
     /// was refused can be refused a second time — the put-back that would have taken it out of the payload
@@ -103,9 +96,8 @@ public enum RecycleFailureStage
     /// <see cref="RecycleBinRestoreResult.Conflicts"/>, and nothing else does —
     /// <see cref="RestoreFileConflict.Skip"/> and <see cref="RestoreDirectoryConflict.Skip"/>, the two
     /// renames <see cref="RestoreFileConflict.Rename"/> and
-    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/>, and the three <c>Merge*</c> values, which
-    /// report one record per file of the tree they settle and one for the directory itself under
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> <em>where the destination is a directory</em>. Where
+    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/>, and the three <c>Merge*</c> values, whose
+    /// reporting granularity is on <see cref="RecycleBinRestoreResult.Conflicts"/>. Where
     /// it holds a file they have no tree to merge into and fail at <see cref="RestoreFailed"/> instead, like
     /// any other move the filesystem would not make; and a tree that collides with nothing is settled
     /// without a record there, as it would be under any other policy. So this stage is what a caller
