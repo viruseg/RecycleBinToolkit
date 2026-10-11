@@ -470,7 +470,8 @@ internal static class RestoreRunner
     /// The path the entry is to be reported at: where it landed, or — for an entry that was not moved — the
     /// path that was in its way. The two are one string for every kind but
     /// <see cref="RestoreOutcomeKind.RestoredRenamed"/>, because the planner lands every other action on the
-    /// path the entry asked for.
+    /// path the entry asked for. A failure names the path the action would have used, except for a record
+    /// that could not be read: that leaves nothing to name but the entry's own record inside the Recycle Bin.
     /// </param>
     /// <param name="Size">The bytes the entry carries back, as its own record measured them.</param>
     private readonly record struct RestoreOutcome(RestoreOutcomeKind Kind, string Path, long Size)
