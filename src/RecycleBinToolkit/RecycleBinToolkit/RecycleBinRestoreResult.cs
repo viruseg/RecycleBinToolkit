@@ -104,9 +104,18 @@ public sealed class RecycleBinRestoreResult
     /// </para>
     /// <para>
     /// None of that makes <see cref="Succeeded"/> false: a conflict here is an outcome the caller asked
-    /// about by choosing a policy. Only <see cref="RestoreFileConflict.Error"/> and
-    /// <see cref="RestoreDirectoryConflict.Error"/> add a failure as well, which is the whole difference
+    /// about by choosing a policy, and <see cref="Succeeded"/> is decided by <see cref="Failures"/> alone.
+    /// Only <see cref="RestoreFileConflict.Error"/> and <see cref="RestoreDirectoryConflict.Error"/> put an
+    /// entry in <see cref="Failures"/> <em>because of</em> the conflict, which is the whole difference
     /// between them and the two <c>Skip</c> values.
+    /// </para>
+    /// <para>
+    /// Which is a statement about the policy and not about the outcome. A restore that has reported here can
+    /// still read <see langword="false"/>: a merge that reported what it settled and then could not deal with
+    /// one file of its tree — its put-back, or the removal of its payload — carries records in both lists at
+    /// once, and this list is unchanged by that failure. So is every other thing a restore can be refused:
+    /// a record that could not be read to say where an entry came from, a payload that moved and a record
+    /// that would not go.
     /// </para>
     /// </remarks>
     public IReadOnlyList<RecycleRestoreConflict> Conflicts { get; }

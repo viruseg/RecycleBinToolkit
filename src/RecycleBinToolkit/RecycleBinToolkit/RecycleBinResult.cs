@@ -86,9 +86,8 @@ public enum RecycleFailureStage
     /// </summary>
     /// <remarks>
     /// What was in the way was not touched, and the item stays in the Recycle Bin. Every other policy that
-    /// answers an occupied path resolves it, reports what it did in
-    /// <see cref="RecycleBinRestoreResult.Conflicts"/> and leaves
-    /// <see cref="RecycleBinRestoreResult.Succeeded"/> true, and nothing else does —
+    /// answers an occupied path settles it and reports what it did in
+    /// <see cref="RecycleBinRestoreResult.Conflicts"/>, and nothing else does —
     /// <see cref="RestoreFileConflict.Skip"/> and <see cref="RestoreDirectoryConflict.Skip"/>, the two
     /// renames <see cref="RestoreFileConflict.Rename"/> and
     /// <see cref="RestoreDirectoryConflict.RenameDirectory"/>, and the three <c>Merge*</c> values, which
@@ -98,11 +97,23 @@ public enum RecycleFailureStage
     /// any other move the filesystem would not make. So this stage is what a caller opting into
     /// <c>Error</c> gets instead.
     /// <para>
-    /// Two policies reach no conflict. <see cref="RestoreFileConflict.Replace"/> takes the occupant's place,
-    /// so where the occupant is a file there is nothing left to report about — though a destination holding a
-    /// <em>directory</em> has nothing to overwrite and that one fails at <see cref="RestoreFailed"/> too.
-    /// And a <c>Merge*</c> value on a destination holding a file fails rather than resolving anything, so it
-    /// reaches this list's sibling and not this one.
+    /// What a conflict is worth is the whole of the difference, and it is worth saying precisely: none of
+    /// those policies puts an entry in <see cref="RecycleBinRestoreResult.Failures"/>
+    /// <em>because of</em> the conflict, and
+    /// <see cref="RecycleBinRestoreResult.Succeeded"/> is decided by that list alone. It does not follow
+    /// that such a restore always reads <see langword="true"/>: what the restore does about everything
+    /// <em>else</em> can still fail one — a record that could not be read to say where an entry came from, a
+    /// payload that moved and a record that would not go, a merge whose put-back or whose payload removal
+    /// was refused. A merge is the plain case of it, having reported what it settled and then failing to
+    /// deal with one file; the conflicts are unchanged by that failure, and both lists carry it.
+    /// </para>
+    /// <para>
+    /// Two policies reach no conflict at all. <see cref="RestoreFileConflict.Replace"/> takes the occupant's
+    /// place, so where the occupant is a file there is nothing left to report about — though a destination
+    /// holding a <em>directory</em> has nothing to overwrite and that one fails at
+    /// <see cref="RestoreFailed"/> too. And a <c>Merge*</c> value on a destination holding a file fails
+    /// rather than settling anything, so it reaches
+    /// <see cref="RecycleBinRestoreResult.Failures"/> and not this one.
     /// </para>
     /// </remarks>
     RestoreConflictRefused = 11

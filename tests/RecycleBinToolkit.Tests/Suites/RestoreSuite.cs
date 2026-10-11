@@ -1622,19 +1622,24 @@ internal static class RestoreSuite
         workspace.Dispose();
     }
 
-
     /// <summary>
     /// A directory whose path holds a <em>file</em> is a conflict like any other, and under a merge value
     /// there is no tree to merge into — so the move is refused and the entry is reported as a failed restore
     /// rather than as a conflict anything resolved.
     /// </summary>
     /// <remarks>
-    /// This is the case the merge documentation turns on: the three merge values answer
-    /// <see cref="RestoreAction.Move"/> for an occupied path whatever occupies it, and only
-    /// <c>ADirectoryRestoringOntoAFileIsAConflict</c> — which runs under
-    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/> — was pinning what happens next. Without this,
-    /// every sentence saying a merge resolves an occupied path would be true only of the other kind of
-    /// occupant.
+    /// This is the case the merge documentation turns on, and it runs under the default
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> — the policy a caller who reads nothing is
+    /// running. All three merge values answer <see cref="RestoreAction.Move"/> for an occupied path
+    /// whatever occupies it, and <c>ADirectoryRestoringOntoAFileIsAConflict</c> — which runs under
+    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/> — was the only thing pinning what happens
+    /// next, under a policy that takes a free name rather than merging. So before this, every sentence
+    /// saying a merge settles an occupied path was true only of the other kind of occupant.
+    /// <para>
+    /// The other two merge values are deliberately not run here. <c>Merges</c> turns on the occupant's kind
+    /// before the policy is read, so all three fail here identically; what this case pins is that, and not
+    /// anything that separates one merge value from another.
+    /// </para>
     /// <para>
     /// The second restore is the recovery the failure promises and the cleanup that makes it: the entry never
     /// moved, so trying again under a policy that takes a free name works, which is why a directory refused
@@ -1671,7 +1676,7 @@ internal static class RestoreSuite
         Check.Equal(1, result.Failures.Count, "the directory is the one failure");
         Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move arrives");
         Check.Equal(root, result.Failures[0].Path, "under the path it wanted");
-        Check.Equal(0, result.Conflicts.Count, "and no conflict is reported, because nothing resolved anything");
+        Check.Equal(0, result.Conflicts.Count, "and no conflict is reported, because nothing settled anything");
         Check.Equal(0, result.ItemsRestored, "nothing left the bin");
         Check.Equal(0, result.RestoredPaths.Count, "so no path is named as restored");
 
