@@ -25,6 +25,9 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(TheSameEntryTwiceIsRestoredOnce), TheSameEntryTwiceIsRestoredOnce),
         new TestCase("RestoreSuite." + nameof(AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow), AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow),
         new TestCase("RestoreSuite." + nameof(ADirectoryRestoringOntoAFileIsAConflict), ADirectoryRestoringOntoAFileIsAConflict),
+        new TestCase("RestoreSuite." + nameof(ATakenDirectoryPathIsSkippedAndTheEntryStaysInTheBin), ATakenDirectoryPathIsSkippedAndTheEntryStaysInTheBin),
+        new TestCase("RestoreSuite." + nameof(ATakenDirectoryPathIsRefusedAsBothAConflictAndAFailure), ATakenDirectoryPathIsRefusedAsBothAConflictAndAFailure),
+        new TestCase("RestoreSuite." + nameof(ATakenDirectoryPathIsSetDownUnderAFreeName), ATakenDirectoryPathIsSetDownUnderAFreeName),
         new TestCase("RestoreSuite." + nameof(AMergedTreeLeavesWhatWasThereAndPutsTheRestBack), AMergedTreeLeavesWhatWasThereAndPutsTheRestBack),
         new TestCase("RestoreSuite." + nameof(AMergedTreeOverwritesEveryFileItCollidesWith), AMergedTreeOverwritesEveryFileItCollidesWith),
         new TestCase("RestoreSuite." + nameof(AMergedTreeSetsEachCollidingFileUnderAFreeName), AMergedTreeSetsEachCollidingFileUnderAFreeName),
@@ -1215,6 +1218,283 @@ internal static class RestoreSuite
         Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry has left the bin");
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A directory restoring onto a path a <em>directory</em> is standing on, under
+    /// <see cref="RestoreDirectoryConflict.Skip"/>: the squatter and everything in it is untouched, the
+    /// entry keeps its place in the Recycle Bin, and the answer says so without having failed.
+    /// </summary>
+    /// <remarks>
+    /// The same kind in the way is the shape this policy is about, and the merge cases are the only other
+    /// coverage of it — they are about a value that <em>does</em> settle the collision, so nothing they say
+    /// says what leaving it alone looks like.
+    /// <para>
+    /// Both of the squatter's files are read back rather than one, and at two depths: a directory untouched
+    /// at its root is a directory whose contents were walked over. The tree's own leaf is then checked for
+    /// absence, because that is the one path a merge would have put it back at — the same subdirectory, the
+    /// same name.
+    /// <para>
+    /// The entry is found again by that recorded path rather than counted, for the reason
+    /// <see cref="AMergedTreeLeavesWhatWasThereAndPutsTheRestBack"/> gives: being in the bin and being in
+    /// the bin saying where it came from are different claims, and only the second makes it restorable. Its
+    /// payload is read too, which is the other half — an entry left in the bin whose tree had been taken
+    /// from it would satisfy every count.
+    /// </remarks>
+    private static async Task ATakenDirectoryPathIsSkippedAndTheEntryStaysInTheBin(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var shape = BuildTakenDirectory("directory-skip");
+        var baseline = BaselineCount();
+
+        Check.True(await RecycleBin.RecycleAsync(shape.Root, cancellationToken: context.CancellationToken), "the tree reached the bin");
+        Check.False(Directory.Exists(shape.Root), "and left the disk");
+
+        StandTheSquatter(shape);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            shape.Root);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.Skip },
+            context.CancellationToken);
+
+        Check.True(Directory.Exists(shape.Root), $"the directory in the way is still at {shape.Root}");
+        Check.True(shape.SquatterTop.AsSpan().SequenceEqual(File.ReadAllBytes(shape.SquatterTopPath)), "with its own file at the top, byte for byte");
+        Check.True(shape.SquatterInside.AsSpan().SequenceEqual(File.ReadAllBytes(shape.SquatterInsidePath)), "and its own file inside its subdirectory");
+        Check.False(File.Exists(shape.LeafPath), "while nothing of the tree was put down beside them");
+
+        Check.Equal(0, result.ItemsRestored, "nothing was restored");
+        Check.Equal(0, result.RestoredPaths.Count, "so nothing is named as restored");
+
+        Check.Equal(1, result.Conflicts.Count, "and it is reported");
+        Check.Equal(shape.Root, result.Conflicts[0].Path, "as the path that was taken");
+        Check.True(result.Conflicts[0].OccupiedByDirectory, "by a directory");
+        Check.Equal(RecycleRestoreConflictAction.Skipped, result.Conflicts[0].Action, "and the action taken");
+
+        Check.Equal(0, result.Failures.Count, "a skip is not a failure");
+        Check.True(result.Succeeded, "and a conflict alone does not make the result not have succeeded");
+
+        Check.Equal(1, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry is still in the bin");
+        Check.True(shape.Leaf.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(item.PayloadPath, "nested", "leaf.bin"))), "and the tree is still inside it");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The same taken directory path under <see cref="RestoreDirectoryConflict.Error"/>: the squatter is
+    /// untouched, and the refusal is reported as a conflict and as a failure, which is what makes the result
+    /// not have succeeded.
+    /// </summary>
+    /// <remarks>
+    /// Both lists carry it because they answer different questions — what was in the way, and what did not
+    /// happen — and a caller reading only <see cref="RecycleBinRestoreResult.Conflicts"/> could not tell
+    /// this from a skip, which is the one thing the two policies are apart.
+    /// <para>
+    /// The code and the round count are zero because nothing was attempted: the refusal is settled before
+    /// any move, which is what <see cref="RecycleFailure.Attempts"/> reports as zero everywhere else too.
+    /// </remarks>
+    private static async Task ATakenDirectoryPathIsRefusedAsBothAConflictAndAFailure(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var shape = BuildTakenDirectory("directory-error");
+        var baseline = BaselineCount();
+
+        Check.True(await RecycleBin.RecycleAsync(shape.Root, cancellationToken: context.CancellationToken), "the tree reached the bin");
+        Check.False(Directory.Exists(shape.Root), "and left the disk");
+
+        StandTheSquatter(shape);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            shape.Root);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.Error },
+            context.CancellationToken);
+
+        Check.False(result.Succeeded, "a refused conflict is what makes the result not have succeeded");
+
+        Check.True(Directory.Exists(shape.Root), $"the directory in the way is still at {shape.Root}");
+        Check.True(shape.SquatterTop.AsSpan().SequenceEqual(File.ReadAllBytes(shape.SquatterTopPath)), "with its own file at the top, byte for byte");
+        Check.True(shape.SquatterInside.AsSpan().SequenceEqual(File.ReadAllBytes(shape.SquatterInsidePath)), "and its own file inside its subdirectory");
+        Check.False(File.Exists(shape.LeafPath), "while nothing of the tree was put down beside them");
+
+        Check.Equal(0, result.ItemsRestored, "nothing was restored");
+        Check.Equal(0, result.RestoredPaths.Count, "so nothing is named as restored");
+
+        Check.Equal(1, result.Conflicts.Count, "and it is a conflict like any other");
+        Check.Equal(shape.Root, result.Conflicts[0].Path, "as the path that was taken");
+        Check.True(result.Conflicts[0].OccupiedByDirectory, "by a directory");
+        Check.Equal(RecycleRestoreConflictAction.Skipped, result.Conflicts[0].Action, "and the action taken, which is the same one a skip takes");
+
+        Check.Equal(1, result.Failures.Count, "and it is a failure as well");
+        Check.Equal(shape.Root, result.Failures[0].Path, "under the path that was refused");
+        Check.Equal(RecycleFailureStage.RestoreConflictRefused, result.Failures[0].Stage, "at the stage a refusal is reported at");
+        Check.Equal(0, result.Failures[0].HResult, "nothing was attempted, so the file system has no code to report");
+        Check.Equal(0, result.Failures[0].Attempts, "and nothing was tried");
+
+        Check.Equal(1, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry stays in the bin, so the refusal is worth a second attempt");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The same taken directory path under <see cref="RestoreDirectoryConflict.RenameDirectory"/>: the tree
+    /// lands whole beside the directory in the way under the first free name, and that directory is left
+    /// exactly as it was.
+    /// </summary>
+    /// <remarks>
+    /// The free name is taken before the restore rather than read back out of the answer, for the reason
+    /// <see cref="ATakenFilePathIsRestoredUnderAFreeName"/> gives: once the payload is lying there, the same
+    /// call counts on to the next number.
+    /// <para>
+    /// The squatter is read back the way the skip case reads it, and its files are checked for presence
+    /// while the tree's own leaf is checked for absence at its old name — so a merge, which would have put
+    /// that leaf back under the same subdirectory and left the squatter's own files where they were, cannot
+    /// answer this.
+    /// <para>
+    /// <see cref="RecycleRestoreConflict.OccupiedByDirectory"/> reads <see langword="true"/> here and
+    /// <see langword="false"/> in <see cref="ADirectoryRestoringOntoAFileIsAConflict"/>. One policy over the
+    /// two kinds of occupant is the whole of the flag, and a runner reporting the arriving kind would answer
+    /// both cases alike.
+    /// </remarks>
+    private static async Task ATakenDirectoryPathIsSetDownUnderAFreeName(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var shape = BuildTakenDirectory("directory-rename");
+        var baseline = BaselineCount();
+
+        Check.True(await RecycleBin.RecycleAsync(shape.Root, cancellationToken: context.CancellationToken), "the tree reached the bin");
+        Check.False(Directory.Exists(shape.Root), "and left the disk");
+
+        StandTheSquatter(shape);
+
+        // Taken while the squatter holds the name the first number would take, which is what makes the
+        // answer the same string the restore lands on rather than the next one after it.
+        var renamed = RestorePathPlanner.WithFreeNumber(shape.Root);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            shape.Root);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory },
+            context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(1, result.ItemsRestored, "the tree was restored");
+        Check.Equal(1, result.RestoredPaths.Count, "and is named");
+        Check.Equal(renamed, result.RestoredPaths[0], "under the first free name beside the one it wanted");
+        Check.True(shape.Leaf.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(renamed, "nested", "leaf.bin"))), "the tree landed whole, its own leaf and all");
+        Check.True(Directory.Exists(Path.Combine(renamed, "nested")), "and the directory in between it");
+
+        Check.True(Directory.Exists(shape.Root), $"while the directory in the way is still at {shape.Root}");
+        Check.True(shape.SquatterTop.AsSpan().SequenceEqual(File.ReadAllBytes(shape.SquatterTopPath)), "with its own file at the top, byte for byte");
+        Check.True(shape.SquatterInside.AsSpan().SequenceEqual(File.ReadAllBytes(shape.SquatterInsidePath)), "and its own file inside its subdirectory");
+        Check.False(File.Exists(shape.LeafPath), "and nothing of the tree was put down into it");
+
+        Check.Equal(0, result.Failures.Count, "a rename resolved itself, so nothing failed");
+        Check.Equal(1, result.Conflicts.Count, "and the occupant is reported as one conflict");
+        Check.Equal(renamed, result.Conflicts[0].Path, "naming where the tree landed rather than what it collided with");
+        Check.True(result.Conflicts[0].OccupiedByDirectory, "with what was in the way reported as a directory");
+        Check.Equal(RecycleRestoreConflictAction.RestoredRenamed, result.Conflicts[0].Action, "and the action taken");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry has left the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// One tree recycled whole, and the directory of its own that has taken its path since. Every file in
+    /// either holds random bytes, so what came back is not confused with what was already there.
+    /// </summary>
+    /// <param name="Root">The path the tree was deleted from, which is also where the squatter stands.</param>
+    /// <param name="LeafPath">A file of the tree, two levels down.</param>
+    /// <param name="Leaf">The bytes <paramref name="LeafPath"/> held in the tree.</param>
+    /// <param name="SquatterTopPath">A file the squatter holds at the top of its own directory.</param>
+    /// <param name="SquatterTop">The bytes <paramref name="SquatterTopPath"/> holds.</param>
+    /// <param name="SquatterInsidePath">A file the squatter holds inside its own subdirectory.</param>
+    /// <param name="SquatterInside">The bytes <paramref name="SquatterInsidePath"/> holds.</param>
+    /// <remarks>
+    /// The tree carries one file, at <c>nested\leaf.bin</c>, and the squatter carries one at its top and one
+    /// under that same subdirectory. The shared subdirectory is the point of the shape: a merge would put
+    /// the tree's own file back at <paramref name="LeafPath"/>, so whether that path is there afterwards is
+    /// what tells a merge apart from every other answer this shape can get.
+    /// <para>
+    /// Every file holds random bytes rather than a word the case could compare by name, for the reason
+    /// <see cref="RandomBytes"/> gives: a payload that arrived holding its neighbour's content is a payload
+    /// that arrived.
+    /// </para>
+    /// </remarks>
+    private readonly record struct TakenDirectory(
+        string Root,
+        string LeafPath,
+        byte[] Leaf,
+        string SquatterTopPath,
+        byte[] SquatterTop,
+        string SquatterInsidePath,
+        byte[] SquatterInside);
+
+    /// <summary>
+    /// Writes the tree the taken-path cases restore, under a name of its own so one case cannot meet
+    /// another's.
+    /// </summary>
+    /// <param name="name">The directory name under the scratch root this case works in.</param>
+    /// <returns>The shape <see cref="TakenDirectory"/> describes.</returns>
+    private static TakenDirectory BuildTakenDirectory(string name)
+    {
+        var root = Path.Combine(ScratchWorkspace.Root, name);
+
+        var leafPath = Path.Combine(root, "nested", "leaf.bin");
+        var squatterTopPath = Path.Combine(root, "shared.bin");
+        var squatterInsidePath = Path.Combine(root, "nested", "inside.bin");
+
+        var leaf = RandomBytes(1024);
+
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+
+        File.WriteAllBytes(leafPath, leaf);
+
+        return new TakenDirectory(
+            root,
+            leafPath,
+            leaf,
+            squatterTopPath,
+            RandomBytes(2048),
+            squatterInsidePath,
+            RandomBytes(512));
+    }
+
+    /// <summary>
+    /// Puts a directory of its own back at the path the tree was deleted from, once the tree is in the bin
+    /// and the path is free for something else to take.
+    /// </summary>
+    /// <param name="shape">The tree the case built.</param>
+    /// <remarks>
+    /// The same kind as the tree, which is what separates these three cases from the cross-kind one above
+    /// and makes the destination a merge the three <c>Merge*</c> values would settle.
+    /// </remarks>
+    private static void StandTheSquatter(TakenDirectory shape)
+    {
+        // The folders went with the tree, and the squatter is what is standing there when the tree comes
+        // back — so they are made again rather than left from the build.
+        Directory.CreateDirectory(Path.Combine(shape.Root, "nested"));
+
+        File.WriteAllBytes(shape.SquatterTopPath, shape.SquatterTop);
+        File.WriteAllBytes(shape.SquatterInsidePath, shape.SquatterInside);
     }
 
     /// <summary>
