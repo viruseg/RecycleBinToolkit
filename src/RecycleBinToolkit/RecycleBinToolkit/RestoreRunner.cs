@@ -76,21 +76,26 @@ internal static class RestoreRunner
     /// <para>
     /// <b>The work is split by the physical disk behind each volume, not by the volume.</b> Two volumes on two
     /// devices are restored together; two volumes on one device are not, because they are two directories
-    /// sharing one head. The split is one channel per disk rather than a test inside a worker: a queue is
-    /// something a mover of one disk cannot reach into at all, where a condition on a shared one is a
-    /// question two threads have to keep asking correctly. The key is the driver's own answer through
-    /// <see cref="PhysicalVolumeDisk"/>, and a volume that named no disk shares one group with every other
-    /// such volume — the conservative side, which is that two unknown volumes move one after another.
-    /// <see cref="PhysicalDiskKey"/> carries the caveat this rests on: a spanning or striped volume is named
-    /// after the storage it is a volume of, so two volumes can key alike while sharing more than one head.
+    /// sharing one head. <see cref="RunDisk"/> is the whole of the second half, and it is a loop rather than
+    /// a number: a volume's movers are opened and joined before the next volume's are asked for, so nothing
+    /// decides at run time whether two volumes on one disk may move at once. The key is the driver's own
+    /// answer through <see cref="PhysicalVolumeDisk"/>, and a volume that named no disk shares one group with
+    /// every other such volume — the conservative side, which is that two unknown volumes move one after
+    /// another. <see cref="PhysicalDiskKey"/> carries the caveat this rests on: a spanning or striped volume
+    /// is named after the storage it is a volume of, so two volumes can key alike while sharing more than
+    /// one head.
     /// </para>
     /// <para>
-    /// Inside one disk its volumes are read one after another and moved while the next is being read, which
-    /// is the reading decision <see cref="ItemDetailLoader"/> already made rather than a new one: it reads
-    /// volumes in sequence because a single degree of parallelism would be wrong for one of them. The channel
-    /// is what makes a volume's entries start moving as they are read instead of after the last one, and it
-    /// is unbounded because that overlap is the point — a bound would put a limit on how far ahead of the
-    /// movers the reading may run, which is the reading's own figure to set and not this one's.
+    /// <b>Inside one volume, its entries move on that volume's own movers</b> — <see cref="MoveDegree"/> of
+    /// them, which is one until something measures the answer. The channel belongs to the volume rather than
+    /// to the disk for that reason: it is the queue those movers drain, and a channel shared across a
+    /// disk's volumes would be a pool two of them could both put work into, which is the one thing the loop
+    /// above exists to stop. Inside one disk its volumes are still read one after another, which is the
+    /// reading decision <see cref="ItemDetailLoader"/> already made rather than a new one: it reads volumes
+    /// in sequence because a single degree of parallelism would be wrong for one of them. The channel is
+    /// what makes a volume's entries start moving as they are read instead of after the last one, and it is
+    /// unbounded because that overlap is the point — a bound would put a limit on how far ahead of the movers
+    /// the reading may run, which is the reading's own figure to set and not this one's.
     /// </para>
     /// <para>
     /// <b>The slots are what a cancellation throws away.</b> A caller who cancels is told the call stopped,
@@ -142,29 +147,90 @@ internal static class RestoreRunner
                 index => RunDisk(disks[index], options, slots, cancellationToken));
         }
 
-        return Flatten(slots);
+        return Flatten(slots, items);
     }
 
     /// <summary>
-    /// Reads every volume on one disk and puts back what it read, feeding a channel this disk's own movers
-    /// drain.
+    /// Runs one disk's volumes, and returns before the next one starts.
     /// </summary>
     /// <param name="disk">The volumes sharing one physical disk, in the caller's own order.</param>
     /// <param name="options">The normalised settings the restore runs under.</param>
     /// <param name="slots">Where each entry's outcome is written, by position in the caller's list.</param>
     /// <param name="cancellationToken">Cancels the operation between entries and between volumes.</param>
     /// <remarks>
-    /// Everything a disk's work shares lives here rather than being passed down: the channel, the movers, the
-    /// entries already answered and the guard a merge writes its put-back behind. Each belongs to this disk
-    /// alone, which is what makes the separation structural rather than a condition a worker applies to
-    /// itself.
+    /// <b>This loop is the within-disk exclusion, and it is the whole of it.</b> Each volume's movers are
+    /// opened, fed, joined and let go before the next volume's are opened, so two volumes sharing a physical
+    /// disk are never moving at the same time — whatever <see cref="MoveDegree"/> answers, and however many
+    /// volumes the group holds. A remark saying that a degree of one is what keeps it so would be a promise
+    /// the next task breaks by raising the number; the loop cannot be raised.
     /// <para>
-    /// The put-back guard is one per disk rather than one for the call for the reason the recycle figures
-    /// give: a Recycle Bin is one directory per volume, every record a put-back writes lands in it, and
-    /// writers in one directory contend — 542 files a second recycled on one thread against 189 on eight.
-    /// Two disks are two directories on two devices and nothing about them contends, so one guard for the call
-    /// would be two devices waiting on each other's guard. Inside one disk the guard is the whole of the
-    /// single-writer claim, and nothing contends for it until <see cref="MoveDegree"/> answers above one.
+    /// Nothing a disk's volumes share survives between them: the channel, the movers, the entries already
+    /// answered and the put-back guard all belong to the volume <see cref="RunVolume"/> was given. That is
+    /// what makes the separation structural rather than a condition a worker applies to itself, and it is why
+    /// the disk group carries nothing but volumes.
+    /// </para>
+    /// </remarks>
+    private static void RunDisk(
+        RestoreDiskGroup disk,
+        RecycleBinOptions options,
+        RestoreOutcome[] slots,
+        CancellationToken cancellationToken)
+    {
+        foreach (var pipeline in OpenVolumes(disk))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            RunVolume(pipeline, options, slots, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Opens the mover pool of every volume on one disk, in the order <see cref="RunDisk"/> runs them.
+    /// </summary>
+    /// <param name="disk">The volumes sharing one physical disk.</param>
+    /// <returns>
+    /// One pipeline per volume, each with its own channel, its own movers, its own put-back guard and its own
+    /// record of the entries it has answered.
+    /// </returns>
+    /// <remarks>
+    /// The seam between the grouping and the pipeline, and it is where the shape of a restore is decided:
+    /// one per <em>volume</em>, so that two volumes of one disk cannot share one pool of movers however many
+    /// the figure says there may be. A pool per disk would be one the second volume found already running,
+    /// and a pool per call would be one every disk contended for.
+    /// </remarks>
+    internal static List<RestoreVolumePipeline> OpenVolumes(RestoreDiskGroup disk)
+    {
+        ArgumentNullException.ThrowIfNull(disk);
+
+        var opened = new List<RestoreVolumePipeline>(disk.Volumes.Count);
+
+        foreach (var volume in disk.Volumes)
+        {
+            opened.Add(new RestoreVolumePipeline(volume));
+        }
+
+        return opened;
+    }
+
+    /// <summary>
+    /// Reads one volume's records and puts back what it read, on the movers this volume owns.
+    /// </summary>
+    /// <param name="pipeline">The volume's own channel, movers, put-back guard and answered set.</param>
+    /// <param name="options">The normalised settings the restore runs under.</param>
+    /// <param name="slots">Where each entry's outcome is written, by position in the caller's list.</param>
+    /// <param name="cancellationToken">Cancels the operation between entries.</param>
+    /// <remarks>
+    /// The movers are threads of their own rather than pool tasks, which is the whole of why. A mover blocks
+    /// on a file move for as long as the disk takes, and the thread feeding this volume is already waiting on
+    /// it — so a pool task would be borrowing, from the pool the next disk's mover needs, a thread for work
+    /// that never yields. A machine with more disks than cores would otherwise wait for the pool to notice and
+    /// inject one.
+    /// <para>
+    /// The put-back guard is one per volume rather than one for the call, and so is the set of entries
+    /// already answered. Both follow from the scope: two equal entries are in the same volume group, so a
+    /// volume's own set answers each of them once; and two volumes of one disk never run together, so there
+    /// is nothing for a guard between them to arbitrate — while two <em>disks</em> are two devices whose
+    /// <c>$RECYCLE.BIN</c> directories nothing about them contends for.
     /// </para>
     /// <para>
     /// <b>Nothing raised here is turned into an entry's answer.</b> A live cancellation reaches this method
@@ -175,100 +241,77 @@ internal static class RestoreRunner
     /// this call promises.
     /// </para>
     /// </remarks>
-    private static void RunDisk(
-        RestoreDiskGroup disk,
+    private static void RunVolume(
+        RestoreVolumePipeline pipeline,
         RecycleBinOptions options,
         RestoreOutcome[] slots,
         CancellationToken cancellationToken)
     {
-        using var putBack = new SemaphoreSlim(1, 1);
+        // Disposed here rather than by whoever opened the pipeline: this is the only place one is used,
+        // and the guard is the only thing in it holding anything. The channel and the answered set are
+        // managed and have nothing to release.
+        using var putBack = pipeline.PutBack;
 
-        var work = Channel.CreateUnbounded<RestoreWorkItem>(new UnboundedChannelOptions
-        {
-            // Neither of these is true. A volume's records are read by a Parallel.For body, so there is more
-            // than one thread writing here; and a disk's movers are as many as MoveDegree answers, so there is
-            // more than one reading. Saying otherwise would let the channel take locks to protect a promise
-            // it is not being given.
-            SingleWriter = false,
-            SingleReader = false,
-
-            // Left at its default, which is to let a reader be woken on the thread that woke it. What runs
-            // here is the completion of one wait, not the move — the mover is on a thread of its own and
-            // blocked on that wait — so nothing is displaced. Stated because setting it false would move
-            // the waiting to the pool, and a mover that runs on somebody else's pool thread is the shape
-            // the one above is avoiding.
-            AllowSynchronousContinuations = true
-        });
-
-        // Every entry this call has already answered, so that a list naming one twice moves it once. Keyed by
-        // the entry's own identity — its $I path — which is one string comparison and reads no record. One per
-        // disk rather than one for the call, because two equal entries are in the same volume group and a
-        // volume belongs to one disk; and concurrent because a disk's movers can reach it at once.
-        var settled = new ConcurrentDictionary<RecycleBinItem, byte>();
-
-        // Asked of the group's first volume, which is as provisional as the figure it answers with: a group is the
-        // volumes on one disk, and nothing measured yet says which of them the answer belongs to.
-        var movers = new Thread[MoveDegree(disk.Volumes[0].VolumeRoot)];
+        var work = pipeline.Work;
 
         // What each of them raised, slot zero being this thread's own reading and the rest the movers'. Kept
         // beside the thread that raised it rather than shared, because a thread that lets one out takes the
         // process with it and this one must not; and read only after the join below, which is what makes a
         // write into one slot visible to the reader without a lock of its own.
-        var failures = new Exception?[movers.Length + 1];
-
-        for (var i = 0; i < movers.Length; i++)
-        {
-            var mover = i;
-
-            // A thread of its own rather than a pool task, which is the whole of why. Every mover blocks on a
-            // file move for as long as the disk takes, and the thread feeding this disk is already waiting on
-            // it — so a pool task would be borrowing, from the pool the next disk's mover needs, a thread for
-            // work that never yields. A machine with more disks than cores would otherwise wait for the pool
-            // to notice and inject one.
-            movers[i] = new Thread(
-                () =>
-                {
-                    try
-                    {
-                        MoveFrom(work.Reader, options, slots, settled, putBack, cancellationToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        failures[mover + 1] = ex;
-                    }
-                })
-            {
-                // A background thread so that a restore which has already answered cannot hold the process
-                // open; the join below means nothing is left running by the time this call returns.
-                IsBackground = true,
-                Name = "RecycleBinToolkit restore mover"
-            };
-
-            movers[i].Start();
-        }
+        var failures = new Exception?[pipeline.Movers + 1];
+        var movers = new Thread?[pipeline.Movers];
 
         try
         {
-            foreach (var volume in disk.Volumes)
+            for (var i = 0; i < movers.Length; i++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                var mover = i;
 
-                FeedVolume(volume, work.Writer, cancellationToken);
+                var thread = new Thread(
+                    () =>
+                    {
+                        try
+                        {
+                            MoveFrom(pipeline, options, slots, cancellationToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            failures[mover + 1] = ex;
+                        }
+                    })
+                {
+                    // A background thread so that a restore which has already answered cannot hold the
+                    // process open; the join below means nothing is left running by the time this call
+                    // returns.
+                    IsBackground = true,
+                    Name = "RecycleBinToolkit restore mover"
+                };
+
+                // Assigned before it is started, so that the join below has something to join even when
+                // the start itself is what raises.
+                movers[i] = thread;
+
+                thread.Start();
             }
+
+            FeedVolume(pipeline.Volume, work.Writer, cancellationToken);
         }
         catch (Exception ex)
         {
             failures[0] = ex;
         }
-
-        // Completed either way, and this is the one step that must not be skipped on the way out. A feed that
-        // stopped half way leaves movers waiting on a channel nothing will write to again, and a thread
-        // waiting for ever is neither visible to the caller nor closeable by them.
-        work.Writer.TryComplete();
+        finally
+        {
+            // On every way out, and this is the one step that cannot be skipped on any of them. Movers
+            // already running are waiting on this channel and nothing else will ever write to it again —
+            // including when a thread would not start and half the pool is running, which is the path
+            // that would otherwise strand them for the life of the process.
+            work.Writer.TryComplete();
+        }
 
         foreach (var mover in movers)
         {
-            mover.Join();
+            mover?.Join();
         }
 
         // The reading's own failure first, then the movers' in order. Rethrown as itself rather than as a new
@@ -287,15 +330,21 @@ internal static class RestoreRunner
     /// How many threads one volume's entries are put back on.
     /// </summary>
     /// <param name="volumeRoot">The volume root the figure is asked for.</param>
-    /// <returns>How many movers its entries may be moving on at once.</returns>
+    /// <returns>How many movers that volume's entries may be moving on at once.</returns>
     /// <remarks>
     /// <b>One, for every volume, and that is not an answer this repository measured.</b> No existing table
     /// says how many <c>MoveFile</c> calls a disk takes well, so none is borrowed from the reading figures in
-    /// <c>AGENTS.md</c> either: those are about opening thirty thousand small files, and a move is a metadata
-    /// operation against directories that are being written to at the same time. One is right for behaviour —
-    /// every entry is still moved by one thread, a merged tree is still walked end to end by one thread, and
-    /// the answer still comes back in the caller's order — and it is a constant that exists to be measured and
-    /// replaced.
+    /// <c>AGENTS.md</c> either: those are about opening thirty thousand small files, and a move is a
+    /// metadata operation against directories that are being written to at the same time. It is the only
+    /// constant in the pipeline, and it exists to be measured and replaced.
+    /// <para>
+    /// <b>Raising it widens one axis and only one.</b> It says how many movers a volume may read its own
+    /// records into and drain; it says nothing about which volumes run at the same time, because that is
+    /// <see cref="RunDisk"/>'s loop rather than a number, and no figure here can hand two volumes of one
+    /// disk a shared pool. What it must not become is a way to start movers over several volumes at once:
+    /// that would put two writers on one head, which is the reading table's own finding about writing a
+    /// directory and the reason <see cref="NativeRecycleRunner"/> is single-threaded.
+    /// </para>
     /// <para>
     /// Nothing above may read <c>1</c> as a considered answer. A figure belongs here beside the table that
     /// measured it, and a comment cannot stand in for the measurement.
@@ -309,13 +358,11 @@ internal static class RestoreRunner
     }
 
     /// <summary>
-    /// Puts back everything one disk's channel carries, until the channel is completed and drained.
+    /// Puts back everything one volume's channel carries, until the channel is completed and drained.
     /// </summary>
-    /// <param name="reader">The disk's channel, which is this mover's only source of work.</param>
+    /// <param name="pipeline">The volume whose channel this mover drains.</param>
     /// <param name="options">The normalised settings the restore runs under.</param>
     /// <param name="slots">Where each entry's outcome is written, by position in the caller's list.</param>
-    /// <param name="settled">The entries this disk has already answered.</param>
-    /// <param name="putBack">The guard a merge writes its put-back behind.</param>
     /// <param name="cancellationToken">Cancels the operation between entries.</param>
     /// <remarks>
     /// <b>One entry at a time, from start to finish, and a merged tree is one entry too.</b> A tree and the
@@ -330,53 +377,63 @@ internal static class RestoreRunner
     /// entered once per batch rather than once per entry.
     /// </para>
     /// <para>
-    /// A cancellation raises out of here and reaches <see cref="RunDisk"/> holding the caller's own token.
+    /// A cancellation raises out of here and reaches <see cref="RunVolume"/> holding the caller's own token.
     /// It is not caught here: an entry's filesystem refusals are answers and belong in
     /// <see cref="Restore"/>, while this one is the caller stopping the call.
     /// </para>
     /// </remarks>
     private static void MoveFrom(
-        ChannelReader<RestoreWorkItem> reader,
+        RestoreVolumePipeline pipeline,
         RecycleBinOptions options,
         RestoreOutcome[] slots,
-        ConcurrentDictionary<RecycleBinItem, byte> settled,
-        SemaphoreSlim putBack,
         CancellationToken cancellationToken)
     {
+        var reader = pipeline.Work.Reader;
+
         while (reader.WaitToReadAsync(CancellationToken.None).AsTask().GetAwaiter().GetResult())
         {
             while (reader.TryRead(out var entry))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                Restore(entry.Item, options, slots, settled, putBack, entry.Position, cancellationToken);
+                Restore(
+                    entry.Item,
+                    options,
+                    slots,
+                    pipeline.Settled,
+                    pipeline.PutBack,
+                    entry.Position,
+                    cancellationToken);
             }
         }
     }
 
     /// <summary>
-    /// Puts one volume's entries into its disk's channel: the ones already read first, then the ones this
-    /// reads, each written as it lands rather than after the last.
+    /// Puts one volume's entries into its own channel: everything this method will not ask the loader to
+    /// read, first, and everything it will after — each written as it lands rather than after the last.
     /// </summary>
     /// <param name="volume">The volume's entries, in the order they were passed in.</param>
-    /// <param name="writer">The disk's channel.</param>
+    /// <param name="writer">The volume's channel.</param>
     /// <param name="cancellationToken">Cancels the work between records.</param>
     /// <remarks>
-    /// <b>Two passes, and both are needed.</b> The first is one <see cref="RecycleBinItem.IsDetailsLoaded"/>
-    /// field read per entry and nothing else: an entry a listing already read has nothing left to read, so it
-    /// is written to the channel straight away. The second hands the rest to <see cref="ItemDetailLoader"/>,
-    /// which groups them by volume itself — skipping the ones the first pass already took, which is what saves
-    /// a <see cref="Path.GetPathRoot(string)"/> per preloaded entry — and signals each record as it is read.
+    /// <b>Two feeds, and the split between them is the loader's whole contract.</b> An entry a listing
+    /// already read has nothing left to read, and an entry whose <c>$I</c> path names no volume is one the
+    /// loader's own grouping puts nowhere. Both are written to the channel here, carrying the position they
+    /// already have, and <see cref="Restore"/> reads whatever record is there when it reaches them — which
+    /// is what happened before this pipeline existed.
+    /// <para>
+    /// Everything else goes to <see cref="ItemDetailLoader"/>, which skips the entries this method already
+    /// took — that skip is what saves a <see cref="Path.GetPathRoot(string)"/> per preloaded entry — and
+    /// signals each record as it reads it. <b>Those two skips are why the index the signal answers with is an
+    /// index into the list this method handed over</b>, and that list is the entries carrying their own
+    /// positions: the signal reads a pair out of it, so the position is never derived from the index. The
+    /// coupling is deliberate and one-directional, because the loader is not told about the position at all
+    /// and could not use it.
+    /// </para>
     /// <para>
     /// Without the callback the load would be a load followed by a restore, which is the shape the caller
     /// already had: every record read before anything moved. What is new is that an entry starts moving while
     /// its neighbours are still being read.
-    /// </para>
-    /// <para>
-    /// The positions are carried beside the entries because the loader answers with an index into the list it
-    /// was handed — the entries still to read, for one volume — and not into the caller's. The second list
-    /// exists so that index means the same thing to both: an outcome goes into the slot its entry's own
-    /// position gave it, and that is what keeps the answer in the order the caller passed.
     /// </para>
     /// </remarks>
     private static void FeedVolume(
@@ -385,29 +442,19 @@ internal static class RestoreRunner
         CancellationToken cancellationToken)
     {
         var count = volume.Items.Count;
+        var reading = new List<RestoreWorkItem>(count);
 
         for (var i = 0; i < count; i++)
         {
             var entry = volume.Items[i];
 
-            if (entry.Item.IsDetailsLoaded)
+            if (entry.Item.IsDetailsLoaded || entry.Item.VolumeRoot.IsEmpty)
             {
                 writer.TryWrite(entry);
+                continue;
             }
-        }
 
-        var reading = new List<RecycleBinItem>(count);
-        var positions = new List<int>(count);
-
-        for (var i = 0; i < count; i++)
-        {
-            var entry = volume.Items[i];
-
-            if (!entry.Item.IsDetailsLoaded)
-            {
-                reading.Add(entry.Item);
-                positions.Add(entry.Position);
-            }
+            reading.Add(entry);
         }
 
         if (reading.Count == 0)
@@ -415,9 +462,38 @@ internal static class RestoreRunner
             return;
         }
 
-        var feed = new RestoreFeed(writer, positions);
+        var feed = new RestoreFeed(writer, reading);
 
-        ItemDetailLoader.Load(reading, cancellationToken, in feed);
+        ItemDetailLoader.Load(new PendingEntries(reading), cancellationToken, in feed);
+    }
+
+    /// <summary>
+    /// The entries of one volume a load is about to read, in the order it will read them.
+    /// </summary>
+    /// <param name="entries">
+    /// The entries, each carrying the caller's position it will be written back with.
+    /// </param>
+    /// <remarks>
+    /// A view rather than a second list of the same entries: the pair is what carries the position, and a
+    /// list of bare entries beside it would put the two back under exactly the assumption this method is
+    /// here to remove. The loader indexes rather than enumerates, so the enumerator is there to satisfy the
+    /// interface rather than to be called.
+    /// </remarks>
+    private readonly struct PendingEntries(List<RestoreWorkItem> entries) : IReadOnlyList<RecycleBinItem>
+    {
+        public int Count => entries.Count;
+
+        public RecycleBinItem this[int index] => entries[index].Item;
+
+        public IEnumerator<RecycleBinItem> GetEnumerator()
+        {
+            for (var i = 0; i < entries.Count; i++)
+            {
+                yield return entries[i].Item;
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     /// <summary>
@@ -427,7 +503,7 @@ internal static class RestoreRunner
     /// <param name="item">The entry, whose record has been read.</param>
     /// <param name="options">The normalised settings the restore runs under.</param>
     /// <param name="slots">Where the outcome is written, by position in the caller's list.</param>
-    /// <param name="settled">The entries this disk has already answered.</param>
+    /// <param name="settled">The entries this volume has already answered.</param>
     /// <param name="putBack">The guard a merge writes its put-back behind.</param>
     /// <param name="position">That entry's position in the caller's list.</param>
     /// <param name="cancellationToken">Cancels the operation between this entry and the next.</param>
@@ -480,10 +556,10 @@ internal static class RestoreRunner
             // Answered before the destination is looked at, which is the only order in which the answer is the
             // truth: of two identical entries one has already been answered by the time the other is
             // reached, and asking the planner about that would move one payload twice or report one collision
-            // twice. Which of the pair moves is the order they were fed in while a disk has one mover and the
+            // twice. Which of the pair moves is the order they were fed in while a volume has one mover and the
             // machine's while it has more — one entry moved and one reported either way. Two equal entries are
-            // in the same volume group and a volume belongs to one disk, so nothing here can be answered by a
-            // mover on another device.
+            // in the same volume group and a volume group belongs to one volume, so nothing here can be
+            // answered by a mover of another volume.
             if (!settled.TryAdd(item, 0))
             {
                 slots[position] = Failed(originalPath, item.Size, hResult: 0, attempts: 0);
@@ -1202,22 +1278,21 @@ internal static class RestoreRunner
     /// <summary>
     /// Puts every entry that is ready to be moved into one disk's channel.
     /// </summary>
-    /// <param name="writer">The disk's channel.</param>
-    /// <param name="positions">
-    /// Where each entry handed to the loader sits in the caller's list, in the order the loader was handed
-    /// them — which is the order the index it reports is an index into.
+    /// <param name="writer">The volume's channel.</param>
+    /// <param name="reading">
+    /// The entries handed to the loader, each still carrying the caller's position it will be written back
+    /// with. The signal's index is an index into this list, so the pair comes out of it whole.
     /// </param>
     /// <remarks>
     /// A struct reached through references to what it holds, so <see cref="ItemDetailLoader"/> may copy it
     /// into its own local for the read loop and every copy still names the same channel and the same
-    /// positions. The code the read reported is not carried on the work item: <see cref="Restore"/> asks the
+    /// entries. The code the read reported is not carried on the work item: <see cref="Restore"/> asks the
     /// entry for its path and is told by the exception, which is the failure it already reports.
     /// </remarks>
-    private readonly struct RestoreFeed(ChannelWriter<RestoreWorkItem> writer, List<int> positions) : IRestoreSignal
+    private readonly struct RestoreFeed(ChannelWriter<RestoreWorkItem> writer, List<RestoreWorkItem> reading) : IRestoreSignal
     {
         /// <inheritdoc />
-        public void OnReady(int index, RecycleBinItem item, int hResult) =>
-            writer.TryWrite(new RestoreWorkItem(item, positions[index]));
+        public void OnReady(int index, RecycleBinItem item, int hResult) => writer.TryWrite(reading[index]);
     }
 
     /// <summary>
@@ -1399,6 +1474,11 @@ internal static class RestoreRunner
     /// <summary>
     /// Reads the slots in the caller's order and reports what they add up to.
     /// </summary>
+    /// <param name="slots">One slot per entry, by position in the caller's list.</param>
+    /// <param name="items">
+    /// The caller's entries, which is where an undecided slot's entry is named from — the one case the slot
+    /// itself has nothing to report.
+    /// </param>
     /// <remarks>
     /// Each slot goes to the lists its kind names, and to two of them where two is the answer the caller
     /// asked for. The switch is the whole of the mapping rather than something spread through the loop, so
@@ -1409,8 +1489,22 @@ internal static class RestoreRunner
     /// tree could not be dealt with, or because its payload would not go — while having overwritten two
     /// files on the way, and a caller reading only the directory's own verdict would be told about neither.
     /// </para>
+    /// <para>
+    /// <b><see cref="RestoreOutcomeKind.Undecided"/> is an arm rather than an omission.</b> Every path
+    /// through the pipeline writes an answer for every entry it was handed, so a slot still carrying its
+    /// opening kind means the work never reached that entry — and the first thing a caller would be told is
+    /// that their entry was restored, conflicted or failed, when it is in none of the three. It is reported
+    /// as a failure under the entry's own record, which is the only path an entry carries without anything
+    /// having read it, and which is what a record that could not be read is named under as well.
+    /// </para>
+    /// <para>
+    /// <b>No case in this repository witnesses that arm.</b> Producing one needs a defect in the pipeline —
+    /// an entry written to a channel that drops it — and the way to arrange it would be a hook inside the
+    /// engine. What is witnessed is every path that does write, and that this arm exists for the ones that
+    /// might not.
+    /// </para>
     /// </remarks>
-    private static RecycleBinRestoreResult Flatten(RestoreOutcome[] slots)
+    private static RecycleBinRestoreResult Flatten(RestoreOutcome[] slots, IReadOnlyList<RecycleBinItem> items)
     {
         var restoredPaths = new List<string>(slots.Length);
         var conflicts = new List<RecycleRestoreConflict>();
@@ -1418,8 +1512,10 @@ internal static class RestoreRunner
         long itemsRestored = 0;
         long restoredSize = 0;
 
-        foreach (var slot in slots)
+        for (var position = 0; position < slots.Length; position++)
         {
+            var slot = slots[position];
+
             // Both are set together by the one method that sets either, so this is one condition rather
             // than a second: a slot carrying no conflicts of its own carries no failures either.
             if (slot.MergeConflicts is not null && slot.MergeFailures is not null)
@@ -1457,6 +1553,14 @@ internal static class RestoreRunner
                 case RestoreOutcomeKind.Failed:
                     failures.Add(new RecycleFailure(slot.Path, slot.HResult, slot.Attempts, RecycleFailureStage.RestoreFailed));
                     break;
+
+                case RestoreOutcomeKind.Undecided:
+                    failures.Add(new RecycleFailure(
+                        items[position].IndexPath,
+                        0,
+                        0,
+                        RecycleFailureStage.RestoreFailed));
+                    break;
             }
         }
 
@@ -1490,10 +1594,89 @@ internal sealed record RestoreVolumeWork(string VolumeRoot, List<RestoreWorkItem
 /// </param>
 /// <param name="Volumes">The volumes on that disk, in the order the caller's entries named them.</param>
 /// <remarks>
-/// One of these is one channel and one set of movers, which is what makes "two volumes on different disks
-/// restore together, two on one disk do not" a property of the shape rather than of a condition a worker
-/// applies to itself. The caveat in <see cref="PhysicalDiskKey"/> is the limit of what the key can promise:
-/// a spanning or striped volume is named after the storage it is a volume of, so two volumes can be here
-/// together while sharing more than one head.
+/// The group decides what runs together and nothing else: it carries volumes, and
+/// <see cref="RestoreRunner.OpenVolumes"/> gives each of them its own
+/// <see cref="RestoreVolumePipeline"/>. Two volumes on one disk are therefore never moving at the same time,
+/// which is a property of <see cref="RestoreRunner"/>'s loop over this and not of any figure.
+/// <para>
+/// The caveat in <see cref="PhysicalDiskKey"/> is the limit of what the key can promise: a spanning or
+/// striped volume is named after the storage it is a volume of, so two volumes can be here together while
+/// sharing more than one head.
+/// </para>
 /// </remarks>
 internal sealed record RestoreDiskGroup(PhysicalDiskKey? Disk, List<RestoreVolumeWork> Volumes);
+
+/// <summary>
+/// One volume's work in flight: the channel its records are read into and the movers that drain it.
+/// </summary>
+/// <remarks>
+/// <b>One per volume, and that is the whole of the shape.</b> A volume's entries may be moved by
+/// <see cref="RestoreRunner.MoveDegree"/> threads at once; two volumes of one disk may not be moving at
+/// all at once, and a pipeline per volume is what makes the first true without the second being a
+/// condition anything checks.
+/// <para>
+/// It carries everything the volume's movers share — the channel, the answered set and the put-back guard —
+/// so that nothing about one volume's work is reachable from another. A call has one of these per volume,
+/// a disk group has one per volume through <see cref="RestoreRunner.OpenVolumes"/>, and two of them have
+/// never been the same object.
+/// </para>
+/// </remarks>
+[SupportedOSPlatform("windows6.0.6000")]
+internal sealed class RestoreVolumePipeline
+{
+    /// <summary>Opens the movers, the channel and the state they share for one volume.</summary>
+    /// <param name="volume">The volume whose entries this pipeline restores.</param>
+    internal RestoreVolumePipeline(RestoreVolumeWork volume)
+    {
+        ArgumentNullException.ThrowIfNull(volume);
+
+        Volume = volume;
+        Movers = RestoreRunner.MoveDegree(volume.VolumeRoot);
+
+        // Neither of these is true. A volume's records are read by a Parallel.For body, so there is more
+        // than one thread writing here; and there is one reader per mover and more than one mover once
+        // the degree is above one. Saying otherwise would let the channel take locks to protect a promise
+        // it is not being given.
+        //
+        // AllowSynchronousContinuations is left at its default, which is to let a reader be woken on the
+        // thread that woke it. What runs here is the completion of one wait, not the move — the mover is on
+        // a thread of its own and blocked on that wait — so nothing is displaced. Stated because setting it
+        // false would move the waiting to the pool, and a mover that runs on somebody else's pool thread is
+        // the shape the paragraph above is about.
+        Work = Channel.CreateUnbounded<RestoreWorkItem>(new UnboundedChannelOptions
+        {
+            SingleWriter = false,
+            SingleReader = false,
+            AllowSynchronousContinuations = true
+        });
+
+        Settled = new ConcurrentDictionary<RecycleBinItem, byte>();
+        PutBack = new SemaphoreSlim(1, 1);
+    }
+
+    /// <summary>The volume whose entries this pipeline restores.</summary>
+    internal RestoreVolumeWork Volume { get; }
+
+    /// <summary>
+    /// How many movers this volume's entries may be moving on at once, which is
+    /// <see cref="RestoreRunner.MoveDegree"/> asked of this volume's own root.
+    /// </summary>
+    internal int Movers { get; }
+
+    /// <summary>The channel its records are read into and its movers drain.</summary>
+    internal Channel<RestoreWorkItem> Work { get; }
+
+    /// <summary>
+    /// The entries this pipeline has answered, so that a list naming one twice moves it once. Keyed by the
+    /// entry's own identity — its <c>$I</c> path — which is one string comparison and reads no record. It
+    /// belongs to the volume rather than the call because two equal entries are in the same volume group,
+    /// and to the volume rather than the disk because two volumes of one disk never run together.
+    /// </summary>
+    internal ConcurrentDictionary<RecycleBinItem, byte> Settled { get; }
+
+    /// <summary>
+    /// The guard a merge writes its put-back behind: one writer into this volume's <c>$RECYCLE.BIN</c> at a
+    /// time, whatever <see cref="RestoreRunner.MoveDegree"/> answers.
+    /// </summary>
+    internal SemaphoreSlim PutBack { get; }
+}

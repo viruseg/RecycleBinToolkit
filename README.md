@@ -1068,7 +1068,7 @@ the engine, over whatever the entry point resolved
    └─ NativeBinEmptier        payload first, then the record, counted from the walk
 
 the restore engine, over the entries a listing handed back
-   ├─ RestoreRunner           payload first, then the record; one answer per entry, in the caller's order
+   ├─ RestoreRunner           payload first, then the record; one answer per entry, in the caller's order; one mover pool per volume
    └─ RestorePathPlanner      what is in the way of a path, and what to do about the item that wanted it
 
 RecycleBinContents.LoadItemDetails  warms a listing after the fact
@@ -1088,6 +1088,13 @@ on — so paths move one at a time on purpose. Reading changes nothing, so recor
 parallel at each volume's own degree of parallelism: one thread per core on a solid-state volume, two
 on a mechanical one, because each of those requests is a seek and a second one in flight covers the
 mechanism's dead time. That is thirty thousand independent reads, not thirty thousand writers.
+
+**A restore splits by the disk behind each volume, and stops one step short of that rule.** Volumes on
+different physical disks are restored together, because nothing about one device holds up another. The
+volumes of one disk run one after another, because they are two directories sharing one head — and that
+is a loop rather than a number, so no figure inside it can widen the gap. Within one volume, entries are
+moved on that volume's own movers, and each starts moving as its record is read rather than after the
+last one.
 
 **The per-volume bin is the unit.** Each volume's `$RECYCLE.BIN\<SID>\` is walked directly, so naming
 a volume selects which directories to read and to empty — never a filter over an enumeration that
@@ -1181,7 +1188,7 @@ clear for that drive; a volume with no such key is answered `Indeterminate` — 
 `NoRecycleBinAction.Throw`. The run asks the library once which kind of volume it was given, and each
 case that needs the other kind skips rather than fails.
 
-The suite is a console application with no external packages: 202 cases covering batch and single-path
+The suite is a console application with no external packages: 205 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock, long
 paths with no limit, concurrent callers, directories, 10 MB files, volumes with no Recycle Bin, and a
 ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing, emptying and status checking are
@@ -1189,12 +1196,12 @@ covered by their own suites. The default run writes only inside the directory it
 `--scratch`. On a volume with no Recycle Bin the cases that recycle there skip rather than fail, and
 the cases that are about such a volume run instead of skipping.
 
-**Of the 202 cases, `--all` runs 198.** Four are load cases that run only on request: the ten-cycle stress
+**Of the 205 cases, `--all` runs 201.** Four are load cases that run only on request: the ten-cycle stress
 run, and the three cases that each move the whole 94-file fixture set in one call.
 `--all` and `--filter` never run them — `--load` runs those four cases and nothing else. Nothing is
 covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
 and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
-The remainder is the volume's decision rather than a flag's: 188 pass and 10 skip where there is a bin,
+The remainder is the volume's decision rather than a flag's: 191 pass and 10 skip where there is a bin,
 and nothing fails.
 
 **A share has to survive your command line.** `--scratch "\\server\share\"` is right in PowerShell and in

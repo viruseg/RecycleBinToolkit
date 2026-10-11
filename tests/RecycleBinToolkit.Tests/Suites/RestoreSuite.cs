@@ -11,6 +11,7 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(DefaultsAreTheDocumentedOnes), DefaultsAreTheDocumentedOnes),
         new TestCase("RestoreSuite." + nameof(VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot), VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot),
         new TestCase("RestoreSuite." + nameof(VolumesAreGroupedByPhysicalDiskAndNotByCount), VolumesAreGroupedByPhysicalDiskAndNotByCount),
+        new TestCase("RestoreSuite." + nameof(EveryVolumeGetsItsOwnMoversAndNoDiskSharesOne), EveryVolumeGetsItsOwnMoversAndNoDiskSharesOne),
         new TestCase("RestoreSuite." + nameof(EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode), EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode),
         new TestCase("RestoreSuite." + nameof(RenamingTakesTheFirstFreeNumberBeforeTheExtension), RenamingTakesTheFirstFreeNumberBeforeTheExtension),
         new TestCase("RestoreSuite." + nameof(ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt), ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt),
@@ -25,6 +26,7 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(AnEntryWhosePayloadIsGoneIsAFailureAndNothingElse), AnEntryWhosePayloadIsGoneIsAFailureAndNothingElse),
         new TestCase("RestoreSuite." + nameof(TheSameEntryTwiceIsRestoredOnce), TheSameEntryTwiceIsRestoredOnce),
         new TestCase("RestoreSuite." + nameof(AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow), AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow),
+        new TestCase("RestoreSuite." + nameof(AnEntryWhoseRootCannotBeNamedIsStillAnswered), AnEntryWhoseRootCannotBeNamedIsStillAnswered),
         new TestCase("RestoreSuite." + nameof(ADirectoryRestoringOntoAFileIsAConflict), ADirectoryRestoringOntoAFileIsAConflict),
         new TestCase("RestoreSuite." + nameof(ATakenDirectoryPathIsSkippedAndTheEntryStaysInTheBin), ATakenDirectoryPathIsSkippedAndTheEntryStaysInTheBin),
         new TestCase("RestoreSuite." + nameof(ATakenDirectoryPathIsRefusedAsBothAConflictAndAFailure), ATakenDirectoryPathIsRefusedAsBothAConflictAndAFailure),
@@ -39,6 +41,7 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(OneEntryFailingDoesNotCostTheOthersTheirAnswers), OneEntryFailingDoesNotCostTheOthersTheirAnswers),
         new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure),
         new TestCase("RestoreSuite." + nameof(TheVolumeOverloadRestoresEveryVolumeItWasGiven), TheVolumeOverloadRestoresEveryVolumeItWasGiven),
+        new TestCase("RestoreSuite." + nameof(TwoVolumesOnOneDiskAreBothAnswered), TwoVolumesOnOneDiskAreBothAnswered),
         new TestCase("RestoreSuite." + nameof(TheResultFollowsTheOrderTheCallerPassed), TheResultFollowsTheOrderTheCallerPassed),
         new TestCase("RestoreSuite." + nameof(ANullVolumeIsRefusedRatherThanRestoredAround), ANullVolumeIsRefusedRatherThanRestoredAround),
         new TestCase("RestoreSuite." + nameof(AnEmptyListOfVolumesIsAnEmptyResult), AnEmptyListOfVolumesIsAnEmptyResult),
@@ -221,6 +224,92 @@ internal static class RestoreSuite
         Check.Equal(1, withUnknown.Count, "volumes with no disk behind them share one group");
         Check.Equal(2, withUnknown[0].Volumes.Count, "and both of them are in it");
         Check.True(withUnknown[0].Disk is null, "which names no disk, because nothing named one");
+
+        workspace.Dispose();
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A disk group hands each of its volumes a mover pool of its own, and no two volumes anywhere share
+    /// one — which is what makes "two volumes on one disk are never moving at the same time" a property of
+    /// the shape rather than of a number somebody could raise.
+    /// </summary>
+    /// <remarks>
+    /// The split itself is <c>VolumesAreGroupedByPhysicalDiskAndNotByCount</c>'s claim and is not repeated
+    /// here. What this case reaches past is the seam between the grouping and the pipeline: grouping says
+    /// which volumes share a disk, and nothing in that answer stops a second stage handing them one pool of
+    /// movers, which would put two volumes on one head back in play while the grouping still looked right.
+    /// <para>
+    /// <b>Asserted as structure, not as timing.</b> Watching two volumes really restore at once would need
+    /// a second volume this run may not arrange, and a stopwatch; a stopwatch on a property of the machine
+    /// is a test that fails when the machine is busy. What can be said without either is what each pipeline
+    /// <em>is</em>: one per volume, carrying that volume, holding a channel of its own, and sized by that
+    /// volume's own figure.
+    /// </para>
+    /// <para>
+    /// The three volumes named are the same three
+    /// <c>VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot</c> reads the keys of, and the same guard stands
+    /// in for them: which disk a letter sits on is a fact about this machine. Nothing is created, recycled,
+    /// moved or deleted here — a pipeline is opened and never fed, and opening one asks the driver which
+    /// disk a volume is on and allocates a queue.
+    /// </para>
+    /// <para>
+    /// The two channels and the two answered sets are compared by reference rather than by equality,
+    /// because the claim is that they are different objects and not merely objects that answer alike. Every
+    /// other field of a pipeline is a value, and a value comparison would pass on a pipeline that shared
+    /// its whole state with another.
+    /// </para>
+    /// </remarks>
+    private static Task EveryVolumeGetsItsOwnMoversAndNoDiskSharesOne(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        RequireVolumePresent('D');
+        RequireVolumePresent('E');
+        RequireVolumePresent('C');
+
+        var groups = RestoreRunner.GroupByPhysicalDisk(
+        [
+            new RestoreVolumeWork(@"D:\", []),
+            new RestoreVolumeWork(@"E:\", []),
+            new RestoreVolumeWork(@"C:\", [])
+        ]);
+
+        Check.Equal(2, groups.Count, "two physical disks behind three volumes");
+
+        // Two volumes on one disk. The figure is one today, so this says the pool is one per volume and
+        // not per disk or per call — a pool per disk would be one the second volume found already running.
+        var shared = RestoreRunner.OpenVolumes(groups[0]);
+
+        Check.Equal(2, shared.Count, "a disk opens one pool per volume rather than one for the disk");
+        Check.Equal(@"D:\", shared[0].Volume.VolumeRoot, "the first volume of the group gets the first pool");
+        Check.Equal(@"E:\", shared[1].Volume.VolumeRoot, "and the second gets the second, in the order they were named");
+
+        Check.NotEqual(shared[0].Work, shared[1].Work, "no two volumes of one disk share a channel");
+        Check.NotEqual(shared[0].Settled, shared[1].Settled, "or the record of the entries they have answered");
+        Check.NotEqual(shared[0].PutBack, shared[1].PutBack, "or the guard a merge writes its put-back behind");
+
+        foreach (var pipeline in shared)
+        {
+            Check.Equal(
+                RestoreRunner.MoveDegree(pipeline.Volume.VolumeRoot),
+                pipeline.Movers,
+                $"a pool is sized by its own volume's figure, which is what {pipeline.Volume.VolumeRoot} answers");
+        }
+
+        // And a volume of another disk, so that the claim reaches past one group.
+        var other = RestoreRunner.OpenVolumes(groups[1]);
+
+        Check.Equal(1, other.Count, "a disk holding one volume opens one pool");
+        Check.Equal(@"C:\", other[0].Volume.VolumeRoot, "for that volume");
+
+        foreach (var pipeline in shared)
+        {
+            Check.NotEqual(pipeline.Work, other[0].Work, $"{pipeline.Volume.VolumeRoot} shares no channel with the other disk's volume");
+            Check.NotEqual(pipeline.Settled, other[0].Settled, "nor the entries it has answered");
+        }
 
         workspace.Dispose();
 
@@ -1211,6 +1300,70 @@ internal static class RestoreSuite
             (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
             $"and with the file system's own code for a record that is not there: 0x{result.Failures[0].HResult:X8}");
         Check.Equal(0, result.Failures[0].Attempts, "nothing was placed, because nothing could be read about where to put it");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An entry whose <c>$I</c> path names no volume is still answered: it cannot be put in a volume's list
+    /// of records to read, so it is handed back in a failure rather than disappearing from every list.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RecycleBinItem.VolumeRoot"/> is <see cref="Path.GetPathRoot(string)"/> over the entry's own
+    /// record path, and it is empty for a relative one. Two groupings key on it and they used to disagree:
+    /// the engine's took the empty root as a volume of its own, while
+    /// <see cref="ItemDetailLoader.GroupByVolume"/> skips it, so an entry in that shape reached the loader
+    /// and came back having never been signalled. Nothing was ever written into its slot, and a slot with
+    /// nothing in it belongs to none of the three lists — so the entry was reported as nothing at all.
+    /// <para>
+    /// <b>Before the pipeline it was restored.</b> The old engine called the loader for the side effect and
+    /// then moved every entry of the list it already had, so an entry the loader had skipped was moved
+    /// anyway. The feed now hands such an entry over itself, with the position it already carries, and the
+    /// engine reaches the same answer — which for a record that is not there is the failure
+    /// <c>AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow</c> already pins.
+    /// </para>
+    /// <para>
+    /// The entry is built rather than made, for the reason <c>NativeBinSuite</c> gives for building its own:
+    /// every <c>$I</c> path a listing produces is absolute, so nothing on a real disk has this shape.
+    /// <b>Nothing is created, moved or deleted here, and nothing outside the scratch root is named.</b> The
+    /// one filesystem act is a read of a relative name that is not there, resolved against the working
+    /// directory the runner was started in — which is why the name is one no run could have produced, and
+    /// why this case goes through the engine rather than through a facade that would refuse the argument
+    /// first.
+    /// </para>
+    /// <para>
+    /// That the entry is reported at all is the claim; the stage and the code are the ones
+    /// <c>AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow</c> reads in full, and only the path and the
+    /// counts are re-asserted here — enough to tell an answered entry from a missing one.
+    /// </para>
+    /// </remarks>
+    private static async Task AnEntryWhoseRootCannotBeNamedIsStillAnswered(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        const string record = "restore-rootless-entry-not-written.bin";
+
+        var rootless = new RecycleBinItem(record, record + ".payload", 0, false);
+
+        Check.True(rootless.VolumeRoot.IsEmpty, "a relative record path names no volume, which is the whole of this case");
+
+        var result = await RecycleBin.RestoreAsync([rootless], cancellationToken: context.CancellationToken);
+
+        Check.False(result.Succeeded, "nothing could be read about where to put it, so the call did not succeed");
+        Check.Equal(0, result.RestoredPaths.Count, "and nothing is named as restored");
+        Check.Equal(0, result.Conflicts.Count, "nor anything as conflicted");
+        Check.Equal(1, result.Failures.Count, "the entry is answered rather than reaching none of the three lists");
+        Check.Equal(record, result.Failures[0].Path, "under its own record, the one path it carries without anything having read it");
+
+        // What tells the two ways of answering apart, and the reason this case is here rather than a note
+        // on the feed: the engine reached the entry and asked the filesystem for its record, so the code
+        // is the filesystem's. An entry handed to the loader and never signalled never reaches the engine
+        // at all, and is reported by the flattening as undecided — same path, no code. Both keep the entry
+        // out of the two lists it does not belong in; only this one says it was asked about.
+        Check.True(
+            (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
+            $"and with the file system's own code for a record that is not there: 0x{result.Failures[0].HResult:X8}");
 
         workspace.Dispose();
     }
@@ -2395,6 +2548,96 @@ internal static class RestoreSuite
         Check.True(File.Exists(a) && File.Exists(b), "and both are back on disk");
         Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(b)), "one of them byte for byte");
         Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the bin is back to its baseline");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Two volumes sharing one physical disk are both answered: the first one's work does not swallow the
+    /// second, and neither of them is left outside all three lists.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the case that reaches the part nothing else can.</b> Every other case here restores from
+    /// one volume, so a pipeline that served a whole disk instead of a volume would answer all of them
+    /// correctly — the two volumes never meet.
+    /// <para>
+    /// The two entries are built rather than made, and their records are paths that are not there, so the
+    /// answer for each is a failure carrying the filesystem's own code. <b>Nothing is created, moved or
+    /// deleted, and the one filesystem act is a read of a name that is not there</b> — under the scratch
+    /// root for the first entry, and under <c>E:\</c> for the second, because a run may only work on the one
+    /// volume <c>--scratch</c> named and a second volume's root is the only other thing it can name. That is
+    /// the same act <c>AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow</c> performs.
+    /// </para>
+    /// <para>
+    /// <b>The code is the assertion with teeth.</b> Both entries land in the failures list either way, so
+    /// the counts alone cannot tell this from a pipeline whose second volume wrote into a channel that had
+    /// already been completed — which reports its entries as undecided, under the same path and with no
+    /// code. An engine that never asked about an entry says nothing about it; one that asked and was told no
+    /// carries the code the filesystem gave.
+    /// </para>
+    /// <para>
+    /// The order is asserted as well, because a group holding two volumes is the first place the caller's
+    /// order spans more than one of them: the failures come back in the order the entries were passed in,
+    /// whichever volume was run first.
+    /// </para>
+    /// <para>
+    /// That <c>D:</c> and <c>E:</c> are one disk here is a fact about this machine rather than something the
+    /// run arranges, so the grouping is checked first and by the same guard
+    /// <c>VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot</c> stands in for: a machine where they are not
+    /// one disk would still restore both entries correctly, but it would not be the machine this case is
+    /// about.
+    /// </para>
+    /// </remarks>
+    private static async Task TwoVolumesOnOneDiskAreBothAnswered(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        RequireVolumePresent('D');
+        RequireVolumePresent('E');
+
+        var onD = new RecycleBinItem(
+            Path.Combine(ScratchWorkspace.VolumeRoot, "never-written-on-d.bin"),
+            Path.Combine(ScratchWorkspace.VolumeRoot, "never-written-on-d.payload"),
+            0,
+            false);
+
+        var onE = new RecycleBinItem(
+            Path.Combine(@"E:\", "never-written-on-e.bin"),
+            Path.Combine(@"E:\", "never-written-on-e.payload"),
+            0,
+            false);
+
+        Check.Equal(@"D:\", onD.VolumeRoot.ToString(), "the first entry's record sits on the run's own volume");
+        Check.Equal(@"E:\", onE.VolumeRoot.ToString(), "and the second's on the other one");
+
+        var groups = RestoreRunner.GroupByPhysicalDisk(
+        [
+            new RestoreVolumeWork(@"D:\", []),
+            new RestoreVolumeWork(@"E:\", [])
+        ]);
+
+        Check.Equal(1, groups.Count, "D: and E: are one disk here, so the two volumes are one group");
+        Check.Equal(2, groups[0].Volumes.Count, "holding both of them rather than merging them");
+
+        var result = await RecycleBin.RestoreAsync([onD, onE], cancellationToken: context.CancellationToken);
+
+        Check.Equal(0, result.RestoredPaths.Count, "nothing was put back, because neither record could be read");
+        Check.Equal(2, result.Failures.Count, "and both entries are asked about, not just the first volume's");
+
+        Check.Equal(onD.IndexPath, result.Failures[0].Path, "the first entry is reported first");
+        Check.Equal(onE.IndexPath, result.Failures[1].Path, "and the second second, whichever volume ran first");
+
+        foreach (var failure in result.Failures)
+        {
+            Check.Equal(RecycleFailureStage.RestoreFailed, failure.Stage, $"{failure.Path} is reported as a restore failure");
+
+            // An entry the engine never asked about carries no code, and that is what makes this the
+            // assertion it is rather than a count.
+            Check.True(
+                (failure.HResult & unchecked((int)0x80000000)) != 0,
+                $"{failure.Path} was asked about by the engine and carries the code the filesystem gave: 0x{failure.HResult:X8}");
+        }
 
         workspace.Dispose();
     }
