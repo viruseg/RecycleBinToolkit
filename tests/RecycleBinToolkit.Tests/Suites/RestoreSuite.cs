@@ -8,7 +8,8 @@ internal static class RestoreSuite
 {
     internal static IReadOnlyList<TestCase> Cases =>
     [
-        new TestCase("RestoreSuite." + nameof(DefaultsAreTheDocumentedOnes), DefaultsAreTheDocumentedOnes)
+        new TestCase("RestoreSuite." + nameof(DefaultsAreTheDocumentedOnes), DefaultsAreTheDocumentedOnes),
+        new TestCase("RestoreSuite." + nameof(VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot), VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot)
     ];
 
     /// <summary>
@@ -80,5 +81,39 @@ internal static class RestoreSuite
         workspace.Dispose();
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Two volumes on one disk get one key and a volume on another gets another, which is the whole of what
+    /// grouping by disk is for: the second pair of volumes can be restored beside the first, and two volumes
+    /// sharing a key cannot be.
+    /// </summary>
+    /// <remarks>
+    /// The drive letters are data and nothing is created, recycled, moved or deleted on any of them, exactly
+    /// as the cases that put <c>W:\</c> into a path predicate do. The answer comes from the driver through
+    /// the volume's own device, so a volume whose driver declines leaves nothing to assert about it here.
+    /// <para>
+    /// <c>C:</c> is asserted against rather than <c>D:</c> alone because the claim that matters is the
+    /// asymmetry: the key is not a per-volume identity, or the two names would differ for a reason that has
+    /// nothing to do with where the bytes are.
+    /// </para>
+    /// </remarks>
+    private static async Task VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        // Data, not targets: nothing is created, recycled, moved or deleted on any of these paths, exactly as
+        // the existing cases that put W:\ into a path predicate do.
+        Check.True(PhysicalVolumeDisk.TryIdentify(@"D:\", out var d), "D: answered which disk it sits on");
+        Check.True(PhysicalVolumeDisk.TryIdentify(@"E:\", out var e), "E: answered");
+        Check.True(PhysicalVolumeDisk.TryIdentify(@"C:\", out var c), "C: answered");
+
+        Check.Equal(d, e, "D: and E: are one physical disk, so they must key the same");
+        Check.True(d != c, "C: is a different physical disk, so it must not");
+
+        Check.False(PhysicalVolumeDisk.TryIdentify(@"\\server\share\", out _), "a share has no local volume device and must not answer");
+
+        workspace.Dispose();
     }
 }
