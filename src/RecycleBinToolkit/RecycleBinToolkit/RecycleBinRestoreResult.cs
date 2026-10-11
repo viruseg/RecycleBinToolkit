@@ -77,15 +77,25 @@ public sealed class RecycleBinRestoreResult
     /// Paths that were already occupied, and what was done about the items that wanted them.
     /// </summary>
     /// <remarks>
-    /// Empty when nothing was in the way. A conflict that a <c>Skip</c> policy left alone —
-    /// <see cref="RestoreFileConflict.Skip"/> or <see cref="RestoreDirectoryConflict.Skip"/>, and the three
-    /// <c>Merge*</c> values once the merge walk exists — is here and not in <see cref="Failures"/>, so an
-    /// item that stayed in the Recycle Bin does not make <see cref="Succeeded"/> false. Only
-    /// <see cref="RestoreFileConflict.Error"/> and <see cref="RestoreDirectoryConflict.Error"/> do that.
+    /// Empty when nothing was in the way. Four of the six policies that answer an occupied path put a
+    /// conflict here:
+    /// <see cref="RestoreFileConflict.Skip"/> and <see cref="RestoreDirectoryConflict.Skip"/> leave the item
+    /// in the Recycle Bin under <see cref="RecycleRestoreConflictAction.Skipped"/>, while the two renames,
+    /// <see cref="RestoreFileConflict.Rename"/> and
+    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/>, also restore the item and add it here under
+    /// <see cref="RecycleRestoreConflictAction.RestoredRenamed"/> naming the free name it landed under.
     /// <para>
-    /// The merging values are named there for the shape they will have rather than for today: a directory
-    /// whose path is occupied under <see cref="RestoreDirectoryConflict.MergeSkip"/> arrives as a
+    /// Neither of those makes <see cref="Succeeded"/> false: a conflict here is an outcome the caller asked
+    /// about by choosing a policy. Only <see cref="RestoreFileConflict.Error"/> and
+    /// <see cref="RestoreDirectoryConflict.Error"/> add a failure as well, which is the whole difference
+    /// between them and the two <c>Skip</c> values.
+    /// </para>
+    /// <para>
+    /// The three <c>Merge*</c> values are named for the shape they will have rather than for today: a
+    /// directory whose path is occupied under <see cref="RestoreDirectoryConflict.MergeSkip"/> arrives as a
     /// <see cref="RecycleFailureStage.RestoreFailed"/> and lands in neither list until the merge exists.
+    /// <see cref="RestoreFileConflict.Replace"/> reaches neither either, taking the occupant's place where
+    /// the occupant is a file.
     /// </para>
     /// </remarks>
     public IReadOnlyList<RecycleRestoreConflict> Conflicts { get; }

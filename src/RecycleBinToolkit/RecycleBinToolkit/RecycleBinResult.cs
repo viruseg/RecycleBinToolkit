@@ -93,9 +93,10 @@ public enum RecycleFailureStage
     /// so this stage is what a caller opting into <c>Error</c> gets instead.
     /// <para>
     /// Two kinds of policy reach neither list. <see cref="RestoreFileConflict.Replace"/> takes the
-    /// occupant's place, so there is nothing left to report a conflict about; and a directory's three
-    /// <c>Merge*</c> values do not merge at all yet, so a directory onto an occupied directory arrives as a
-    /// <see cref="RestoreFailed"/> instead.
+    /// occupant's place — where the occupant is a file, so there is nothing left to report a conflict about,
+    /// though a destination holding a <em>directory</em> has nothing to overwrite and that one fails at
+    /// <see cref="RestoreFailed"/> instead. A directory's three <c>Merge*</c> values do not merge at all yet,
+    /// so a directory onto an occupied directory arrives as a <see cref="RestoreFailed"/> as well.
     /// </para>
     /// </remarks>
     RestoreConflictRefused = 11
