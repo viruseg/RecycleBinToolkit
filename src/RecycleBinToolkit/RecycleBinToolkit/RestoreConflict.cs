@@ -11,7 +11,7 @@ namespace RecycleBinToolkit;
 /// <para>
     /// No value here writes outside the directory the caller named, and none touches a directory the restore
     /// was not restoring. What is already on disk is left alone, overwritten, or set beside — never renamed,
-    /// moved or removed.
+    /// moved, or removed outright.
     /// </para>
 /// <para>
     /// A destination occupied by a <em>file</em> is a conflict like any other, and the three merge values
@@ -88,8 +88,9 @@ public enum RestoreDirectoryConflict
     /// </summary>
     /// <remarks>
     /// The tree arrives as it was, so nothing inside it has to agree with anything outside it. The caller
-    /// finds the name in <see cref="RecycleBinRestoreResult.RestoredPaths"/> and the path that was
-    /// occupied in <see cref="RecycleBinRestoreResult.Conflicts"/>.
+    /// finds the name it landed under in <see cref="RecycleBinRestoreResult.RestoredPaths"/> and in
+    /// <see cref="RecycleBinRestoreResult.Conflicts"/> — which is where it landed too, not the path that was
+    /// occupied; nothing in the result names the occupied one.
     /// </remarks>
     RenameDirectory,
 
@@ -128,8 +129,10 @@ public enum RestoreFileConflict
 {
     /// <summary>Leave the item in the Recycle Bin and touch nothing on disk.</summary>
     /// <remarks>
-    /// The default, and the only value that cannot destroy anything the caller did not ask to destroy: the
-    /// incoming file is the one that gives way, and it is still in the Recycle Bin afterwards.
+    /// The default, and the one that leaves the entry in the Recycle Bin as a plain answer rather than as
+    /// something to be told about as well: the incoming file is the one that gives way, and it is still
+    /// there afterwards — where <see cref="Rename"/> sets it down beside the path under a free name and
+    /// <see cref="Replace"/> takes the path itself.
     /// </remarks>
     Skip = 0,
 

@@ -68,10 +68,16 @@ public enum RecycleFailureStage
     /// go, or the record could not be read to say where it belonged. Only reachable while restoring.
     /// </summary>
     /// <remarks>
-    /// Reached twice over while a directory is being merged: once for the directory, and once for each
-    /// file of its tree that could not be placed — the second under that file's own path rather than the
-    /// directory's, and under any of the three <c>Merge*</c> values whatever the merge was doing with that
-    /// file.
+    /// Reached **once for the directory and once for each file of its tree that could not be dealt with**
+    /// while a directory is being merged — the file under that file's own path rather than the directory's,
+    /// and the directory under its own, under any of the three <c>Merge*</c> values whatever the merge was
+    /// doing with that file.
+    /// <para>
+    /// <b>Which is zero of them in a merge that works.</b> Nothing here is reached by a collision at all:
+    /// a tree whose every file is placed arrives at neither the directory's record nor a file's, under
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> as much as under the other two, because a file the
+    /// policy leaves alone is not a file that failed. The three routes below are the ones that reach it.
+    /// </para>
     /// <para>
     /// <b>Once for the file, and once more for the directory, is not the whole count.</b> A file whose move
     /// was refused can be refused a second time — the put-back that would have taken it out of the payload
@@ -101,8 +107,9 @@ public enum RecycleFailureStage
     /// report one record per file of the tree they settle and one for the directory itself under
     /// <see cref="RestoreDirectoryConflict.MergeSkip"/> <em>where the destination is a directory</em>. Where
     /// it holds a file they have no tree to merge into and fail at <see cref="RestoreFailed"/> instead, like
-    /// any other move the filesystem would not make. So this stage is what a caller opting into
-    /// <c>Error</c> gets instead.
+    /// any other move the filesystem would not make; and a tree that collides with nothing is settled
+    /// without a record there, as it would be under any other policy. So this stage is what a caller
+    /// opting into <c>Error</c> gets instead.
     /// <para>
     /// What a conflict is worth is the whole of the difference, and it is worth saying precisely: none of
     /// those policies puts an entry in <see cref="RecycleBinRestoreResult.Failures"/>
@@ -168,7 +175,9 @@ public sealed class RecycleFailure
     /// <remarks>
     /// <c>0</c> means nothing was attempted for this path, which covers every stage that settles
     /// before the rounds begin: a path that never validated, one whose volume cannot recycle it, one
-    /// naming its volume by GUID, and one this library removed for good on the caller's instruction.
+    /// naming its volume by GUID, and one this library removed for good on the caller's instruction — and,
+    /// while restoring, an entry whose record could not be read, and an entry the caller named twice, which
+    /// the first of them already answered.
     /// </remarks>
     public int Attempts { get; }
 

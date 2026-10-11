@@ -78,13 +78,15 @@ public sealed class RecycleBinRestoreResult
     /// </summary>
     /// <remarks>
     /// Empty when nothing was in the way. Every policy that answers an occupied path reports what it
-    /// did about it here, with two carve-outs. <see cref="RestoreFileConflict.Replace"/> resolves its own
+    /// did about it here, with three carve-outs. <see cref="RestoreFileConflict.Replace"/> resolves its own
     /// conflict by taking the occupant's place: where the occupant is a file there is nothing left to
     /// report about, and a destination holding a <em>directory</em> has nothing to overwrite and fails at
     /// <see cref="RecycleFailureStage.RestoreFailed"/> instead. And a <c>Merge*</c> value whose destination
     /// holds a <em>file</em> has no tree to merge into, so it reports nothing here either and fails at
     /// <see cref="RecycleFailureStage.RestoreFailed"/> with the entry left whole in the bin — see
-    /// <see cref="RestoreDirectoryConflict"/>.
+    /// <see cref="RestoreDirectoryConflict"/>. The third is not an exception to the policy but to its
+    /// having something to report: a tree that collides with nothing at all is settled without a record
+    /// here, which is the same answer any policy gives when there was in fact nothing in the way.
     /// <para>
     /// Once for the entry, except under the three merge policies. The two
     /// <c>Skip</c> values leave the entry in the Recycle Bin under
