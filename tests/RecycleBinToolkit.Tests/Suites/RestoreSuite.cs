@@ -17,7 +17,9 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(ATakenFilePathIsSkippedAndTheEntryStaysInTheBin), ATakenFilePathIsSkippedAndTheEntryStaysInTheBin),
         new TestCase("RestoreSuite." + nameof(ATakenFilePathIsReplacedAndTheEntryLeavesTheBin), ATakenFilePathIsReplacedAndTheEntryLeavesTheBin),
         new TestCase("RestoreSuite." + nameof(ATakenFilePathIsRestoredUnderAFreeName), ATakenFilePathIsRestoredUnderAFreeName),
-        new TestCase("RestoreSuite." + nameof(ATakenFilePathIsRefusedAsBothAConflictAndAFailure), ATakenFilePathIsRefusedAsBothAConflictAndAFailure)
+        new TestCase("RestoreSuite." + nameof(ATakenFilePathIsRefusedAsBothAConflictAndAFailure), ATakenFilePathIsRefusedAsBothAConflictAndAFailure),
+        new TestCase("RestoreSuite." + nameof(ADirectoryComesBackWithItsTree), ADirectoryComesBackWithItsTree),
+        new TestCase("RestoreSuite." + nameof(ADirectoryComesBackUnderParentsThatAreGone), ADirectoryComesBackUnderParentsThatAreGone)
     ];
 
     /// <summary>
@@ -775,6 +777,144 @@ internal static class RestoreSuite
         Check.Equal(1, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry stays in the bin, so the refusal is worth a second attempt");
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A directory comes back as it was: every file in it at every depth, with its bytes, and its entry
+    /// gone from the bin.
+    /// </summary>
+    /// <remarks>
+    /// The tree is three levels deep because a whole-directory move and a walk that drops the deepest
+    /// level are the same code at one level, and only the file at the bottom tells them apart. The files
+    /// hold random bytes rather than a word the case could compare by name, because a payload that
+    /// arrived empty, truncated, or holding a neighbour's content is a payload that arrived and not a
+    /// tree that came back.
+    /// <para>
+    /// The empty directory is asserted as well, and it is the only assertion that is about the directories
+    /// rather than the files in them: "whole" is the claim, and a tree that came back without it lost a
+    /// directory that was in it.
+    /// </para>
+    /// <para>
+    /// The entry leaving the bin is the other half of "came back", and it is counted against a baseline
+    /// for the reason <see cref="BaselineCount"/> gives. <see cref="RecycleBinRestoreResult.Succeeded"/>
+    /// and <see cref="RecycleBinRestoreResult.ItemsRestored"/> are read as well, so an implementation that
+    /// reported the move and left the record behind would fail this rather than pass two of its assertions.
+    /// </para>
+    /// </remarks>
+    private static async Task ADirectoryComesBackWithItsTree(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var root = Path.Combine(ScratchWorkspace.Root, "tree");
+
+        Directory.CreateDirectory(Path.Combine(root, "nested", "deep"));
+        Directory.CreateDirectory(Path.Combine(root, "empty"));
+
+        var top = RandomBytes(4096);
+        var middle = RandomBytes(8192);
+        var bottom = RandomBytes(1024);
+
+        File.WriteAllBytes(Path.Combine(root, "top.bin"), top);
+        File.WriteAllBytes(Path.Combine(root, "nested", "middle.bin"), middle);
+        File.WriteAllBytes(Path.Combine(root, "nested", "deep", "bottom.bin"), bottom);
+
+        var baseline = BaselineCount();
+
+        Check.True(await RecycleBin.RecycleAsync(root, cancellationToken: context.CancellationToken), "the tree reached the bin");
+        Check.False(Directory.Exists(root), "and left the disk");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            root);
+
+        Check.True(item.IsDirectory, "and the record says it was a directory");
+
+        var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(0, result.Failures.Count, "so nothing reached the failures list");
+        Check.Equal(1, result.ItemsRestored, "the directory was restored");
+        Check.Equal(1, result.RestoredPaths.Count, "and is named");
+        Check.Equal(root, result.RestoredPaths[0], "at the path it was deleted from");
+        Check.Equal(0, result.Conflicts.Count, "a free destination conflicts with nothing");
+
+        Check.True(Directory.Exists(root), $"the directory is back at {root}");
+        Check.True(top.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(root, "top.bin"))), "its top file is back byte for byte");
+        Check.True(middle.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(root, "nested", "middle.bin"))), "the one inside it is back byte for byte");
+        Check.True(bottom.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(root, "nested", "deep", "bottom.bin"))), "and so is the deepest one");
+        Check.True(Directory.Exists(Path.Combine(root, "empty")), "and so is the directory that had nothing in it");
+
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the entry has left the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A record names the path a thing was deleted from, and the folders on the way to it can be gone by
+    /// the time anyone restores: the tree lands under parents this call creates.
+    /// </summary>
+    /// <remarks>
+    /// Two of them are taken away rather than one, because <see cref="Directory.CreateDirectory(string)"/>
+    /// creating a whole chain and creating one level of it are the same call and the case can only tell
+    /// them apart if more than one level was missing. The original's own directory goes with them, so
+    /// nothing under the path the record names is there and the move has to make every level itself.
+    /// <para>
+    /// What is asserted about the tree is what the first case asserts, and for the same reason: the
+    /// deepest file is what says the tree arrived rather than the top of it being written out again, and
+    /// the count is what says the entry left the bin rather than the payload having been copied.
+    /// </para>
+    /// </remarks>
+    private static async Task ADirectoryComesBackUnderParentsThatAreGone(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var gone = Path.Combine(ScratchWorkspace.Root, "gone");
+        var root = Path.Combine(gone, "deeper", "tree");
+
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        var bytes = RandomBytes(4096);
+        File.WriteAllBytes(Path.Combine(root, "nested", "leaf.bin"), bytes);
+
+        var baseline = BaselineCount();
+
+        Check.True(await RecycleBin.RecycleAsync(root, cancellationToken: context.CancellationToken), "the tree reached the bin");
+
+        Directory.Delete(gone, recursive: true);
+        Check.False(Directory.Exists(gone), "and every folder on the way to it was taken away afterwards");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            root);
+
+        var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(1, result.ItemsRestored, "the directory was restored");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(root, "nested", "leaf.bin"))), "the leaf came back, under folders this call made");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the entry has left the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A buffer of <paramref name="sizeBytes"/> random bytes.
+    /// </summary>
+    /// <remarks>
+    /// For a case that has to say what came back is what went in. Bytes that are not there beforehand are
+    /// what make that a real comparison rather than a tautology: a payload that arrived empty, truncated,
+    /// or holding a neighbour's content is not distinguishable from one that arrived whole when both were
+    /// written as the same word.
+    /// </remarks>
+    private static byte[] RandomBytes(int sizeBytes)
+    {
+        var bytes = new byte[sizeBytes];
+        Random.Shared.NextBytes(bytes);
+
+        return bytes;
     }
 
     /// <summary>

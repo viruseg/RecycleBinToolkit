@@ -189,18 +189,70 @@ internal static class RestoreRunner
     /// <param name="targetPath">Where the payload is to land.</param>
     /// <param name="overwrite">
     /// Whether what is at <paramref name="targetPath"/> is to be overwritten. <see langword="false"/> is what
-    /// a move to a free path is, and asking for it costs nothing over the answer that would refuse.
+    /// a move to a free path is, and asking for it costs nothing over the answer that would refuse. It is
+    /// never set for a directory, which <see cref="RestorePathPlanner.Decide"/> never answers
+    /// <see cref="RestoreAction.Replace"/> for.
     /// </param>
     /// <remarks>
     /// One place does the move and the delete, because the order between them is the whole design and is
     /// the reason this class is documented the way it is. A branch that wanted them the other way round
     /// would have to be argued for in its own right.
+    /// <para>
+    /// A directory is one <see cref="Directory.Move(string, string)"/> rather than a walk of what is inside
+    /// it. Windows moves a whole directory to a free name in a single call, and that is the shape nearly
+    /// every directory restore takes; a destination something is already standing in is not a name that
+    /// call can land on.
+    /// </para>
+    /// <para>
+    /// The folder the payload lands in is made here rather than by the caller, because the folder
+    /// <see cref="RecycleBinItem.OriginalPath"/> sits in need not be there any more and neither move takes
+    /// a path whose own parent is missing. Belonging here rather than one level up is also what keeps an
+    /// entry that is not going to be placed from leaving a folder tree behind: nothing reaches this method
+    /// unless the entry is being put down.
+    /// </para>
     /// </remarks>
     private static void Place(RecycleBinItem item, string targetPath, bool overwrite = false)
     {
+        CreateTheParentFolder(targetPath);
+
+        if (item.IsDirectory)
+        {
+            Directory.Move(item.PayloadPath, targetPath);
+        }
+        else
+        {
+            File.Move(item.PayloadPath, targetPath, overwrite);
+        }
+
         // Payload first, record second, for the reason this class is documented with.
-        File.Move(item.PayloadPath, targetPath, overwrite);
         File.Delete(item.IndexPath);
+    }
+
+    /// <summary>
+    /// Creates whatever is missing of the chain of folders ending at the parent of <paramref name="path"/>.
+    /// </summary>
+    /// <param name="path">The path a payload is about to land at.</param>
+    /// <remarks>
+    /// A record names the path a thing was deleted from and says nothing about the folders on the way to
+    /// it. Somebody who empties a folder after deleting from it is the ordinary way of getting one whose
+    /// parent is gone, and the whole chain has to be made: a move into a directory that is not there is a
+    /// path that is not there.
+    /// <para>
+    /// A path written as a directory carries a trailing separator, and
+    /// <see cref="Path.GetDirectoryName(string)"/> answers such a path with the directory itself rather
+    /// than its parent — which is the one name this must never create, since the move after it would then
+    /// find its own destination already standing there.
+    /// </para>
+    /// </remarks>
+    private static void CreateTheParentFolder(string path)
+    {
+        var parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path));
+
+        // A path that is a volume root, or one written without any directory part, has no parent to make.
+        if (!string.IsNullOrEmpty(parent))
+        {
+            Directory.CreateDirectory(parent);
+        }
     }
 
     /// <summary>
