@@ -325,16 +325,18 @@ public static class RecycleBin
     /// one leaves records the Explorer's own Restore has to be able to read, and this one only takes them
     /// away.
     /// </para>
+    /// <para>
+    /// A payload that would not move, a record that would not go and a record that could not be read are
+    /// all answers rather than exceptions: each becomes a
+    /// <see cref="RecycleFailureStage.RestoreFailed"/> carrying the code the file system gave, and the
+    /// entries around it keep the outcomes they had. Under the order the engine restores in, a move that
+    /// failed leaves the entry whole and restorable, and a delete that failed leaves the file already back
+    /// where its caller asked for it with its entry still in the bin.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="items"/> is <see langword="null"/>.</exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started, or between entries.
-    /// </exception>
-    /// <exception cref="IOException">
-    /// An entry's payload would not move, or its record would not go. The payload's own file system code is
-    /// in <see cref="Exception.HResult"/>. Under the order the engine restores in, a move that failed leaves
-    /// the entry whole and restorable; a delete that failed leaves the file already back where its caller
-    /// asked for it, with its entry still in the bin.
     /// </exception>
     public static async Task<RecycleBinRestoreResult> RestoreAsync(
         IReadOnlyList<RecycleBinItem> items,
@@ -399,10 +401,6 @@ public static class RecycleBin
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started, or between entries.
-    /// </exception>
-    /// <exception cref="IOException">
-    /// An entry's payload would not move, or its record would not go — see the entry overload for what
-    /// each of those leaves behind.
     /// </exception>
     public static async Task<RecycleBinRestoreResult> RestoreAsync(
         IReadOnlyList<RecycleBinVolumeContents> volumes,

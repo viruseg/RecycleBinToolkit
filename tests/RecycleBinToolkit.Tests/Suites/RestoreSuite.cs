@@ -25,6 +25,7 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(TheSameEntryTwiceIsRestoredOnce), TheSameEntryTwiceIsRestoredOnce),
         new TestCase("RestoreSuite." + nameof(AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow), AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow),
         new TestCase("RestoreSuite." + nameof(ADirectoryRestoringOntoAFileIsAConflict), ADirectoryRestoringOntoAFileIsAConflict),
+        new TestCase("RestoreSuite." + nameof(ADirectoryOntoAnOccupiedDirectoryIsAFailureUntilTheMergeLands), ADirectoryOntoAnOccupiedDirectoryIsAFailureUntilTheMergeLands),
         new TestCase("RestoreSuite." + nameof(AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing), AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing),
         new TestCase("RestoreSuite." + nameof(OneEntryFailingDoesNotCostTheOthersTheirAnswers), OneEntryFailingDoesNotCostTheOthersTheirAnswers),
         new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure),
@@ -1212,6 +1213,78 @@ internal static class RestoreSuite
     }
 
     /// <summary>
+    /// A directory restoring onto an occupied directory under the default policy is answered as a move, and
+    /// the move is refused — so the entry is reported at <see cref="RecycleFailureStage.RestoreFailed"/> and
+    /// stays whole in the bin. That is what README.md says a directory restore does today, and the reason
+    /// its three <c>Merge*</c> rows are marked as not implemented.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> is the default, so it is the value a caller who reads
+    /// nothing is running, and it is the one the options table has to be honest about.
+    /// <see cref="RestorePathPlanner.DecideMerged"/> answers the question a merge walk asks of each file
+    /// inside the tree, and nothing in the engine calls it: <c>Decide</c> answers
+    /// <see cref="RestoreAction.Move"/> for all three merge values whatever is standing there, and
+    /// <see cref="Directory.Move(string, string)"/> refuses an existing destination.
+    /// <para>
+    /// Both halves are asserted, as every restore case does: the entry is reported as a failure, and it is
+    /// still in the bin with its payload intact — so nothing was lost and a second attempt is worth making.
+    /// The squatter is checked byte for byte as well, because a move that raised is a move that did not
+    /// happen and the directory it was aimed at is the caller's own.
+    /// </para>
+    /// <para>
+    /// <b>This is the case Task 10 replaces.</b> It asserts the failure that exists now; when the merge
+    /// walk lands it goes red and becomes a merge case, and the README rows go back to describing
+    /// behaviour rather than its absence.
+    /// </para>
+    /// </remarks>
+    private static async Task ADirectoryOntoAnOccupiedDirectoryIsAFailureUntilTheMergeLands(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a directory to restore");
+
+        var root = Path.Combine(ScratchWorkspace.Root, "onto-a-directory");
+
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        var bytes = RandomBytes(4096);
+        File.WriteAllBytes(Path.Combine(root, "nested", "leaf.bin"), bytes);
+
+        Check.True(
+            await RecycleBin.RecycleAsync(root, cancellationToken: context.CancellationToken),
+            "the tree reached the bin");
+
+        // Something at the very path the record names, and of the same kind: this is not the cross-kind case
+        // above, where the planner refuses outright. Here it is the merge the default is meant to be.
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        var squatter = RandomBytes(2048);
+        File.WriteAllBytes(Path.Combine(root, "nested", "leaf.bin"), squatter);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            root);
+
+        var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+
+        Check.False(result.Succeeded, "the default policy cannot merge yet, so the call reports having failed");
+        Check.Equal(1, result.Failures.Count, "the directory is the one failure");
+        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move arrives");
+        Check.Equal(root, result.Failures[0].Path, "under the path it wanted");
+        Check.Equal(0, result.ItemsRestored, "nothing left the bin");
+        Check.Equal(0, result.RestoredPaths.Count, "so no path is named as restored");
+        Check.Equal(0, result.Conflicts.Count, "and an occupied directory is not reported as a conflict, because no policy resolved it");
+
+        Check.True(
+            squatter.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(root, "nested", "leaf.bin"))),
+            "the directory already there is byte for byte what it was");
+
+        // A directory's $R is a directory, so this is the probe that answers for it rather than File.Exists.
+        Check.True(Directory.Exists(item.PayloadPath), "and the payload is still in the bin");
+        Check.True(File.Exists(item.IndexPath), "with its record, so the entry is still restorable");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
     /// The other cross-kind case: a file restoring onto a path a <em>directory</em> is standing on under
     /// <see cref="RestoreFileConflict.Replace"/>. There is nothing to overwrite — the occupant is not a file —
     /// so the move is refused, the directory is left exactly as it was, and the entry is reported as a failed
@@ -1479,9 +1552,14 @@ internal static class RestoreSuite
     /// <remarks>
     /// A failure entry would be the alternative, and it is the wrong shape: <see cref="RecycleFailure.Path"/>
     /// is a path, and there is not one here to name — the group is absent rather than empty, and the two are
-    /// different facts. Which is why the group carries this case's own entry: a runner that flattened first
-    /// and validated after would have moved a payload and then raised, and the file being where it was left
-    /// is what says it did not.
+    /// different facts.
+    /// <para>
+    /// Which is why the group beside the null carries an entry that exists: a real file, recycled by this
+    /// case and found in a listing, so a runner that flattened first and validated after would have moved
+    /// its payload back to disk and then raised. Both halves of that are asserted rather than one of them —
+    /// the payload still in the bin and byte for byte what it was, and the record still beside it — so an
+    /// implementation that gets halfway is caught as readily as one that gets all the way.
+    /// </para>
     /// <para>
     /// The parameter name is asserted because it is the only thing that says <em>which</em> argument was
     /// refused, and the message that says "volumes" is what sends a caller looking in the right place.
@@ -1491,16 +1569,22 @@ internal static class RestoreSuite
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("the entry the refusal must not disturb");
 
-        var neverWritten = new RecycleBinItem(
-            Path.Combine(ScratchWorkspace.Root, "never-written-record.bin"),
-            Path.Combine(ScratchWorkspace.Root, "never-written-payload.bin"),
-            0,
-            false);
+        var original = workspace.CreateRandomFile(4096);
+        var bytes = File.ReadAllBytes(original);
+
+        Check.True(
+            await RecycleBin.RecycleAsync(original, cancellationToken: context.CancellationToken),
+            "a file reached the bin");
+
+        var entry = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            original);
 
         IReadOnlyList<RecycleBinVolumeContents> volumes =
         [
-            new RecycleBinVolumeContents(ScratchWorkspace.VolumeRoot, [neverWritten]),
+            new RecycleBinVolumeContents(ScratchWorkspace.VolumeRoot, [entry]),
             null!
         ];
 
@@ -1512,7 +1596,13 @@ internal static class RestoreSuite
 
         Check.Equal("volumes", thrown.ParamName, "and the exception names the argument that was refused");
 
-        Check.False(File.Exists(neverWritten.PayloadPath), "while the entry beside it was never moved");
+        // Both halves, and neither is true by accident. The file is absent from the disk because it was
+        // recycled, so a runner that got that far would have put it back; and the payload is in the bin
+        // because it was never moved, which is the fact a half-finished implementation would lose.
+        Check.False(File.Exists(original), "while the entry beside it was never moved back to disk");
+        Check.True(File.Exists(entry.PayloadPath), "its payload is still in the Recycle Bin");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(entry.PayloadPath)), "byte for byte what it was");
+        Check.True(File.Exists(entry.IndexPath), "with its record, so the entry is still whole and restorable");
 
         workspace.Dispose();
     }

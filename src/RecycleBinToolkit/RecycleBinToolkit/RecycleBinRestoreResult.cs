@@ -44,7 +44,9 @@ public sealed class RecycleBinRestoreResult
     }
 
     /// <summary>
-    /// Paths the items were restored to, in full, in the order they were asked for.
+    /// Paths the items were restored to, in full, in the order they were asked for and in the spelling
+    /// their own records carried — which for an item that was not renamed is the caller's spelling from the
+    /// day it was deleted, a trailing directory separator included.
     /// </summary>
     /// <remarks>
     /// The path on disk, not the one inside the Recycle Bin, and for an item that was renamed the path it
