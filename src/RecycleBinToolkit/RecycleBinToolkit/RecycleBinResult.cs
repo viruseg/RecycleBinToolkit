@@ -93,13 +93,16 @@ public enum RecycleFailureStage
     /// renames <see cref="RestoreFileConflict.Rename"/> and
     /// <see cref="RestoreDirectoryConflict.RenameDirectory"/>, and the three <c>Merge*</c> values, which
     /// report one record per file of the tree they settle and one for the directory itself under
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>. So this stage is what a caller opting into
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> <em>where the destination is a directory</em>. Where
+    /// it holds a file they have no tree to merge into and fail at <see cref="RestoreFailed"/> instead, like
+    /// any other move the filesystem would not make. So this stage is what a caller opting into
     /// <c>Error</c> gets instead.
     /// <para>
-    /// One policy reaches neither list. <see cref="RestoreFileConflict.Replace"/> takes the occupant's
-    /// place — where the occupant is a file, so there is nothing left to report a conflict about, though a
-    /// destination holding a <em>directory</em> has nothing to overwrite and that one fails at
-    /// <see cref="RestoreFailed"/> instead.
+    /// Two policies reach no conflict. <see cref="RestoreFileConflict.Replace"/> takes the occupant's place,
+    /// so where the occupant is a file there is nothing left to report about — though a destination holding a
+    /// <em>directory</em> has nothing to overwrite and that one fails at <see cref="RestoreFailed"/> too.
+    /// And a <c>Merge*</c> value on a destination holding a file fails rather than resolving anything, so it
+    /// reaches this list's sibling and not this one.
     /// </para>
     /// </remarks>
     RestoreConflictRefused = 11

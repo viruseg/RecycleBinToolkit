@@ -197,13 +197,15 @@ internal static class RestorePathPlanner
     /// <param name="mode">The directory policy the restore was asked for.</param>
     /// <returns>The action to take about that entry.</returns>
     /// <remarks>
-    /// The three merge modes answer, and nothing else reaches here:
+    /// Only the three merge modes reach here at all — the walk begins under one of them, and
+    /// <see cref="DecideMerged"/> is asked nothing else —
     /// <see cref="RestoreDirectoryConflict.MergeReplace"/> overwrites the file in the way,
     /// <see cref="RestoreDirectoryConflict.MergeRename"/> sets the incoming file down beside it, and
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> leaves it alone. The default arm is
-    /// <see cref="RestoreAction.Skip"/> because the three values that would land on it never do — they are
-    /// answered by <see cref="Decide"/> before the walk begins — and because an enum value from outside the
-    /// set is best answered by the action that touches nothing.
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> leaves it alone, which is the default arm's own
+    /// answer. The default arm then covers
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> and anything from outside the set: the other two
+    /// directory values are answered by <see cref="Decide"/> before a walk begins and never arrive, and an
+    /// enum value from outside the set is best answered by the action that touches nothing.
     /// <para>
     /// <paramref name="destinationPath"/> is not read. A merge asks only about a path it has already found
     /// occupied, so the answer is the mode's alone; the path is what the caller walks and what

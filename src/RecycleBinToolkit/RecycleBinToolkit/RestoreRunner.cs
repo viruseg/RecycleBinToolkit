@@ -626,12 +626,24 @@ internal static class RestoreRunner
     /// </returns>
     /// <remarks>
     /// Straight to <see cref="NativeRecycleRunner"/> rather than through <see cref="RecycleBatch"/>, and the
-    /// difference that matters is the volume gate in between: this volume is asked to take a file back into
-    /// the bin it is already holding one file back into, and a gate that refused would leave the file in a
-    /// payload the caller is about to be told was dealt with.
+    /// difference that matters is what sits in between: the volume gate, which acts on a volume the library
+    /// will not recycle on the caller's behalf. That question is already settled here — the volume is holding
+    /// the payload this file is being taken out of, and a bin this library could not write to is not one
+    /// holding a file it is restoring — so the gate is asked a question whose answer is yes, and under
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/> it does not refuse the path but
+    /// <em>deletes it</em>, reporting it only in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>
+    /// rather than in the failures this method reads. A file destroyed that way leaves
+    /// <see cref="RecycleBinResult.Failures"/> empty, so the caller would be told the payload was dealt with
+    /// and it would be deleted with the file still inside.
     /// <para>
-    /// One call for every entry, rather than one per file, so that the whole put-back is the single writer
-    /// it is documented to be and this library's own record writer is the only one in the business.
+    /// Under the other two actions the gate is harmless here — a refused path arrives as a failure, and this
+    /// method withholds the removal of the payload when it sees one, so nothing is lost either way — which is
+    /// exactly why the dangerous case is the quiet one, and why this note is here rather than in a task.
+    /// </para>
+    /// <para>
+    /// One call for the whole list rather than one per file, so that the put-back is the
+    /// single writer it is documented to be and this library's own record writer is the only one in the
+    /// business.
     /// </para>
     /// </remarks>
     private static int? PutBack(
@@ -664,19 +676,26 @@ internal static class RestoreRunner
             return null;
         }
 
-        // Reported under the path each entry wanted rather than under where it was lying, which is the only
-        // path the caller can do anything with — the other one is inside the bin.
-        var wanted = new Dictionary<string, string>(leftBehind.Count, StringComparer.OrdinalIgnoreCase);
+        // One failure per entry the recycle would not take, each reported under the path that entry
+        // wanted rather than under where it was lying, which is a path inside the Recycle Bin and the one
+        // place the caller cannot do anything with. Keyed rather than scanned, because a tree of leftovers
+        // that all failed is the one shape where a scan per failure would be quadratic.
+        var wanted = new Dictionary<string, RecycleTarget>(leftBehind.Count, StringComparer.OrdinalIgnoreCase);
 
         foreach (var target in leftBehind)
         {
-            wanted[target.InputPath] = target.RecordPath;
+            wanted[target.InputPath] = target;
         }
 
         foreach (var failure in recycled.Failures)
         {
+            // Every failure here names a target this list holds, so the second answer is not reached; it
+            // stands for the case where it somehow is not, and says the path the recycle itself reported
+            // rather than inventing one.
+            var named = wanted.TryGetValue(failure.Path, out var target) ? target.RecordPath : failure.Path;
+
             state.Failures.Add(new RecycleFailure(
-                wanted.GetValueOrDefault(failure.Path, failure.Path),
+                named,
                 failure.HResult,
                 failure.Attempts,
                 RecycleFailureStage.RestoreFailed));
@@ -1002,14 +1021,12 @@ internal static class RestoreRunner
 
         foreach (var slot in slots)
         {
-            if (slot.MergeConflicts is not null)
+            // Both are set together by the one method that sets either, so this is one condition rather
+            // than a second: a slot carrying no conflicts of its own carries no failures either.
+            if (slot.MergeConflicts is not null && slot.MergeFailures is not null)
             {
                 conflicts.AddRange(slot.MergeConflicts);
-
-                if (slot.MergeFailures is not null)
-                {
-                    failures.AddRange(slot.MergeFailures);
-                }
+                failures.AddRange(slot.MergeFailures);
             }
 
             switch (slot.Kind)

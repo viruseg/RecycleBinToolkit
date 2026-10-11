@@ -38,8 +38,11 @@ public enum RestoreDirectoryConflict
     /// <para>
     /// Reported as one <see cref="RecycleRestoreConflictAction.MergedSkipped"/> for the directory rather than
     /// one per file that gave way, because nothing about those files was resolved here — each is an entry in
-    /// the next listing, and the directory is in
-    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/>. The merge itself reaches no failure stage.
+    /// the next listing. The directory is in <see cref="RecycleBinRestoreResult.RestoredPaths"/> when the
+    /// merge itself finished, which it does not always: a merge reaches no failure stage
+    /// <em>of its own</em>, but a file of its tree that the filesystem would not take, and a payload or a
+    /// record that would not go afterwards, are all reported at
+    /// <see cref="RecycleFailureStage.RestoreFailed"/> like any other refused move.
     /// </para>
     /// </remarks>
     MergeSkip = 0,
@@ -56,7 +59,10 @@ public enum RestoreDirectoryConflict
     /// is no value here that replaces one whole.
     /// <para>
     /// Reported as one <see cref="RecycleRestoreConflictAction.MergedReplaced"/> per file that was
-    /// overwritten, under the path it was overwritten at, and reaches no failure stage.
+    /// overwritten, under the path it was overwritten at. A merge reaches no failure stage <em>of its own</em>
+    /// — a file of the tree that the filesystem would not take, and a payload or a record that would not go
+    /// afterwards, are reported at <see cref="RecycleFailureStage.RestoreFailed"/> like any other refused
+    /// move.
     /// </para>
     /// </remarks>
     MergeReplace,
@@ -70,7 +76,8 @@ public enum RestoreDirectoryConflict
     /// moved or removed.
     /// <para>
     /// Reported as one <see cref="RecycleRestoreConflictAction.MergedRenamed"/> per file that was renamed,
-    /// under the free name it landed at rather than the one it collided at, and reaches no failure stage.
+    /// under the free name it landed at rather than the one it collided at. A merge reaches no failure stage
+    /// <em>of its own</em> — see <see cref="MergeReplace"/>.
     /// </para>
     /// </remarks>
     MergeRename,

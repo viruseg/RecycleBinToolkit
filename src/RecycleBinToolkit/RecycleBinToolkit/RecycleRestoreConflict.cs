@@ -32,9 +32,11 @@ public enum RecycleRestoreConflictAction
     /// <remarks>
     /// Under <see cref="RestoreDirectoryConflict.MergeSkip"/> this is one record for the directory rather
     /// than one for each file that gave way, because nothing about those files was resolved — each is an
-    /// ordinary item in the next listing. The directory itself was restored, so
-    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/> names it, and
-    /// <see cref="RecycleRestoreConflict.Path"/> is that directory's path.
+    /// ordinary item in the next listing.
+    /// <see cref="RecycleRestoreConflict.Path"/> is that directory's path, and
+    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/> names it too <em>when the merge finished</em>:
+    /// a merge whose payload or record would not go afterwards still reports what it settled, and reports
+    /// itself as a <see cref="RecycleFailureStage.RestoreFailed"/> at the same time.
     /// </remarks>
     MergedSkipped,
 

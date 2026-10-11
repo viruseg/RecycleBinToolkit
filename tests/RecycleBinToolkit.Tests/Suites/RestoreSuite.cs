@@ -29,6 +29,8 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(AMergedTreeOverwritesEveryFileItCollidesWith), AMergedTreeOverwritesEveryFileItCollidesWith),
         new TestCase("RestoreSuite." + nameof(AMergedTreeSetsEachCollidingFileUnderAFreeName), AMergedTreeSetsEachCollidingFileUnderAFreeName),
         new TestCase("RestoreSuite." + nameof(AMergedDirectoryWithNothingInItStillArrives), AMergedDirectoryWithNothingInItStillArrives),
+        new TestCase("RestoreSuite." + nameof(AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin), AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin),
+        new TestCase("RestoreSuite." + nameof(ADirectoryOntoAFileFailsUnderAMergePolicyAsWell), ADirectoryOntoAFileFailsUnderAMergePolicyAsWell),
         new TestCase("RestoreSuite." + nameof(AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing), AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing),
         new TestCase("RestoreSuite." + nameof(OneEntryFailingDoesNotCostTheOthersTheirAnswers), OneEntryFailingDoesNotCostTheOthersTheirAnswers),
         new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure),
@@ -1499,6 +1501,198 @@ internal static class RestoreSuite
     /// </summary>
     private static string[] PathsWith(RecycleBinRestoreResult result, RecycleRestoreConflictAction action) =>
         [.. result.Conflicts.Where(conflict => conflict.Action == action).Select(conflict => conflict.Path)];
+    /// <summary>
+    /// A merge that cannot move one of its files leaves that file in the Recycle Bin rather than deleting it
+    /// with the payload it was in, and reports it under its own destination path — the branch where this
+    /// library would lose a caller's file if it got the order wrong.
+    /// </summary>
+    /// <remarks>
+    /// The file is made unmovable by holding it open: a handle opened for reading and shared only for reading
+    /// refuses a rename, which is what the walk's move, the put-back's recycle and the removal of the payload
+    /// each need. Nothing here forges a refusal — the filesystem raises one three times, and the case is what
+    /// the library does with them.
+    /// <para>
+    /// The held file is the one whose destination is <em>free</em>, which is the only file a merge actually
+    /// tries to move. A file whose name is taken is settled by the policy and never moved at all, so holding
+    /// one of those would refuse nothing: <see cref="RestoreDirectoryConflict.MergeReplace"/> is used here so
+    /// that the two clashing files are overwritten and the case is not also a put-back of its own.
+    /// </para>
+    /// <para>
+    /// Three records come back, with three paths: the refused move and the refused put-back under the file's
+    /// own destination, and the directory's own failure for withholding the removal of the payload. Collapsing
+    /// the first two would hide the one that stopped the deletion.
+    /// </para>
+    /// <para>
+    /// What the case really pins is the four things that have to be true at once afterwards: the entry is
+    /// whole — <c>$I</c> and <c>$R</c> both still there — the file is still inside that payload, the files
+    /// that did fit are already on disk, and nothing at all was written into the bin. The second of those is
+    /// what makes the state recoverable rather than lost: the directory is in the bin with everything in it,
+    /// exactly as it was before the restore.
+    /// </para>
+    /// <para>
+    /// The entry is then removed by hand. Both halves are this case's own material, which is the reason
+    /// <see cref="APayloadThatMovedAndARecordThatWouldNotGoIsAFailure"/> gives for deleting its record: a case
+    /// that leaves an entry behind leaves it in the owner's Recycle Bin, and the handle has to be released
+    /// before either half will go.
+    /// </para>
+    /// </remarks>
+    private static async Task AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var shape = BuildMergeShape("merge-held");
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(shape.Root, cancellationToken: context.CancellationToken),
+            "the tree reached the bin");
+
+        StandTheSquatter(shape);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            shape.Root);
+
+        // Nothing was in the way of this one, so the walk is going to try to move it: shared for reading
+        // only, which is not enough to rename a file, and it is released below before anything is cleaned up.
+        var held = Path.Combine(item.PayloadPath, "keep.txt");
+
+        using (File.Open(held, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var result = await RecycleBin.RestoreAsync(
+                [item],
+                new RecycleBinOptions
+                {
+                    DirectoryConflict = RestoreDirectoryConflict.MergeReplace,
+
+                    // One attempt, so the put-back's own retry loop does not sit here for a second and a half
+                    // waiting on a refusal that is not going to change.
+                    MaxAttempts = 1,
+                    InitialRetryDelay = TimeSpan.Zero
+                },
+                context.CancellationToken);
+
+            Check.False(result.Succeeded, "a file the merge could not deal with is what makes the call report having failed");
+            Check.Equal(
+                3,
+                result.Failures.Count,
+                "every refusal is reported, because all three happened: "
+                + string.Join(" | ", result.Failures.Select(f => $"{f.Stage} {f.Attempts}x 0x{f.HResult:X8} {f.Path}")));
+            Check.Equal(shape.KeepPath, result.Failures[0].Path, "the move's refusal, under the path the file wanted and not the directory's");
+            Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move is reported at");
+            Check.True(result.Failures[0].Attempts > 0, $"and it is the move that was attempted ({result.Failures[0].Attempts})");
+            Check.Equal(shape.KeepPath, result.Failures[1].Path, "and the put-back's, under the same file");
+            Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[1].Stage, "at the same stage: a file this library could not put anywhere");
+            Check.Equal(shape.Root, result.Failures[2].Path, "and the directory's own, which is what withheld the removal of the payload");
+            Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[2].Stage, "also at the stage a restore that did not finish is reported at");
+
+            Check.Equal(0, result.ItemsRestored, "so the directory is not reported as restored");
+            Check.Equal(0, result.RestoredPaths.Count, "and is not named as restored");
+
+            // What the merge did settle before it was stopped is still reported, which is the whole reason a
+            // failed merge carries its conflicts beside its verdict rather than inside it.
+            Check.Equal(2, result.Conflicts.Count, "while the two files it did overwrite are still reported");
+            Check.True(PathsWith(result, RecycleRestoreConflictAction.MergedReplaced).Contains(shape.SharedPath), "one of them under its own path");
+            Check.True(PathsWith(result, RecycleRestoreConflictAction.MergedReplaced).Contains(shape.NestedKeepPath), "and the other under its own too");
+
+            // The four things that have to be true at once: nothing was lost, nothing was invented, and
+            // nothing was written into the bin.
+            Check.True(File.Exists(item.IndexPath), "the entry's record is still in the bin, so the entry is still whole");
+            Check.True(Directory.Exists(item.PayloadPath), "and so is the payload, rather than deleted with a file still inside it");
+            Check.True(shape.Keep.AsSpan().SequenceEqual(File.ReadAllBytes(held)), "the file that could not be moved is still inside it, byte for byte");
+            Check.False(File.Exists(shape.KeepPath), "and is not at its destination, which nothing wrote for it");
+
+            Check.True(shape.Shared.AsSpan().SequenceEqual(File.ReadAllBytes(shape.SharedPath)), "while a file the merge did settle is already back on disk");
+            Check.True(shape.NestedKeep.AsSpan().SequenceEqual(File.ReadAllBytes(shape.NestedKeepPath)), "and so is the one in the subdirectory");
+            Check.True(shape.NestedMid.AsSpan().SequenceEqual(File.ReadAllBytes(shape.NestedMidPath)), "and one nothing was in the way of");
+
+            // One more than the baseline, and it is the entry this case made: the put-back
+            // failed on the only entry it had, so no new record was left behind either.
+            Check.Equal(1, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the only thing in the bin is the entry that never left it");
+        }
+
+        // Cleanup of material this case itself put there, once the handle that held it is released.
+        Directory.Delete(item.PayloadPath, recursive: true);
+        File.Delete(item.IndexPath);
+
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "so the bin is back to its baseline");
+
+        workspace.Dispose();
+    }
+
+
+    /// <summary>
+    /// A directory whose path holds a <em>file</em> is a conflict like any other, and under a merge value
+    /// there is no tree to merge into — so the move is refused and the entry is reported as a failed restore
+    /// rather than as a conflict anything resolved.
+    /// </summary>
+    /// <remarks>
+    /// This is the case the merge documentation turns on: the three merge values answer
+    /// <see cref="RestoreAction.Move"/> for an occupied path whatever occupies it, and only
+    /// <c>ADirectoryRestoringOntoAFileIsAConflict</c> — which runs under
+    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/> — was pinning what happens next. Without this,
+    /// every sentence saying a merge resolves an occupied path would be true only of the other kind of
+    /// occupant.
+    /// <para>
+    /// The second restore is the recovery the failure promises and the cleanup that makes it: the entry never
+    /// moved, so trying again under a policy that takes a free name works, which is why a directory refused
+    /// here is worth a second attempt rather than lost.
+    /// </para>
+    /// </remarks>
+    private static async Task ADirectoryOntoAFileFailsUnderAMergePolicyAsWell(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var root = Path.Combine(ScratchWorkspace.Root, "onto-a-file-under-a-merge");
+
+        Directory.CreateDirectory(Path.Combine(root, "nested"));
+        var bytes = RandomBytes(4096);
+        File.WriteAllBytes(Path.Combine(root, "nested", "leaf.bin"), bytes);
+
+        Check.True(
+            await RecycleBin.RecycleAsync(root, cancellationToken: context.CancellationToken),
+            "the tree reached the bin");
+
+        // The other kind, at the very path the record names: there is no directory here for a merge to walk
+        // into, whatever the policy says.
+        File.WriteAllText(root, "a file where a directory used to be");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            root);
+
+        var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+
+        Check.False(result.Succeeded, "the default merge policy cannot merge into a file, so the call reports having failed");
+        Check.Equal(1, result.Failures.Count, "the directory is the one failure");
+        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move arrives");
+        Check.Equal(root, result.Failures[0].Path, "under the path it wanted");
+        Check.Equal(0, result.Conflicts.Count, "and no conflict is reported, because nothing resolved anything");
+        Check.Equal(0, result.ItemsRestored, "nothing left the bin");
+        Check.Equal(0, result.RestoredPaths.Count, "so no path is named as restored");
+
+        Check.Equal("a file where a directory used to be", File.ReadAllText(root), "the file in the way is untouched");
+        Check.True(Directory.Exists(item.PayloadPath), "and the payload is still in the bin, so nothing was lost");
+        Check.True(File.Exists(item.IndexPath), "with its record, so the entry is still restorable");
+
+        // The second attempt the failure promises, and what leaves the bin for this case.
+        var again = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory },
+            context.CancellationToken);
+
+        Check.True(again.Succeeded, $"a policy that takes a free name has nothing to merge and so succeeds (first: {again.Failures.FirstOrDefault()?.Stage})");
+        Check.True(
+            bytes.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(again.RestoredPaths[0], "nested", "leaf.bin"))),
+            "and the tree is whole under the name it was given");
+        Check.Equal("a file where a directory used to be", File.ReadAllText(root), "while the file in the way is still where it was");
+
+        workspace.Dispose();
+    }
 
     /// <summary>
     /// One tree recycled whole, with the squatter's own bytes for the two files it will be standing behind
