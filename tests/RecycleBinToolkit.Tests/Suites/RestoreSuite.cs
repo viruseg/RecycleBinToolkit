@@ -13,7 +13,11 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode), EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode),
         new TestCase("RestoreSuite." + nameof(RenamingTakesTheFirstFreeNumberBeforeTheExtension), RenamingTakesTheFirstFreeNumberBeforeTheExtension),
         new TestCase("RestoreSuite." + nameof(ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt), ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt),
-        new TestCase("RestoreSuite." + nameof(ARecycledFileComesBackToThePathItCameFrom), ARecycledFileComesBackToThePathItCameFrom)
+        new TestCase("RestoreSuite." + nameof(ARecycledFileComesBackToThePathItCameFrom), ARecycledFileComesBackToThePathItCameFrom),
+        new TestCase("RestoreSuite." + nameof(ATakenFilePathIsSkippedAndTheEntryStaysInTheBin), ATakenFilePathIsSkippedAndTheEntryStaysInTheBin),
+        new TestCase("RestoreSuite." + nameof(ATakenFilePathIsReplacedAndTheEntryLeavesTheBin), ATakenFilePathIsReplacedAndTheEntryLeavesTheBin),
+        new TestCase("RestoreSuite." + nameof(ATakenFilePathIsRestoredUnderAFreeName), ATakenFilePathIsRestoredUnderAFreeName),
+        new TestCase("RestoreSuite." + nameof(ATakenFilePathIsRefusedAsBothAConflictAndAFailure), ATakenFilePathIsRefusedAsBothAConflictAndAFailure)
     ];
 
     /// <summary>
@@ -534,6 +538,241 @@ internal static class RestoreSuite
 
         // The entry is gone from the bin, which is the other half of "restored".
         Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the bin is back to its baseline");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A path somebody took again while the entry was in the Recycle Bin, under
+    /// <see cref="RestoreFileConflict.Skip"/>: nothing on disk is touched, the entry keeps its place in the
+    /// bin, and the answer says so without having failed.
+    /// </summary>
+    /// <remarks>
+    /// Three separate facts, asserted separately. The squatter still reading "mine" is that nothing was
+    /// touched; the bin holding one more entry than it did is that the entry is still restorable; and
+    /// <see cref="RecycleBinRestoreResult.Succeeded"/> staying true is that an item the caller asked to leave
+    /// behind is not a failure. Reporting the skip as one would fail the last of those and pass the other
+    /// two, which is why it is asserted rather than taken from the empty failures list.
+    /// <para>
+    /// The record is read to find the entry, so the entry is warm before the restore runs and
+    /// <see cref="RecycleBinItem.IsDetailsLoaded"/> would answer the same whether or not it had left the
+    /// bin. The count is what says it is still there.
+    /// </para>
+    /// </remarks>
+    private static async Task ATakenFilePathIsSkippedAndTheEntryStaysInTheBin(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(4096);
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the original reached the bin");
+
+        // At the path the entry wants back, not beside it: a file under some other name is not what a
+        // conflict is about.
+        File.WriteAllText(target, "mine");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { FileConflict = RestoreFileConflict.Skip },
+            context.CancellationToken);
+
+        Check.Equal("mine", File.ReadAllText(target), "the file already there is untouched");
+        Check.Equal(0, result.ItemsRestored, "nothing was restored");
+        Check.Equal(0, result.RestoredPaths.Count, "so nothing is named as restored");
+        Check.Equal(0, result.Failures.Count, "a skip is not a failure");
+        Check.True(result.Succeeded, "and a conflict alone does not make the result not have succeeded");
+        Check.Equal(1, result.Conflicts.Count, "while it is reported");
+        Check.Equal(target, result.Conflicts[0].Path, "as the path that was taken");
+        Check.False(result.Conflicts[0].OccupiedByDirectory, "by a file");
+        Check.Equal(RecycleRestoreConflictAction.Skipped, result.Conflicts[0].Action, "and the action taken");
+        Check.Equal(1, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry is still in the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The same taken path under <see cref="RestoreFileConflict.Replace"/>: the squatter is gone and the
+    /// entry leaves the bin, and no conflict is reported because the overwrite answered itself.
+    /// </summary>
+    /// <remarks>
+    /// The bytes read back are the original's and not an absence: a squatter removed and nothing put in its
+    /// place would leave a missing file rather than a restored one, and the length is not what tells them
+    /// apart.
+    /// <para>
+    /// <see cref="RecycleBinRestoreResult.Conflicts"/> is empty, which is the same rule the design gives a
+    /// directory merge under <see cref="RestoreDirectoryConflict.MergeReplace"/> and the reason there is no
+    /// enumerator for a conflict an overwrite resolved. A report here would tell the caller about something
+    /// that no longer exists.
+    /// </para>
+    /// </remarks>
+    private static async Task ATakenFilePathIsReplacedAndTheEntryLeavesTheBin(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(4096);
+        var bytes = File.ReadAllBytes(target);
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the original reached the bin");
+
+        File.WriteAllText(target, "mine");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { FileConflict = RestoreFileConflict.Replace },
+            context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(1, result.ItemsRestored, "the entry was restored");
+        Check.Equal(1, result.RestoredPaths.Count, "and it is named");
+        Check.Equal(target, result.RestoredPaths[0], "at the path it was deleted from, occupied or not");
+        Check.Equal(4096, result.RestoredSize, "and its bytes were measured");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(target)), "the squatter's content is gone and the original's is here");
+        Check.Equal(0, result.Failures.Count, "an overwrite is not a failure");
+        Check.Equal(0, result.Conflicts.Count, "and is not a conflict to report either");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry has left the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The same taken path under <see cref="RestoreFileConflict.Rename"/>: the entry comes back beside what
+    /// was in the way, the file that was already there is not the thing that moved, and the conflict names
+    /// where the entry landed.
+    /// </summary>
+    /// <remarks>
+    /// The free name is worked out before the restore rather than read back out of the answer, because the
+    /// first call is the one that is free: once the payload is lying there, the same call counts on to the
+    /// next number.
+    /// <para>
+    /// Both halves of "the squatter was not the thing that was renamed" are asserted. Its content still
+    /// reads "mine" is that it was left alone, and the original's bytes are at the free name is that the
+    /// entry is what came back. Reading the bytes back rather than the length is the difference between a
+    /// payload that arrived and one that arrived intact.
+    /// </para>
+    /// <para>
+    /// The conflict's path is the one the entry landed at rather than the one it collided with, which is what
+    /// <see cref="RecycleRestoreConflictAction.RestoredRenamed"/> reports and the reason a caller reading
+    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/> finds the same path in both lists.
+    /// </para>
+    /// </remarks>
+    private static async Task ATakenFilePathIsRestoredUnderAFreeName(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(4096);
+        var bytes = File.ReadAllBytes(target);
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the original reached the bin");
+
+        File.WriteAllText(target, "mine");
+
+        // Taken before the restore: the name is free while the squatter holds the one it numbers, and holding
+        // the answer of the second call would name a second file rather than the one that was set down.
+        var renamed = RestorePathPlanner.WithFreeNumber(target);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename },
+            context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(1, result.ItemsRestored, "the entry was restored");
+        Check.Equal(1, result.RestoredPaths.Count, "and it is named");
+        Check.Equal(renamed, result.RestoredPaths[0], "under the first free name beside the one it wanted");
+        Check.True(File.Exists(renamed), $"the payload is at {renamed}");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(renamed)), "byte for byte");
+        Check.Equal("mine", File.ReadAllText(target), "and the file already there is untouched");
+        Check.Equal(0, result.Failures.Count, "a rename resolved itself, so nothing failed");
+
+        Check.Equal(1, result.Conflicts.Count, "and it is reported");
+        Check.Equal(renamed, result.Conflicts[0].Path, "as the path the entry landed at");
+        Check.False(result.Conflicts[0].OccupiedByDirectory, "with what was in the way reported as a file");
+        Check.Equal(RecycleRestoreConflictAction.RestoredRenamed, result.Conflicts[0].Action, "and the action taken");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry has left the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The same taken path under <see cref="RestoreFileConflict.Error"/>: nothing is touched, and the refusal
+    /// is reported as a conflict and as a failure, which is what makes the result not have succeeded.
+    /// </summary>
+    /// <remarks>
+    /// Both lists carry it because they answer different questions — what was in the way, and what did not
+    /// happen — and a caller reading only <see cref="RecycleBinRestoreResult.Conflicts"/> could not tell this
+    /// from a skip, which is the one thing the two policies are apart.
+    /// <para>
+    /// The code and the round count are zero because nothing was attempted: the refusal is settled before any
+    /// move, which is what <see cref="RecycleFailure.Attempts"/> reports as zero everywhere else too.
+    /// </para>
+    /// </remarks>
+    private static async Task ATakenFilePathIsRefusedAsBothAConflictAndAFailure(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(4096);
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the original reached the bin");
+
+        File.WriteAllText(target, "mine");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RecycleBinOptions { FileConflict = RestoreFileConflict.Error },
+            context.CancellationToken);
+
+        Check.False(result.Succeeded, "a refused conflict is what makes the result not have succeeded");
+        Check.Equal("mine", File.ReadAllText(target), "the file already there is untouched");
+        Check.Equal(0, result.ItemsRestored, "nothing was restored");
+        Check.Equal(0, result.RestoredPaths.Count, "so nothing is named as restored");
+
+        Check.Equal(1, result.Conflicts.Count, "and it is a conflict like any other");
+        Check.Equal(target, result.Conflicts[0].Path, "as the path that was taken");
+        Check.False(result.Conflicts[0].OccupiedByDirectory, "by a file");
+        Check.Equal(RecycleRestoreConflictAction.Skipped, result.Conflicts[0].Action, "and the action taken, which is the same one a skip takes");
+
+        Check.Equal(1, result.Failures.Count, "and it is a failure as well");
+        Check.Equal(target, result.Failures[0].Path, "under the path that was refused");
+        Check.Equal(RecycleFailureStage.RestoreConflictRefused, result.Failures[0].Stage, "at the stage a refusal is reported at");
+        Check.Equal(0, result.Failures[0].HResult, "nothing was attempted, so the file system has no code to report");
+        Check.Equal(0, result.Failures[0].Attempts, "and nothing was tried");
+        Check.Equal(1, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry stays in the bin, so the refusal is worth a second attempt");
 
         workspace.Dispose();
     }
