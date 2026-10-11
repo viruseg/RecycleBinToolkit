@@ -39,6 +39,12 @@ internal static class NativeRecycleRunner
     private const int ErrorAlreadyExists = 183;
 
     /// <summary>
+    /// The bits of an HRESULT that carry the Win32 error number, which is where a code the file system
+    /// raised can be compared against the constants above.
+    /// </summary>
+    private const int ErrorMask = 0xFFFF;
+
+    /// <summary>
     /// Moves a batch to the Recycle Bin and reports what happened to each path.
     /// </summary>
     /// <param name="targets">Validated paths, already cleared of volumes that cannot recycle them.</param>
@@ -267,13 +273,24 @@ internal static class NativeRecycleRunner
     /// <summary>
     /// Whether a refusal was this name being taken rather than the item being unavailable.
     /// </summary>
+    /// <param name="failure">What the create or the move raised.</param>
     /// <remarks>
     /// Telling the two apart is what lets a collision be retried on a fresh name without a locked file being
     /// retried too. A locked file is a fact about the caller's data and is reported on the first attempt; a
     /// taken name is a fact about this library's own generator and is its own business.
+    /// <para>
+    /// <b>The code is the low half of the HRESULT and not the whole of it.</b> <c>HRESULT_FROM_WIN32(e)</c> is
+    /// <c>0x80070000 | e</c>, so a refusal carries the severity bit and the <c>ERROR_</c> facility on top of
+    /// the bare errno: measured on this machine, a create over a name that is taken arrives as
+    /// <c>0x80070050</c> and a move onto one as <c>0x800700B7</c>. Comparing the whole value against those
+    /// two constants is therefore never true, so every collision fell through to the failure path and
+    /// <see cref="RecycleBinOptions.MaxAttempts"/> spent its rounds re-drawing a name this class had drawn
+    /// itself. Masking is the <c>HRESULT_CODE</c> macro: <c>0x80070020</c> is 32 and <c>0x80070002</c> is 2,
+    /// neither of which is a name, so neither a locked file nor a source that is not there is retried.
+    /// </para>
     /// </remarks>
     private static bool IsNameTaken(IOException failure) =>
-        failure.HResult is ErrorFileExists or ErrorAlreadyExists;
+        (failure.HResult & ErrorMask) is ErrorFileExists or ErrorAlreadyExists;
 
     private static void TryDeleteIndex(string indexPath)
     {

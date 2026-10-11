@@ -913,9 +913,9 @@ internal static class RestoreRunner
     /// moving a file onto a name that was already there: the runtime raises
     /// <see cref="IOException"/> carrying <c>0x800700B7</c>, which is <see cref="ErrorAlreadyExists"/>
     /// <c>0xB7</c> with the severity bit and the <c>ERROR_</c> facility on top. Comparing the whole value
-    /// against the bare errno — which is what <see cref="NativeRecycleRunner.IsNameTaken"/> does, and what
-    /// this method did when it was first written — is therefore never true, and a lost race would be charged
-    /// to <see cref="RecycleBinOptions.MaxAttempts"/> after all. A name taken between the query and the move
+    /// against the bare errno — which is what both of these comparisons did when they were first written — is
+    /// therefore never true, and a lost race would be charged to
+    /// <see cref="RecycleBinOptions.MaxAttempts"/> after all. A name taken between the query and the move
     /// is still not something a run can arrange, so <b>no case witnesses the branch</b>; what is witnessed is
     /// the comparison, and this is what the comparison was corrected against.
     /// </para>

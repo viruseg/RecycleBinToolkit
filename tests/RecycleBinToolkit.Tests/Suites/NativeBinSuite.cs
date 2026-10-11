@@ -1,3 +1,4 @@
+using System.Reflection;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
@@ -47,6 +48,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderDropsARecordDeclaringAnImpossiblePathLength), NativeIndexReaderDropsARecordDeclaringAnImpossiblePathLength),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderDropsARecordWhoseTimestampIsOutOfRange), NativeIndexReaderDropsARecordWhoseTimestampIsOutOfRange),
         new TestCase("NativeBinSuite." + nameof(ATakenEntryNameIsRefusedAsACollisionWhateverItsAttributes), ATakenEntryNameIsRefusedAsACollisionWhateverItsAttributes),
+        new TestCase("NativeBinSuite." + nameof(ATakenNameIsRecognisedByItsCodeAndALockedFileIsNot), ATakenNameIsRecognisedByItsCodeAndALockedFileIsNot),
         new TestCase("NativeBinSuite." + nameof(NativeListingFindsAnEntryNativeRecycleRecorded), NativeListingFindsAnEntryNativeRecycleRecorded),
         new TestCase("NativeBinSuite." + nameof(NativeListingReportsARecycledDirectoryAsADirectory), NativeListingReportsARecycledDirectoryAsADirectory),
         new TestCase("NativeBinSuite." + nameof(NativeListingOfAVolumeWithNoBinDirectoryIsEmpty), NativeListingOfAVolumeWithNoBinDirectoryIsEmpty),
@@ -502,6 +504,83 @@ internal static class NativeBinSuite
 
     /// <summary>Win32 <c>ERROR_ALREADY_EXISTS</c>: a move that would overwrite a name.</summary>
     private const int ErrorAlreadyExists = unchecked((int)0x800700B7);
+
+    /// <summary>
+    /// A refusal carrying a taken name's code is answered as a taken name, and a refusal carrying anything
+    /// else is not. That is what lets the same path be given a fresh name without a locked file being given
+    /// one instead.
+    /// </summary>
+    /// <remarks>
+    /// Every refusal here is raised by the filesystem on this machine rather than written down by the case,
+    /// and the names it collides on are composed by <see cref="NativeBinLayout"/>, so they are the shape the
+    /// runner writes: a <c>CREATE_NEW</c> over a record that is already there, a move onto a payload that is
+    /// already there, a file somebody is holding, and a source that is not there at all.
+    /// <para>
+    /// <b>The loop this feeds is not what is witnessed.</b> <see cref="NativeBinLayout.NextStem"/> draws six
+    /// characters out of thirty-six and takes no argument, so no run can ask it for the name it is about to
+    /// draw, and making the runner itself collide would take a hook in the runner. What is reached is the
+    /// decision its two catch filters make — and that decision could not tell a collision from a locked file,
+    /// because it compared the whole HRESULT rather than the code inside it.
+    /// </para>
+    /// </remarks>
+    private static Task ATakenNameIsRecognisedByItsCodeAndALockedFileIsNot(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        Span<char> stem = stackalloc char[NativeBinLayout.StemLength];
+        NativeBinLayout.NextStem(stem);
+
+        var indexPath = NativeBinLayout.IndexPath(ScratchWorkspace.Root, stem, ".bin");
+        var payloadPath = NativeBinLayout.PayloadPath(ScratchWorkspace.Root, stem, ".bin");
+
+        // Standing where a run that crashed between the two halves would have left them. The runner never sees
+        // either name, so nothing here is asking it to land on a name of its own choosing.
+        File.WriteAllText(indexPath, "a record that is already there");
+        File.WriteAllText(payloadPath, "a payload that is already there");
+
+        var recordRefused = Check.Throws<IOException>(
+            () => NativeIndexFile.Write(indexPath, ScratchWorkspace.Root + "original.bin", 0, DateTime.UtcNow),
+            "a record cannot be written over a name that is taken");
+
+        var payloadSource = CreateFile("payload-wanted-that-name");
+        var payloadRefused = Check.Throws<IOException>(
+            () => File.Move(payloadSource, payloadPath),
+            "and a payload cannot be moved onto one either");
+
+        var held = CreateFile("held-by-somebody-else");
+        IOException holdRefused;
+
+        using (new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            holdRefused = Check.Throws<IOException>(
+                () => File.Move(held, Path.Combine(ScratchWorkspace.Root, "somewhere-free.bin")),
+                "a file somebody is holding cannot be moved at all");
+        }
+
+        var absentRefused = Check.Throws<IOException>(
+            () => File.Move(Path.Combine(ScratchWorkspace.Root, "never-created.bin"), Path.Combine(ScratchWorkspace.Root, "also-free.bin")),
+            "and neither can one that is not there");
+
+        Check.True(
+            RunnerTreatsItAsTaken(recordRefused),
+            $"a refusal carrying 0x{recordRefused.HResult:X8} is a name being taken, which is what earns the fresh one");
+
+        Check.True(
+            RunnerTreatsItAsTaken(payloadRefused),
+            $"and so is one carrying 0x{payloadRefused.HResult:X8}, which arrives from the move rather than from the create");
+
+        Check.False(
+            RunnerTreatsItAsTaken(holdRefused),
+            $"while 0x{holdRefused.HResult:X8} is a fact about the caller's own file, and is reported on its first attempt");
+
+        Check.False(
+            RunnerTreatsItAsTaken(absentRefused),
+            $"and 0x{absentRefused.HResult:X8} is not a name either");
+
+        workspace.Dispose();
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// What was written is what a listing finds. The entry, its original path, its size and
@@ -2005,6 +2084,33 @@ using var workspace = new ScratchWorkspace();
     /// </summary>
     private static bool SamePath(string left, string right) =>
         string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Calls the runner's private refusal classifier the way its two catch filters call it, unwrapping what
+    /// reflection hands back.
+    /// </summary>
+    /// <remarks>
+    /// Reached by reflection rather than by widening the method, because the case cannot arrange the
+    /// collision that reaches it and a parameter added to the runner for a case to fill would be a hook in
+    /// the code under test rather than a claim about it. <see cref="FacadeSuite"/> reaches a private
+    /// validator this way for the same reason.
+    /// </remarks>
+    private static bool RunnerTreatsItAsTaken(IOException failure)
+    {
+        const string classifier = "IsNameTaken";
+
+        var method = typeof(NativeRecycleRunner).GetMethod(classifier, BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new MissingMethodException(typeof(NativeRecycleRunner).FullName, classifier);
+
+        try
+        {
+            return (bool)(method.Invoke(null, [failure]) ?? false);
+        }
+        catch (TargetInvocationException wrapped) when (wrapped.InnerException is not null)
+        {
+            throw wrapped.InnerException;
+        }
+    }
 
     /// <summary>
     /// The record of the newest entry in the current user's bin that names <paramref name="originalPath"/>.
