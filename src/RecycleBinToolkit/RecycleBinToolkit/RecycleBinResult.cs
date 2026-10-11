@@ -73,6 +73,13 @@ public enum RecycleFailureStage
     /// directory's, and under any of the three <c>Merge*</c> values whatever the merge was doing with that
     /// file.
     /// <para>
+    /// <b>Once for the file, and once more for the directory, is not the whole count.</b> A file whose move
+    /// was refused can be refused a second time — the put-back that would have taken it out of the payload
+    /// cannot move it either — and each refusal is its own event with its own code, so one file can account
+    /// for two records under the same path. A caller that means one failure per file has to group by path
+    /// rather than count.
+    /// </para>
+    /// <para>
     /// The item is still in the Recycle Bin, which is what makes a second attempt worth making. The one
     /// exception is a payload that had already moved and only its record was left: the file is on disk
     /// then, and the next attempt meets a conflict rather than this.

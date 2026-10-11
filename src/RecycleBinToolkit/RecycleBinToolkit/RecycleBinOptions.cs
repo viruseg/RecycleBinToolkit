@@ -92,12 +92,13 @@ public sealed class RecycleBinOptions
     /// <see cref="RestoreDirectoryConflict.Error"/> refuses in <see cref="RecycleBinRestoreResult.Failures"/>
     /// as well. No single item raises.
     /// <para>
-    /// A merge reports a conflict per file it settles rather than per entry: one
-    /// <see cref="RecycleRestoreConflictAction.MergedSkipped"/> for the directory under
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, and one record per overwritten or renamed file
-    /// under the other two. None of the three reaches a failure stage <em>of its own</em> — a file of the
-    /// tree the filesystem would not take, and a payload or a record that would not go afterwards, are
-    /// reported at <see cref="RecycleFailureStage.RestoreFailed"/> like any other refused move.
+    /// A merge reports a conflict per file it settled rather than per entry — which under
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> is one record for the whole tree however many files
+    /// gave way, since each of those is an entry in the bin rather than a record — and one record per
+    /// overwritten or renamed file under the other two. None of the three reaches a failure stage
+    /// <em>of its own</em> — a file of the tree the filesystem would not take, and a payload or a record
+    /// that would not go afterwards, are reported at
+    /// <see cref="RecycleFailureStage.RestoreFailed"/> like any other refused move.
     /// </para>
     /// </remarks>
     public RestoreDirectoryConflict DirectoryConflict { get; init; } = RestoreDirectoryConflict.MergeSkip;

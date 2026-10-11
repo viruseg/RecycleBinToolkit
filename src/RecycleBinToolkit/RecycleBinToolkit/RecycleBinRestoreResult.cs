@@ -136,6 +136,13 @@ public sealed class RecycleBinRestoreResult
     /// even that could not be done the payload is left whole and the directory's own entry is still in the
     /// bin with it inside.
     /// </para>
+    /// <para>
+    /// A file that refused both — the move, and then the put-back that would have taken it out of the
+    /// payload — accounts for <b>two</b> records under its own path, and the directory accounts for a third
+    /// under its own. Each is a separate refusal with its own code, which is why collapsing them would hide
+    /// the one that stopped the payload from being deleted. A caller that wants one failure per file groups
+    /// by path; a caller that reads the list as events is reading it as it was written.
+    /// </para>
     /// </remarks>
     public IReadOnlyList<RecycleFailure> Failures { get; }
 
@@ -162,7 +169,8 @@ public sealed class RecycleBinRestoreResult
     /// <remarks>
     /// Failures decide it, and conflicts do not: an item left in the Recycle Bin by
     /// <see cref="RestoreFileConflict.Skip"/> is an answer the caller asked for, not a failure to report
-    /// it as one. So an item that was skipped leaves this <see langword="true"/>.
+    /// it as one. So a skipped item does not make this <see langword="false"/> — it is one answer among the
+    /// others, and another entry's failure still is.
     /// </remarks>
     public bool Succeeded => Failures.Count == 0;
 

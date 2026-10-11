@@ -890,12 +890,18 @@ internal static class RestoreRunner
         /// is carried with the code it raised.
         /// </summary>
         /// <remarks>
-        /// Distinct from <see cref="Refused"/> in that nothing was in the way and nothing was chosen: this is
-        /// what a payload deleted since the listing, a destination holding the other kind under a policy that
-        /// asked to overwrite it, and a record that cannot be read all arrive as. The stage is the same either
+        /// Distinct from <see cref="Refused"/> in that no policy turned an occupied path into this: what
+        /// arrives here is a payload deleted since the listing, a destination holding the other kind under a
+        /// policy that asked to overwrite it, and a record that cannot be read. The stage is the same either
         /// way — <see cref="RecycleFailureStage.RestoreFailed"/> is where a restore that did not happen is
         /// reported, and <see cref="RecycleFailureStage.RestoreConflictRefused"/> is where a conflict the
         /// caller asked to be told about is.
+        /// <para>
+        /// A merge that could not finish lands here too, and is the one case where something <em>was</em>
+        /// in the way: it settles what it can and then cannot deal with one file, its payload or its record,
+        /// and its conflicts travel beside it in <see cref="RestoreOutcome.MergeConflicts"/> rather than
+        /// being lost.
+        /// </para>
         /// </remarks>
         Failed
     }
@@ -943,8 +949,10 @@ internal static class RestoreRunner
         /// </summary>
         /// <remarks>
         /// Carried beside the slot rather than being one of them, because one entry can settle any number of
-        /// files — a tree of ninety collisions is ninety conflicts and one outcome — and a slot per file would
-        /// have to be indexed by something the caller's list does not have.
+        /// files — a tree of ninety collisions is one conflict under
+        /// <see cref="RestoreDirectoryConflict.MergeSkip"/> and ninety under the other two, against one
+        /// outcome either way — and a slot per file would have to be indexed by something the caller's list
+        /// does not have.
         /// </remarks>
         internal IReadOnlyList<RecycleRestoreConflict>? MergeConflicts { get; init; }
 

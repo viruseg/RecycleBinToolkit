@@ -105,10 +105,13 @@ public enum RestoreDirectoryConflict
     /// well as a conflict.
     /// </summary>
     /// <remarks>
-    /// The whole difference from <see cref="Skip"/> is that one line of the answer: the operation carries
-    /// on with the next item either way, but <see cref="RecycleBinRestoreResult.Succeeded"/> is
-    /// <see langword="false"/> here and <see langword="true"/> there. Use it for a caller that treats an
-    /// occupied path as something to be told about rather than as an outcome to proceed from.
+    /// The whole difference from <see cref="Skip"/> is one entry in
+    /// <see cref="RecycleBinRestoreResult.Failures"/> — the conflict is reported either way, and what is
+    /// reported is the same one. <see cref="RecycleBinRestoreResult.Succeeded"/> follows that list, so it
+    /// reads <see langword="false"/> here and <see langword="true"/> there <em>for a restore that did
+    /// nothing else wrong</em>: a record that could not be read, or a payload that would not move, fails one
+    /// under <see cref="Skip"/> as well. Use this for a caller that treats an occupied path as something to
+    /// be told about rather than as an outcome to proceed from.
     /// </remarks>
     Error
 }
@@ -154,9 +157,12 @@ public enum RestoreFileConflict
     /// well as a conflict.
     /// </summary>
     /// <remarks>
-    /// The whole difference from <see cref="Skip"/> is that one line of the answer: the operation carries
-    /// on with the next item either way, but <see cref="RecycleBinRestoreResult.Succeeded"/> is
-    /// <see langword="false"/> here and <see langword="true"/> there.
+    /// The whole difference from <see cref="Skip"/> is one entry in
+    /// <see cref="RecycleBinRestoreResult.Failures"/> — the conflict is reported either way, and what is
+    /// reported is the same one. <see cref="RecycleBinRestoreResult.Succeeded"/> follows that list, so it
+    /// reads <see langword="false"/> here and <see langword="true"/> there <em>for a restore that did
+    /// nothing else wrong</em>: a record that could not be read, or a payload that would not move, fails one
+    /// under <see cref="Skip"/> as well.
     /// </remarks>
     Error
 }
