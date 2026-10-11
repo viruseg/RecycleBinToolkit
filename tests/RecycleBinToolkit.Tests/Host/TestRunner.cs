@@ -23,15 +23,17 @@ internal sealed class TestRunner
     /// <c>--scratch &lt;root&gt;</c> names the volume every case works on and is required. <c>--load</c>
     /// selects the load group; without it, the regular group is selected. <c>--all</c> and no arguments
     /// select every regular case, <c>--filter &lt;substring&gt;</c> narrows whichever group was selected to
-    /// the cases whose name contains the substring. The groups never overlap: no argument other than
+    /// the cases whose name contains the substring, and <c>--exclude &lt;substring&gt;</c> takes the cases
+    /// whose name contains it back out of that selection. The groups never overlap: no argument other than
     /// <c>--load</c> runs a load case.
     /// </param>
-    /// <param name="cases">All known cases; grouping and filtering both happen inside the runner.</param>
+    /// <param name="cases">All known cases; grouping, filtering and exclusion all happen inside the runner.</param>
     /// <returns>
     /// 0 when at least one case ran and passed. 1 when one failed, when the selection was empty, or
     /// when every selected case was skipped -- a run that produced no coverage is not a green run.
-    /// 2 when <c>--scratch</c> was left out or was given no root, or when <c>--filter</c> was given
-    /// nothing to match.
+    /// 2 when <c>--scratch</c> was left out or was given no root, when <c>--filter</c> or
+    /// <c>--exclude</c> was given nothing to match, or when <c>--exclude</c> was given no
+    /// <c>--all</c>, <c>--filter</c> or <c>--load</c> to narrow.
     /// </returns>
     internal static async Task<int> RunAsync(string[] args, IReadOnlyList<TestCase> cases)
     {
@@ -68,6 +70,26 @@ internal sealed class TestRunner
 
         var group = SelectGroup(args);
 
+        if (!TryParseExclude(args, out var exclude, out var excludeProblem))
+        {
+            Console.Error.WriteLine(
+                "--exclude takes the substring a test name must NOT contain, such as --all --exclude EmptySuite " +
+                "or --filter Restore -x Long, so a run that must not empty the Recycle Bin can say so. A flag " +
+                "after it is read as a missing substring rather than as one, and so is an --exclude with nothing " +
+                "after it at all -- an exclusion that quietly keeps every case is a run nobody asked for.");
+            Console.Error.WriteLine($"        {excludeProblem}");
+            return 2;
+        }
+
+        if (exclude is not null && !NamesWhatItRuns(args, group, filter))
+        {
+            Console.Error.WriteLine(
+                "--exclude takes cases out of a run that --all, --filter or --load named, so pass one of them beside " +
+                "it. On its own it would rewrite the default run -- which is every regular case -- rather than narrow " +
+                "a selection somebody made.");
+            return 2;
+        }
+
         // The run's own directory is claimed from here on, so everything below runs inside the try whose
         // finally removes it — including the empty-selection return, which is an exit path like any other.
         // A claim is created in the volume root, and one left there is a directory this suite made that
@@ -76,17 +98,18 @@ internal sealed class TestRunner
         {
             ScratchWorkspace.Configure(scratchRoot);
 
-            var selected = Select(cases, group, filter);
+            var selected = Select(cases, group, filter, exclude);
 
             if (selected.Length == 0)
             {
-                Console.Error.WriteLine(DescribeEmptySelection(cases, group, filter));
+                Console.Error.WriteLine(DescribeEmptySelection(cases, group, filter, exclude));
                 return 1;
             }
 
             Console.WriteLine($"scratch root {ScratchWorkspace.RunRoot}");
             Console.WriteLine($"running {selected.Length} of {cases.Count} test(s)");
 
+            DescribeExcluded(cases, group, filter, exclude);
             DescribeDeferred(cases, group, filter);
 
             Console.WriteLine();
@@ -187,7 +210,8 @@ internal sealed class TestRunner
     /// Left out silently, a case reads as "everything passed" — which is exactly the wrong conclusion to
     /// draw about a case nobody asked for, and it is the only way to tell afterwards that a run never
     /// reached it. Only the regular run reports a deferral: the load group is asked for by name, so what
-    /// it leaves out is the caller's own choice rather than a group nobody was offered.
+    /// it leaves out is the caller's own choice rather than a group nobody was offered. An exclusion is
+    /// not applied to this count either, for the reason <see cref="DescribeEmptySelection"/> gives.
     /// </remarks>
     private static void DescribeDeferred(IReadOnlyList<TestCase> cases, TestKind kind, string? filter)
     {
@@ -203,7 +227,7 @@ internal sealed class TestRunner
                 continue;
             }
 
-            var deferred = Select(cases, group, filter).Length;
+            var deferred = Select(cases, group, filter, exclude: null).Length;
             if (deferred > 0)
             {
                 Console.WriteLine($"        {deferred} {Name(group)} test(s) match and are not part of this run; {Advice(group)}");
@@ -211,21 +235,58 @@ internal sealed class TestRunner
         }
     }
 
-    private static TestCase[] Select(IReadOnlyList<TestCase> cases, TestKind kind, string? filter) =>
-        [.. cases.Where(c => c.Kind == kind && (filter is null || c.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)))];
+    /// <summary>
+    /// Names the cases the exclusion took out of the group this run selected.
+    /// </summary>
+    /// <remarks>
+    /// A count lower than the one <c>--all</c> promises reads as something having been skipped when nothing
+    /// was: those cases were never selected, and this is the only line that says which substring left them out.
+    /// It is written even when the substring matched nothing, which is what tells a reader the name was wrong
+    /// rather than that the flag did nothing.
+    /// </remarks>
+    private static void DescribeExcluded(IReadOnlyList<TestCase> cases, TestKind kind, string? filter, string? exclude)
+    {
+        if (exclude is null)
+        {
+            return;
+        }
 
-    private static string DescribeEmptySelection(IReadOnlyList<TestCase> cases, TestKind kind, string? filter)
+        var excluded = Select(cases, kind, filter, exclude: null).Length - Select(cases, kind, filter, exclude).Length;
+        Console.WriteLine($"        {excluded} {Name(kind)} test(s) are left out because the name contains '{exclude}'");
+    }
+
+    private static TestCase[] Select(IReadOnlyList<TestCase> cases, TestKind kind, string? filter, string? exclude) =>
+        [.. cases.Where(c => c.Kind == kind
+            && (filter is null || c.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+            && (exclude is null || !c.Name.Contains(exclude, StringComparison.OrdinalIgnoreCase)))];
+
+    /// <summary>
+    /// Whether the command line named which cases to run, which is the only thing an exclusion can narrow.
+    /// </summary>
+    private static bool NamesWhatItRuns(string[] args, TestKind group, string? filter) =>
+        args.Contains("--all", StringComparer.Ordinal) || filter is not null || group is TestKind.Load;
+
+    private static string DescribeEmptySelection(IReadOnlyList<TestCase> cases, TestKind kind, string? filter, string? exclude)
     {
         if (filter is null)
         {
-            return kind is TestKind.Regular
-                ? "no test cases registered"
-                : $"no {Name(kind)} test cases registered";
+            if (exclude is null)
+            {
+                return kind is TestKind.Regular
+                    ? "no test cases registered"
+                    : $"no {Name(kind)} test cases registered";
+            }
+
+            // Every case in the group was excluded, which is a statement about the substring rather than an
+            // empty suite -- and "no test cases registered" sends the reader looking for a registration that
+            // is there.
+            return $"'--exclude {exclude}' leaves no {Name(kind)} test case to run";
         }
 
         // A filter that names only a group this run did not ask for is the likeliest reason for an empty
         // selection, and "no test case matches" sends the reader hunting for a typo in the name instead of
-        // for the argument that would have run them.
+        // for the argument that would have run them. The exclusion is not applied to that count: those cases
+        // belong to a group this run did not select, and the advice below is about running that group whole.
         foreach (var group in Groups)
         {
             if (group == kind)
@@ -233,7 +294,7 @@ internal sealed class TestRunner
                 continue;
             }
 
-            var deferred = Select(cases, group, filter).Length;
+            var deferred = Select(cases, group, filter, exclude: null).Length;
 
             if (deferred == 0)
             {
@@ -245,7 +306,9 @@ internal sealed class TestRunner
                 : $"'{filter}' matches {deferred} {Name(group)} test(s); pass {Flag(group)} to run them";
         }
 
-        return $"no test case matches '{filter}'";
+        return exclude is null
+            ? $"no test case matches '{filter}'"
+            : $"no test case matches '{filter}' outside '{exclude}'";
     }
 
     /// <summary>
@@ -346,18 +409,36 @@ internal sealed class TestRunner
     /// would run the whole regular group: a narrowing flag that quietly does not narrow is a run nobody
     /// asked for, and reading a report off it afterwards says nothing about what was tested.
     /// </returns>
-    private static bool TryParseFilter(string[] args, out string? filter, out string problem)
+    private static bool TryParseFilter(string[] args, out string? filter, out string problem) =>
+        TryParseSubstring(args, ["--filter", "-f"], out filter, out problem);
+
+    /// <summary>
+    /// Reads the <c>--exclude</c> substring, refusing exactly the command lines <c>--filter</c> refuses.
+    /// </summary>
+    private static bool TryParseExclude(string[] args, out string? exclude, out string problem) =>
+        TryParseSubstring(args, ["--exclude", "-x"], out exclude, out problem);
+
+    /// <summary>
+    /// Reads the substring a name-matching flag was given, under the one rule both of them follow.
+    /// </summary>
+    /// <returns>
+    /// <see langword="false"/> when the flag has nothing usable after it. Returning null instead leaves the
+    /// flag a no-op, and a flag that quietly keeps every case is the same run nobody asked for as one that
+    /// quietly runs them all.
+    /// </returns>
+    private static bool TryParseSubstring(string[] args, string[] flags, out string? substring, out string problem)
     {
-        filter = null;
+        substring = null;
         problem = string.Empty;
 
         for (var i = 0; i < args.Length; i++)
         {
-            if (args[i] is not ("--filter" or "-f"))
+            if (!flags.Contains(args[i], StringComparer.Ordinal))
             {
                 continue;
             }
 
+            var name = args[i];
             var value = i + 1 < args.Length ? args[i + 1] : null;
 
             // The same rule --scratch follows: a flag is not a substring. Taking the next token
@@ -366,13 +447,13 @@ internal sealed class TestRunner
             if (string.IsNullOrWhiteSpace(value) || value.StartsWith('-'))
             {
                 problem = value is null
-                    ? "--filter is the last thing on the command line, so it has no substring to match."
-                    : $"--filter is followed by \"{value}\", which is a flag rather than a substring to match.";
+                    ? $"{name} is the last thing on the command line, so it has no substring to match."
+                    : $"{name} is followed by \"{value}\", which is a flag rather than a substring to match.";
 
                 return false;
             }
 
-            filter = value;
+            substring = value;
             return true;
         }
 

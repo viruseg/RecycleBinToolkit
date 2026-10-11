@@ -61,10 +61,16 @@ names only load cases fails with a message naming them and telling the reader to
 flag cannot be worked around by accident. A `--backend` on the command line is refused with exit 2: the
 flag chose which path a run measured, and there is one path now.
 
-There are 163 registered cases, of which four are load cases, so `--all` runs 159 of them. The rest is
+`--exclude <substring>` (or `-x`) takes the cases whose name contains the substring back out of the run,
+which is how a run says it must not empty the Recycle Bin: `--all --exclude EmptySuite`. It narrows the
+group the run selected, so it composes with `--filter`, and it needs `--all`, `--filter` or `--load` to
+do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
+under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
+
+There are 200 registered cases, of which four are load cases, so `--all` runs 196 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
-cases that recycle one and runs the cases that are about a volume with no bin. Measured on a volume
-with a bin: **149 pass and 10 skip**, with nothing failing. A volume with no bin and a share are both
+cases that recycle one and runs the cases that are about a volume with no bin. Measured on `D:`, which
+has a bin: **186 pass and 10 skip**, with nothing failing. A volume with no bin and a share are both
 unmeasured here: measure before quoting either. `--all` prints the counts, so a count in a document
 that disagrees with them is the document being wrong.
 

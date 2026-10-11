@@ -1146,6 +1146,7 @@ Stated plainly, because these are properties of Windows rather than choices.
 
 ```bash
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --all
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --all --exclude EmptySuite
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --filter NativeBinSuite
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --load
 ```
@@ -1166,13 +1167,21 @@ both ordinary assertions rather than something a case acts on.
 `--filter` matches any part of a case name, and every case is named `<Suite>.<Case>`. It exits
 non-zero when a case fails.
 
+`--exclude` (or `-x`) matches any part of a case name the same way and takes those cases back out of
+the run, which is how a run says it must not empty the Recycle Bin: `--all --exclude EmptySuite`. It
+narrows a run that `--all`, `--filter` or `--load` named, and on its own it is refused with exit code 2
+rather than quietly rewriting the default one. A flag where a substring belongs is refused here as it
+is under `--filter`, so `--exclude --load` is a mistake rather than a substring matching nothing. The
+run's opening lines name how many cases the substring left out, so a count lower than the one `--all`
+promises can be read as an exclusion rather than as something that skipped.
+
 `--scratch` accepts any volume. Some cases need one Windows records as recycling, which it writes under
 `HKCU\...\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete=0` when "Don't move files to the Recycle Bin" is
 clear for that drive; a volume with no such key is answered `Indeterminate` — refused by the default
 `NoRecycleBinAction.Throw`. The run asks the library once which kind of volume it was given, and each
 case that needs the other kind skips rather than fails.
 
-The suite is a console application with no external packages: 163 cases covering batch and single-path
+The suite is a console application with no external packages: 200 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock, long
 paths with no limit, concurrent callers, directories, 10 MB files, volumes with no Recycle Bin, and a
 ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing, emptying and status checking are
@@ -1180,12 +1189,12 @@ covered by their own suites. The default run writes only inside the directory it
 `--scratch`. On a volume with no Recycle Bin the cases that recycle there skip rather than fail, and
 the cases that are about such a volume run instead of skipping.
 
-**Of the 163 cases, `--all` runs 159.** Four are load cases that run only on request: the ten-cycle stress
+**Of the 200 cases, `--all` runs 196.** Four are load cases that run only on request: the ten-cycle stress
 run, and the three cases that each move the whole 94-file fixture set in one call.
 `--all` and `--filter` never run them — `--load` runs those four cases and nothing else. Nothing is
 covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
 and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
-The remainder is the volume's decision rather than a flag's: 149 pass and 10 skip where there is a bin,
+The remainder is the volume's decision rather than a flag's: 186 pass and 10 skip where there is a bin,
 and nothing fails.
 
 **A share has to survive your command line.** `--scratch "\\server\share\"` is right in PowerShell and in
@@ -1216,7 +1225,8 @@ reads deliberately.
 
 `EmptySuite` empties the volume it runs against. It is the one suite that changes machine state rather
 than only reading it, and on a Recycle Bin holding tens of thousands of entries it will take a long
-time, because emptying that many files is file deletion.
+time, because emptying that many files is file deletion. A run that must not do that says so on the
+command line: `--all --exclude EmptySuite`.
 
 ## Contributing
 
