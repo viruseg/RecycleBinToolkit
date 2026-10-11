@@ -178,11 +178,17 @@ internal static class RestoreRunner
         HashSet<RecycleBinItem> settled,
         int position)
     {
+        // Hoisted so that a refusal on the way to a decision can still be reported against the path the entry
+        // came from. Reading the record and deciding where to put it are one try because one of them being the
+        // thing that raises is not worth the caller losing the other's answer, but only the record read leaves
+        // this null, and null is what says there was no path to name.
+        string? originalPath = null;
+
         RestoreDecision decision;
 
         try
         {
-            var originalPath = item.OriginalPath;
+            originalPath = item.OriginalPath;
 
             // Answered before the destination is looked at, which is the only order in which the answer is the
             // truth: the first of two identical entries has already been answered by the time the second is
@@ -198,10 +204,11 @@ internal static class RestoreRunner
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            // Nothing was placed and there is no path to report it at: a record that cannot be read is the one
-            // thing an entry needs to say where it came from, and its own $I path is the only path an entry
-            // carries without reading one.
-            slots[position] = Failed(item.IndexPath, item.Size, ex.HResult, attempts: 0);
+            // Nothing was placed, and the path named is the one the entry came from — which the planner never
+            // got to use and the caller needs to see. Only a record that could not be read leaves nothing to
+            // name, because that record is the one thing saying where the entry was deleted from, and its own
+            // $I path is what is left.
+            slots[position] = Failed(originalPath ?? item.IndexPath, item.Size, ex.HResult, attempts: 0);
             return;
         }
 
@@ -251,7 +258,7 @@ internal static class RestoreRunner
     /// An entry that did not come back, under the path it is to be reported at and the code the filesystem
     /// gave for it.
     /// </summary>
-    /// <param name="path">The path the failure names: the destination where there was one, and the entry's own record otherwise.</param>
+    /// <param name="path">The path the failure names: where the entry was to land, or — where nothing could be read about where it came from — its own record.</param>
     /// <param name="size">The bytes the entry carries, as its record measured them.</param>
     /// <param name="hResult">The code the filesystem raised, or <c>0</c> where nothing was asked of it.</param>
     /// <param name="attempts">How many times the payload was put down for this entry before it was given up on.</param>
@@ -470,8 +477,9 @@ internal static class RestoreRunner
     /// The path the entry is to be reported at: where it landed, or — for an entry that was not moved — the
     /// path that was in its way. The two are one string for every kind but
     /// <see cref="RestoreOutcomeKind.RestoredRenamed"/>, because the planner lands every other action on the
-    /// path the entry asked for. A failure names the path the action would have used, except for a record
-    /// that could not be read: that leaves nothing to name but the entry's own record inside the Recycle Bin.
+    /// path the entry asked for. A failure names the path the action would have used, which is the path the
+    /// entry came from; where that could not be read there is no such path to name, and the entry's own record
+    /// inside the Recycle Bin is named instead.
     /// </param>
     /// <param name="Size">The bytes the entry carries back, as its own record measured them.</param>
     private readonly record struct RestoreOutcome(RestoreOutcomeKind Kind, string Path, long Size)

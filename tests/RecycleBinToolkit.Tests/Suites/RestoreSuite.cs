@@ -1215,12 +1215,13 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// What <see cref="File.Move(string, string, bool)"/> does when its destination is a directory was measured
-    /// on this machine rather than assumed, and it is not an overwrite: it raises
+    /// here rather than assumed, and on this machine it is not an overwrite: it raises
     /// <see cref="UnauthorizedAccessException"/> with <c>0x80070005</c> — the same refusal for an empty
     /// directory as for a full one — and leaves the source, the destination and everything inside it untouched.
-    /// That is why the case asserts a reported failure and an untouched disk rather than a replaced path, and
-    /// why the code is checked for its severity bit and not against a constant: which refusal Windows raises
-    /// is a property of Windows, and what this library owes is that the refusal is reported.
+    /// The case asserts a reported failure and an untouched disk because that is what the call did here, and
+    /// the code is checked for its severity bit rather than against that constant: the constant is what this
+    /// machine raised on the day, and what the library owes is that whatever the filesystem raises is reported.
+    /// A Windows that raised something else would raise it from the same place.
     /// <para>
     /// <see cref="UnauthorizedAccessException"/> is not an <see cref="IOException"/>, which is the reason the
     /// catch around a move lists it separately: a filter naming <see cref="IOException"/> alone would let this
