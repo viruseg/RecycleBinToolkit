@@ -130,8 +130,8 @@ public sealed class RecycleBinRestoreResult
     /// except where the payload had already moved and only its record was left, and then the file is
     /// already on disk and the next attempt finds a conflict instead.
     /// <para>
-    /// A merge reports one of these per file of its tree that the filesystem would not take, under that
-    /// file's own path rather than the directory's, alongside the directory's own outcome. Such a file is
+    /// A merge reports a refusal of a file of its tree under that file's own path rather than the
+    /// directory's, alongside the directory's own outcome. Such a file is
     /// put back into the Recycle Bin with a record of its own, so it is there as an entry of its own; where
     /// even that could not be done the payload is left whole and the directory's own entry is still in the
     /// bin with it inside.

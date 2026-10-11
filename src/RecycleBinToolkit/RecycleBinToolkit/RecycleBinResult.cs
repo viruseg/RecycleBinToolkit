@@ -70,7 +70,6 @@ public enum RecycleFailureStage
     /// <remarks>
     /// While a directory is being merged, a file of its tree that could not be dealt with reaches this stage
     /// under that file's own path; the directory itself reaches it only when the merge could not finish.
-    /// A merge that deals with every file of its tree does not reach it at all.
     /// <para>
     /// <b>Once for the file, and once more for the directory, is not the whole count.</b> A file whose move
     /// was refused can be refused a second time — the put-back that would have taken it out of the payload
