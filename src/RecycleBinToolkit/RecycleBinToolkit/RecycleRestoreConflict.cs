@@ -17,31 +17,42 @@ public enum RecycleRestoreConflictAction
     /// The item was set down beside the occupied path under a free name rather than at the path that was
     /// occupied.
     /// </summary>
+    /// <remarks>
+    /// Whether that item was a file or a directory is
+    /// <see cref="RecycleRestoreConflict.OccupiedByDirectory"/>'s answer rather than this one's: a
+    /// directory set down whole under a free name and a file set down beside its collided path are the same
+    /// event to a caller reading the result.
+    /// </remarks>
     RestoredRenamed,
 
     /// <summary>
-    /// The directory was merged, and the files of the same name that were already there were left as they
-    /// were.
+    /// A merge left the file that was in the way alone: the incoming file did not fit and went back into
+    /// the Recycle Bin as an entry of its own.
     /// </summary>
     /// <remarks>
-    /// One record for the directory rather than one for each file that gave way, because nothing about
-    /// those files was resolved: they went back into the Recycle Bin as entries of their own and are
-    /// ordinary items in the next listing. The directory itself was restored, so
-    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/> names it.
+    /// Under <see cref="RestoreDirectoryConflict.MergeSkip"/> this is one record for the directory rather
+    /// than one for each file that gave way, because nothing about those files was resolved — each is an
+    /// ordinary item in the next listing. The directory itself was restored, so
+    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/> names it, and
+    /// <see cref="RecycleRestoreConflict.Path"/> is that directory's path.
     /// </remarks>
-    DirectoryMergedSkip,
+    MergedSkipped,
 
-    /// <summary>The directory was merged, and each file of the same name was overwritten.</summary>
-    DirectoryMergedReplace,
+    /// <summary>A merge overwrote the file that was in the way.</summary>
+    /// <remarks>
+    /// One record per file that was overwritten, under
+    /// <see cref="RestoreDirectoryConflict.MergeReplace"/>, and
+    /// <see cref="RecycleRestoreConflict.Path"/> is the path it was overwritten at.
+    /// </remarks>
+    MergedReplaced,
 
-    /// <summary>
-    /// The directory was merged, and each incoming file that clashed was set down under a free name of its
-    /// own.
-    /// </summary>
-    DirectoryMergedRename,
-
-    /// <summary>The whole directory was set down beside the occupied one under a free name.</summary>
-    DirectoryRenamed
+    /// <summary>A merge set the incoming file down under a free name.</summary>
+    /// <remarks>
+    /// One record per file that was renamed, under <see cref="RestoreDirectoryConflict.MergeRename"/>, and
+    /// <see cref="RecycleRestoreConflict.Path"/> is where that file ended up rather than where it
+    /// collided.
+    /// </remarks>
+    MergedRenamed
 }
 
 /// <summary>
@@ -54,7 +65,10 @@ public enum RecycleRestoreConflictAction
 public sealed class RecycleRestoreConflict
 {
     /// <summary>Creates a conflict record.</summary>
-    /// <param name="path">The path that was already occupied, in full.</param>
+    /// <param name="path">
+    /// The path the conflict is about, in full — the path that was occupied, except under
+    /// <see cref="RecycleRestoreConflictAction.MergedRenamed"/>, where it is where the file landed.
+    /// </param>
     /// <param name="occupiedByDirectory">Whether what occupies <paramref name="path"/> is a directory.</param>
     /// <param name="action">What was done about the item that wanted that path.</param>
     public RecycleRestoreConflict(string path, bool occupiedByDirectory, RecycleRestoreConflictAction action)
@@ -64,14 +78,17 @@ public sealed class RecycleRestoreConflict
         Action = action;
     }
 
-    /// <summary>
-    /// The path that was already occupied, in full.
-    /// </summary>
+    /// <summary>The path the conflict is about, in full.</summary>
     /// <remarks>
-    /// The path the item wanted, not the one it may have landed on: a renamed item's new path is in
-    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/>, and what was in the way is only here. It is
-    /// the path the caller would find on disk when they look, which is why it is worth reporting even for
-    /// the conflicts that were resolved.
+    /// For every action but one that is the path that was already occupied: the path the item wanted, and
+    /// the one a caller finds on disk when they look, which is why it is worth reporting even for the
+    /// conflicts that were resolved. A renamed item's new path is in
+    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/> rather than here.
+    /// <para>
+    /// <see cref="RecycleRestoreConflictAction.MergedRenamed"/> is the exception, and the record is the
+    /// reason to read it carefully: the merge set that file somewhere else on purpose, so this is where it
+    /// ended up and not where it collided. The path it collided at is named by no record in this result.
+    /// </para>
     /// </remarks>
     public string Path { get; }
 

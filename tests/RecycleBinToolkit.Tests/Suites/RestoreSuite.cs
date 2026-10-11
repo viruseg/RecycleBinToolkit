@@ -50,6 +50,16 @@ internal static class RestoreSuite
         Check.Equal(11, (int)RecycleFailureStage.RestoreConflictRefused, "RestoreConflictRefused follows it");
 
         var conflict = new RecycleRestoreConflict("b", true, RecycleRestoreConflictAction.Skipped);
+        Check.Equal(0, (int)RecycleRestoreConflictAction.Skipped, "Skipped keeps number 0");
+        Check.Equal(1, (int)RecycleRestoreConflictAction.RestoredRenamed, "RestoredRenamed takes number 1");
+        Check.Equal(2, (int)RecycleRestoreConflictAction.MergedSkipped, "MergedSkipped takes number 2");
+        Check.Equal(3, (int)RecycleRestoreConflictAction.MergedReplaced, "MergedReplaced takes number 3");
+        Check.Equal(4, (int)RecycleRestoreConflictAction.MergedRenamed, "MergedRenamed takes number 4");
+        Check.Equal(
+            5,
+            Enum.GetValues<RecycleRestoreConflictAction>().Length,
+            "five actions, so a value that only described a directory's merge cannot come back under a borrowed name");
+
         var result = new RecycleBinRestoreResult(["a"], [conflict], [], 1, 42, TimeSpan.FromMilliseconds(3));
         Check.Equal(1, result.ItemsRestored, "one item restored");
         Check.Equal(42, result.RestoredSize, "its bytes");

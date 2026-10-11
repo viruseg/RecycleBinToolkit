@@ -53,8 +53,10 @@ public sealed class RecycleBinRestoreResult
     /// <para>
     /// An item the caller handed in that was skipped is not here — it is in <see cref="Conflicts"/> under
     /// <see cref="RecycleRestoreConflictAction.Skipped"/>. A file that was inside a directory is not such
-    /// an item: the directory carries its own conflict record, and a file of its tree that gave way has no
-    /// record of its own anywhere in this result.
+    /// an item: under <see cref="RestoreDirectoryConflict.MergeSkip"/> the directory carries its own
+    /// conflict record and a file of its tree that gave way has no record of its own anywhere in this
+    /// result. The merging policies that settle each file are the exception — they answer in
+    /// <see cref="Conflicts"/> one record per file, and the directory is in here.
     /// </para>
     /// </remarks>
     public IReadOnlyList<string> RestoredPaths { get; }
