@@ -210,18 +210,27 @@ internal static class RestoreRunner
     /// entry that is not going to be placed from leaving a folder tree behind: nothing reaches this method
     /// unless the entry is being put down.
     /// </para>
+    /// <para>
+    /// One path is resolved once, without its trailing separator, and both the folder taken off it and the
+    /// move itself are given that. A record written from a path a caller spelled as a directory carries
+    /// the separator, and it is read as the same name by everything here rather than by half of it.
+    /// </para>
     /// </remarks>
     private static void Place(RecycleBinItem item, string targetPath, bool overwrite = false)
     {
-        CreateTheParentFolder(targetPath);
+        // The one place a destination is resolved, so the folder made below and the move onto it cannot answer
+        // about two different names of the same place.
+        var destination = Path.TrimEndingDirectorySeparator(targetPath);
+
+        CreateTheParentFolder(destination);
 
         if (item.IsDirectory)
         {
-            Directory.Move(item.PayloadPath, targetPath);
+            Directory.Move(item.PayloadPath, destination);
         }
         else
         {
-            File.Move(item.PayloadPath, targetPath, overwrite);
+            File.Move(item.PayloadPath, destination, overwrite);
         }
 
         // Payload first, record second, for the reason this class is documented with.
@@ -231,22 +240,17 @@ internal static class RestoreRunner
     /// <summary>
     /// Creates whatever is missing of the chain of folders ending at the parent of <paramref name="path"/>.
     /// </summary>
-    /// <param name="path">The path a payload is about to land at.</param>
+    /// <param name="path">The path a payload is about to land at, without a trailing separator.</param>
     /// <remarks>
     /// A record names the path a thing was deleted from and says nothing about the folders on the way to
     /// it. Somebody who empties a folder after deleting from it is the ordinary way of getting one whose
     /// parent is gone, and the whole chain has to be made: a move into a directory that is not there is a
-    /// path that is not there.
-    /// <para>
-    /// A path written as a directory carries a trailing separator, and
-    /// <see cref="Path.GetDirectoryName(string)"/> answers such a path with the directory itself rather
-    /// than its parent — which is the one name this must never create, since the move after it would then
-    /// find its own destination already standing there.
-    /// </para>
+    /// path that is not there. The trimming is the caller's, so that the folder made here and the path
+    /// moved to are two readings of one string rather than of two spellings of one name.
     /// </remarks>
     private static void CreateTheParentFolder(string path)
     {
-        var parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path));
+        var parent = Path.GetDirectoryName(path);
 
         // A path that is a volume root, or one written without any directory part, has no parent to make.
         if (!string.IsNullOrEmpty(parent))

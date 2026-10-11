@@ -19,7 +19,8 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(ATakenFilePathIsRestoredUnderAFreeName), ATakenFilePathIsRestoredUnderAFreeName),
         new TestCase("RestoreSuite." + nameof(ATakenFilePathIsRefusedAsBothAConflictAndAFailure), ATakenFilePathIsRefusedAsBothAConflictAndAFailure),
         new TestCase("RestoreSuite." + nameof(ADirectoryComesBackWithItsTree), ADirectoryComesBackWithItsTree),
-        new TestCase("RestoreSuite." + nameof(ADirectoryComesBackUnderParentsThatAreGone), ADirectoryComesBackUnderParentsThatAreGone)
+        new TestCase("RestoreSuite." + nameof(ADirectoryComesBackUnderParentsThatAreGone), ADirectoryComesBackUnderParentsThatAreGone),
+        new TestCase("RestoreSuite." + nameof(AFileComesBackUnderAParentThatIsGone), AFileComesBackUnderAParentThatIsGone)
     ];
 
     /// <summary>
@@ -895,6 +896,62 @@ internal static class RestoreSuite
         Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
         Check.Equal(1, result.ItemsRestored, "the directory was restored");
         Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(root, "nested", "leaf.bin"))), "the leaf came back, under folders this call made");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the entry has left the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The file half of the same claim: a record names the path a thing was deleted from, and a file
+    /// whose folder has since been emptied by hand lands under a parent this call creates.
+    /// </summary>
+    /// <remarks>
+    /// A file is the shape that needs this case of its own. A directory case cannot stand in for one:
+    /// both go through the same private method, and moving that call inside a branch that only a
+    /// directory takes would leave every case written about directories green while files quietly went
+    /// back to needing a folder someone else makes. The one ordinary file case in the suite restores
+    /// into the scratch root, which is always there, so nothing else in the file held it up either.
+    /// <para>
+    /// The folder is deleted with <see cref="Directory.Delete(string, bool)"/> rather than recursively,
+    /// because by then the file is in the bin and what is left in the folder is nothing — a recursive
+    /// delete would be the same call done more carefully than it needs to be. The assertion right after
+    /// it is what keeps the case from passing for the wrong reason: without it, a folder that was never
+    /// created would be restored into without a parent ever being asked for.
+    /// </para>
+    /// <para>
+    /// The bytes and the count are the two halves of "came back", for the reason the cases above give.
+    /// </para>
+    /// </remarks>
+    private static async Task AFileComesBackUnderAParentThatIsGone(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var folder = Path.Combine(ScratchWorkspace.Root, "taken-away");
+        Directory.CreateDirectory(folder);
+
+        var original = Path.Combine(folder, "leaf.bin");
+        var bytes = RandomBytes(4096);
+        File.WriteAllBytes(original, bytes);
+
+        var baseline = BaselineCount();
+
+        Check.True(await RecycleBin.RecycleAsync(original, cancellationToken: context.CancellationToken), "the file reached the bin");
+
+        Directory.Delete(folder);
+        Check.False(Directory.Exists(folder), "and the folder it was in was taken away afterwards");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            original);
+
+        var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(1, result.ItemsRestored, "the file was restored");
+        Check.True(File.Exists(original), $"and it is back at {original}");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(original)), "byte for byte");
         Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the entry has left the bin");
 
         workspace.Dispose();
