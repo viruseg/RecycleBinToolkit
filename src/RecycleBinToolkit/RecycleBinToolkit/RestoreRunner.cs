@@ -287,11 +287,13 @@ internal static class RestoreRunner
                     Name = "RecycleBinToolkit restore mover"
                 };
 
-                // Assigned before it is started, so that the join below has something to join even when
-                // the start itself is what raises.
-                movers[i] = thread;
-
+                // Assigned only once the thread is running. An unstarted one raises on Join rather than
+                // returning, so a slot filled before the start would turn a failure to start into an
+                // exception out of the join below — which would lose the failure itself and leave the
+                // movers that did start unjoined.
                 thread.Start();
+
+                movers[i] = thread;
             }
 
             FeedVolume(pipeline.Volume, work.Writer, cancellationToken);
@@ -1180,8 +1182,8 @@ internal static class RestoreRunner
     /// </para>
     /// <para>
     /// One volume holds every copy of one entry, because an entry's volume is a prefix of its own record path.
-    /// That is what lets the entries already answered be a per-disk set rather than a per-call one: two equal
-    /// entries are answered in the same volume group, and a volume group belongs to one disk.
+    /// That is what lets the entries already answered be a per-volume set rather than a per-call one: two
+    /// equal entries are answered in the same volume group, and a volume group is one volume's own.
     /// </para>
     /// <para>
     /// A dictionary enumerates in the order its keys were added and nothing here removes one, so the volumes
@@ -1276,7 +1278,7 @@ internal static class RestoreRunner
     }
 
     /// <summary>
-    /// Puts every entry that is ready to be moved into one disk's channel.
+    /// Puts every entry that is ready to be moved into one volume's channel.
     /// </summary>
     /// <param name="writer">The volume's channel.</param>
     /// <param name="reading">
@@ -1670,7 +1672,7 @@ internal sealed class RestoreVolumePipeline
     /// The entries this pipeline has answered, so that a list naming one twice moves it once. Keyed by the
     /// entry's own identity — its <c>$I</c> path — which is one string comparison and reads no record. It
     /// belongs to the volume rather than the call because two equal entries are in the same volume group,
-    /// and to the volume rather than the disk because two volumes of one disk never run together.
+    /// so a volume's own set answers each of them once.
     /// </summary>
     internal ConcurrentDictionary<RecycleBinItem, byte> Settled { get; }
 

@@ -2581,11 +2581,18 @@ internal static class RestoreSuite
     /// whichever volume was run first.
     /// </para>
     /// <para>
-    /// That <c>D:</c> and <c>E:</c> are one disk here is a fact about this machine rather than something the
-    /// run arranges, so the grouping is checked first and by the same guard
-    /// <c>VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot</c> stands in for: a machine where they are not
-    /// one disk would still restore both entries correctly, but it would not be the machine this case is
-    /// about.
+    /// <b>Neither letter is written into this file.</b> The first is the volume <c>--scratch</c> named and
+    /// the second is a letter on the same physical disk, asked of the machine by
+    /// <see cref="RequireASecondVolumeOnTheRunVolume(out char, string)"/>. A case that named <c>D:</c> and
+    /// <c>E:</c> would go red on any other volume — a removable drive and a share are named in
+    /// <c>AGENTS.md</c> as first-class choices for <c>--scratch</c>, and a run on either is a run that must
+    /// be green or skipped and never red for want of the right kind of disk.
+    /// </para>
+    /// <para>
+    /// That the two are one disk here is a fact about this machine rather than something the run
+    /// arranges, so the grouping is checked first: a machine whose volumes are all on disks of their own
+    /// would still restore both entries correctly, but it would not be the machine this case is about, and
+    /// the helper skips rather than pretending.
     /// </para>
     /// </remarks>
     private static async Task TwoVolumesOnOneDiskAreBothAnswered(TestContext context)
@@ -2593,40 +2600,45 @@ internal static class RestoreSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        RequireVolumePresent('D');
-        RequireVolumePresent('E');
+        RequireASecondVolumeOnTheRunVolume(out var second, "two volumes sharing one disk for one group to hold");
 
-        var onD = new RecycleBinItem(
-            Path.Combine(ScratchWorkspace.VolumeRoot, "never-written-on-d.bin"),
-            Path.Combine(ScratchWorkspace.VolumeRoot, "never-written-on-d.payload"),
+        var firstRoot = ScratchWorkspace.VolumeRoot;
+        var secondRoot = second + ":" + Path.DirectorySeparatorChar;
+
+        var onFirst = new RecycleBinItem(
+            Path.Combine(firstRoot, "never-written-on-first.bin"),
+            Path.Combine(firstRoot, "never-written-on-first.payload"),
             0,
             false);
 
-        var onE = new RecycleBinItem(
-            Path.Combine(@"E:\", "never-written-on-e.bin"),
-            Path.Combine(@"E:\", "never-written-on-e.payload"),
+        var onSecond = new RecycleBinItem(
+            Path.Combine(secondRoot, "never-written-on-second.bin"),
+            Path.Combine(secondRoot, "never-written-on-second.payload"),
             0,
             false);
 
-        Check.Equal(@"D:\", onD.VolumeRoot.ToString(), "the first entry's record sits on the run's own volume");
-        Check.Equal(@"E:\", onE.VolumeRoot.ToString(), "and the second's on the other one");
+        Check.Equal(firstRoot, onFirst.VolumeRoot.ToString(), "the first entry's record sits on the run's own volume");
+        Check.Equal(secondRoot, onSecond.VolumeRoot.ToString(), $"and the second's on {secondRoot}");
 
         var groups = RestoreRunner.GroupByPhysicalDisk(
         [
-            new RestoreVolumeWork(@"D:\", []),
-            new RestoreVolumeWork(@"E:\", [])
+            new RestoreVolumeWork(firstRoot, []),
+            new RestoreVolumeWork(secondRoot, [])
         ]);
 
-        Check.Equal(1, groups.Count, "D: and E: are one disk here, so the two volumes are one group");
-        Check.Equal(2, groups[0].Volumes.Count, "holding both of them rather than merging them");
+        Check.Equal(
+            1,
+            groups.Count,
+            $"{firstRoot} and {secondRoot} are one disk here, so the two entries are one group");
+        Check.Equal(2, groups[0].Volumes.Count, "holding both volumes rather than merging them");
 
-        var result = await RecycleBin.RestoreAsync([onD, onE], cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RestoreAsync([onFirst, onSecond], cancellationToken: context.CancellationToken);
 
         Check.Equal(0, result.RestoredPaths.Count, "nothing was put back, because neither record could be read");
         Check.Equal(2, result.Failures.Count, "and both entries are asked about, not just the first volume's");
 
-        Check.Equal(onD.IndexPath, result.Failures[0].Path, "the first entry is reported first");
-        Check.Equal(onE.IndexPath, result.Failures[1].Path, "and the second second, whichever volume ran first");
+        Check.Equal(onFirst.IndexPath, result.Failures[0].Path, "the first entry is reported first");
+        Check.Equal(onSecond.IndexPath, result.Failures[1].Path, "and the second second, whichever volume ran first");
 
         foreach (var failure in result.Failures)
         {
@@ -3172,5 +3184,69 @@ internal static class RestoreSuite
                 $"{root} is not a volume on this machine. This case needs D:, E: and C: all present, "
                 + "to read which physical disk each one sits on");
         }
+    }
+
+    /// <summary>
+    /// A letter naming a second volume on the same physical disk as the one <c>--scratch</c> named, or a skip.
+    /// </summary>
+    /// <param name="letter">Receives that letter, when this returns.</param>
+    /// <param name="because">
+    /// What the case needed a second volume for, as a noun phrase the skip line can carry: it completes
+    /// "This case needs ___".
+    /// </param>
+    /// <remarks>
+    /// Asked of the machine rather than written into the source, for the reason
+    /// <see cref="RequireVolumePresent"/> gives: a letter written into a case is one that goes red on every
+    /// volume but the one it was written for, and <c>AGENTS.md</c> makes every volume a legal answer to
+    /// <c>--scratch</c> — a removable drive and a share both named there as first-class choices. A run on
+    /// either must be green or skipped and never red for want of the right kind of disk.
+    /// <para>
+    /// The run's own letter is excluded by comparison rather than by arithmetic: <c>A:</c> has no
+    /// <c>Z:</c> beside it, and a run on <c>Z:</c> has no <c>Y:</c> behind it either. What the two must
+    /// share is a <see cref="PhysicalDiskKey"/>, so a machine with one volume per disk — and a run on a
+    /// share, which names no disk at all — is skipped rather than answered with a second volume that would
+    /// put the two in different groups and quietly change what the case is about.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="CheckSkippedException">
+    /// The run's volume named no physical disk, or nothing else on this machine shares one with it.
+    /// </exception>
+    private static void RequireASecondVolumeOnTheRunVolume(out char letter, string because)
+    {
+        letter = default;
+
+        if (!PhysicalVolumeDisk.TryIdentify(ScratchWorkspace.VolumeRoot, out var disk))
+        {
+            Check.Skip(
+                $"{ScratchWorkspace.VolumeRoot} named no physical disk, so no second volume can be asked whether "
+                + $"it shares one. This case needs {because}");
+        }
+
+        // The run's own letter, read off the root rather than taken from --scratch on the command line.
+        // A share answers the branch above, so what reaches here is always a drive root.
+        var own = char.ToUpperInvariant(ScratchWorkspace.VolumeRoot[0]);
+
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            var name = drive.Name;
+
+            if (name.Length < 2 || !char.IsLetter(name[0]) || char.ToUpperInvariant(name[0]) == own)
+            {
+                continue;
+            }
+
+            var candidate = char.ToUpperInvariant(name[0]);
+
+            if (PhysicalVolumeDisk.TryIdentify(AbsentVolume.RootOf(candidate), out var found) && found == disk)
+            {
+                letter = candidate;
+
+                return;
+            }
+        }
+
+        Check.Skip(
+            $"{ScratchWorkspace.VolumeRoot} is the only volume on its physical disk on this machine, so there is "
+            + $"no second one for a group to hold. This case needs {because}");
     }
 }
