@@ -32,8 +32,9 @@ public enum RestoreDirectoryConflict
     /// <para>
     /// <b>Not implemented yet.</b> This is the default, and until the merge walk exists a directory whose
     /// path is occupied arrives as a <see cref="RecycleFailureStage.RestoreFailed"/> with its payload and
-    /// record both left in the Recycle Bin. The other three values answer before anything moves and behave
-    /// as documented today.
+    /// record both left in the Recycle Bin, under this value and under the other two <c>Merge*</c> ones.
+    /// <see cref="RenameDirectory"/>, <see cref="Skip"/> and <see cref="Error"/> answer before anything moves
+    /// and behave as documented today.
     /// </para>
     /// </remarks>
     MergeSkip = 0,

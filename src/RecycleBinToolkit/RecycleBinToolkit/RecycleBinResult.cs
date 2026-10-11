@@ -86,9 +86,13 @@ public enum RecycleFailureStage
     /// </summary>
     /// <remarks>
     /// What was in the way was not touched, and the item stays in the Recycle Bin. Every policy other than
-    /// this one arrives in <see cref="RecycleBinRestoreResult.Conflicts"/> alone — including the merging
-    /// ones, and including <see cref="RestoreDirectoryConflict.MergeSkip"/>, which is the default — so the
-    /// result still succeeded and this stage is what a caller opting into <c>Error</c> gets instead.
+    /// this one arrives in <see cref="RecycleBinRestoreResult.Conflicts"/> alone, so the result still
+    /// succeeded and this stage is what a caller opting into <c>Error</c> gets instead.
+    /// <para>
+    /// The one group of policies that reports neither is a directory's three <c>Merge*</c> values, because
+    /// the merge walk is not implemented: a directory onto an occupied directory arrives as a
+    /// <see cref="RestoreFailed"/> and lands in no conflict list at all.
+    /// </para>
     /// </remarks>
     RestoreConflictRefused = 11
 }

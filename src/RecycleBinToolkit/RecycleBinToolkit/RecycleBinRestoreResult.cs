@@ -9,10 +9,10 @@ namespace RecycleBinToolkit;
 /// say which came before which. It is not an index a caller can line up against the input: a list holds
 /// only the items that belong in it, so one item of three may appear in none of the three.
 /// <para>
-    /// Nothing here is undone afterwards: an item that was overwritten, or set down under a free name beside
-    /// what was in its way, stays that way, and this result is the only place that says so. There is no
-    /// rollback.
-    /// </para>
+/// Nothing here is undone afterwards: an item that was overwritten, or set down under a free name beside
+/// what was in its way, stays that way, and this result is the only place that says so. There is no
+/// rollback.
+/// </para>
 /// </remarks>
 public sealed class RecycleBinRestoreResult
 {

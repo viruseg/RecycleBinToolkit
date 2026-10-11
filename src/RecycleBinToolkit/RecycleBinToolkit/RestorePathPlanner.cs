@@ -12,7 +12,10 @@ namespace RecycleBinToolkit;
 /// </remarks>
 internal enum RestoreAction
 {
-    /// <summary>Put the item at the destination path, which is either free or already there to merge into.</summary>
+    /// <summary>
+/// Put the item at the destination path, which is either free or — once a merge exists — already there to
+/// merge into.
+/// </summary>
     Move,
 
     /// <summary>Leave the item in the Recycle Bin and touch nothing on disk.</summary>
@@ -206,6 +209,12 @@ internal static class RestorePathPlanner
     /// occupied, so the answer is the mode's alone; the path is what the caller walks and what
     /// <see cref="WithFreeNumber"/> renames into, not something the policy turns on.
     /// </para>
+    /// <para>
+    /// <b>The walk that would call this does not exist yet.</b> Nothing in production reaches this method —
+    /// a directory onto an occupied directory resolves to <see cref="RestoreAction.Move"/> and the move is
+    /// refused — so what is documented above is the answer this gives, not a policy any restore currently
+    /// applies.
+    /// </para>
     /// </remarks>
     internal static RestoreAction DecideMerged(string destinationPath, RestoreDirectoryConflict mode)
     {
@@ -239,8 +248,9 @@ internal static class RestorePathPlanner
     /// answered by the same branch a same-kind occupant is.
     /// <para>
     /// A destination holding a directory answers <see cref="RestoreAction.Move"/> under every merge mode.
-    /// That is not the same as moving a free directory whole: the tree walk merges into what is there and
-    /// asks <see cref="DecideMerged"/> about each file inside it. A directory is never replaced whole,
+    /// That is not the same as moving a free directory whole: a tree walk is to merge into what is there and
+    /// ask <see cref="DecideMerged"/> about each file inside it, and that walk does not exist yet — so today
+    /// an occupied directory reaches the move and the move refuses. A directory is never replaced whole,
     /// because the only way to replace one is to delete it first and find out afterwards whether the move
     /// was possible at all, and the bytes destroyed by that are the caller's.
     /// </para>
@@ -257,9 +267,9 @@ internal static class RestorePathPlanner
         ArgumentNullException.ThrowIfNull(destinationPath);
         ArgumentNullException.ThrowIfNull(options);
 
-        // The directory first, so a directory occupant — which is the case the merge walk asks about for every
-        // file inside it — is answered by one query. A free path costs both either way, and a path holds
-        // one kind or the other, so the second is only reached when the first found no directory.
+        // The directory first, so a directory occupant — which a merge walk would ask about once for every file
+        // inside it — is answered by one query. A free path costs both either way, and a path holds one kind
+        // or the other, so the second is only reached when the first found no directory.
         var occupiedByDirectory = Directory.Exists(destinationPath);
 
         if (!occupiedByDirectory && !File.Exists(destinationPath))

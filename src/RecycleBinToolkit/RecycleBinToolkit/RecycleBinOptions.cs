@@ -83,7 +83,8 @@ public sealed class RecycleBinOptions
     /// <summary>
     /// What a restore does with a directory whose original path is already occupied. The default is
     /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, which is to merge and leave what is already there
-    /// as it is — <b>not implemented yet</b>, so today a directory onto an occupied directory is a failure.
+    /// as it is — <b>not implemented yet</b>, so under that default a directory onto an occupied directory
+    /// is a failure.
     /// </summary>
     /// <remarks>
     /// It says nothing about <see cref="ThrowOnError"/>: a restore is a batch, so a conflict is data —
