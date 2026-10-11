@@ -23,16 +23,6 @@ internal static class NativeRecycleRunner
     private const double MaxJitterFraction = 0.2;
 
     /// <summary>
-    /// How many names one path is given before a collision is taken to be a real failure.
-    /// </summary>
-    /// <remarks>
-    /// Only a name the filesystem reports as taken counts, and only this many of them: the probability of
-    /// one is about two in a billion, and a refusal that is <em>not</em> a collision — a locked file, a
-    /// denied directory — is reported on its first attempt rather than retried here.
-    /// </remarks>
-    private const int NameAttempts = 3;
-
-    /// <summary>
     /// Moves a batch to the Recycle Bin and reports what happened to each path.
     /// </summary>
     /// <param name="targets">Validated paths, already cleared of volumes that cannot recycle them.</param>
@@ -209,7 +199,7 @@ internal static class NativeRecycleRunner
                 // the write itself.
                 NativeIndexFile.Write(indexPath, target.RecordPath, target.Size, DateTime.UtcNow);
             }
-            catch (IOException ex) when (attempt < NameAttempts && NameCollision.IsTaken(ex))
+            catch (IOException ex) when (attempt < NameCollision.NameAttempts && NameCollision.IsTaken(ex))
             {
                 // The record's name was taken. CreateNew refused rather than overwriting somebody else's
                 // record, which is the check working; a fresh name is the answer, and generating one costs
@@ -242,7 +232,7 @@ internal static class NativeRecycleRunner
                 // A move refused because the name was taken is the same collision as above, arriving from
                 // the other end — an orphaned payload with no record of its own. It gets a fresh name for
                 // the same reason and costs the caller nothing.
-                if (attempt < NameAttempts && NameCollision.IsTaken(ex))
+                if (attempt < NameCollision.NameAttempts && NameCollision.IsTaken(ex))
                 {
                     continue;
                 }

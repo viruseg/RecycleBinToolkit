@@ -41,7 +41,6 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(OneEntryFailingDoesNotCostTheOthersTheirAnswers), OneEntryFailingDoesNotCostTheOthersTheirAnswers),
         new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure),
         new TestCase("RestoreSuite." + nameof(AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts), AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts),
-        new TestCase("RestoreSuite." + nameof(ATakenFreeNameIsRecognisedByItsCodeAndAnAbsentHeldOrDeniedOneIsNot), ATakenFreeNameIsRecognisedByItsCodeAndAnAbsentHeldOrDeniedOneIsNot),
         new TestCase("RestoreSuite." + nameof(ADestinationThatChangesUnderTheCallIsAskedAboutAgain), ADestinationThatChangesUnderTheCallIsAskedAboutAgain),
         new TestCase("RestoreSuite." + nameof(ABudgetThatIsSpentStopsTheRetrying), ABudgetThatIsSpentStopsTheRetrying),
         new TestCase("RestoreSuite." + nameof(AShortOverallTimeoutAcrossManyItemsDoesNotFreezeTheRest), AShortOverallTimeoutAcrossManyItemsDoesNotFreezeTheRest),
@@ -2590,110 +2589,6 @@ internal static class RestoreSuite
         workspace.Dispose();
     }
 
-    /// <summary>The HRESULT a move onto a name that is already there carries: <c>ERROR_ALREADY_EXISTS</c>.</summary>
-    private const int TakenName = unchecked((int)0x800700B7);
-
-    /// <summary>The HRESULT a move of a source that is not there carries: <c>ERROR_FILE_NOT_FOUND</c>.</summary>
-    private const int AbsentSource = unchecked((int)0x80070002);
-
-    /// <summary>The HRESULT a move of a file somebody is holding carries: <c>ERROR_SHARING_VIOLATION</c>.</summary>
-    private const int HeldFile = unchecked((int)0x80070020);
-
-    /// <summary>
-    /// The HRESULT an overwriting move onto a destination nobody may open carries:
-    /// <c>ERROR_ACCESS_DENIED</c>.
-    /// </summary>
-    private const int DeniedDestination = unchecked((int)0x80070005);
-
-    /// <summary>
-    /// A free name this code picked and then found taken is told from a payload that is not there, from a
-    /// payload somebody is holding and from a destination that cannot be opened.
-    /// </summary>
-    /// <remarks>
-    /// <c>NativeBinSuite</c> reads the same judgment over the refusals a recycle raises, and this reads it
-    /// over the refusals a restore move raises — through the call <see cref="RestoreRunner"/>'s own place
-    /// makes, so each is raised by this machine's filesystem rather than written down by the case. Both copies
-    /// were corrected by measurement, and only the recycle one was given a case: the remark this path's copy
-    /// carried said its comparison was witnessed, and nothing read it until here.
-    /// <para>
-    /// <b>The last of the four is the one the recycle side cannot raise.</b> An overwriting move onto a
-    /// destination somebody is holding exclusively comes back as an
-    /// <see cref="UnauthorizedAccessException"/> carrying <c>0x80070005</c> — which is 5 and not a name, and
-    /// which is not an <see cref="IOException"/> at all, so the narrowing answers it without asking what it
-    /// carries. The other three arrive as <see cref="IOException"/> carrying 183, 2 and 32, and only the
-    /// first of those is a name.
-    /// </para>
-    /// <para>
-    /// The branch that reads this is still not witnessed, for the reason written down on
-    /// <see cref="NameCollision"/>: no run can take a free name away between the query and the move.
-    /// </para>
-    /// </remarks>
-    private static Task ATakenFreeNameIsRecognisedByItsCodeAndAnAbsentHeldOrDeniedOneIsNot(TestContext context)
-    {
-        using var workspace = new ScratchWorkspace();
-        workspace.Recreate();
-
-        // A name that was free when a planner looked at it and is taken by the time the payload reaches it.
-        // Nothing in the library will be asked for this name; it stands in front of the runner instead.
-        var taken = Path.Combine(ScratchWorkspace.Root, "free-name-taken.bin");
-        File.WriteAllText(taken, "somebody got there first");
-
-        var toLand = workspace.CreateRandomFile(64);
-        var landed = Check.Throws<IOException>(
-            () => File.Move(toLand, taken),
-            "a payload cannot be moved onto a name that is taken");
-
-        var absent = Check.Throws<IOException>(
-            () => File.Move(Path.Combine(ScratchWorkspace.Root, "deleted-since-the-listing.bin"), Path.Combine(ScratchWorkspace.Root, "free-1.bin")),
-            "nor one that was deleted before its payload reached the destination");
-
-        var holding = workspace.CreateRandomFile(64);
-        IOException held;
-
-        using (new FileStream(holding, FileMode.Open, FileAccess.Read, FileShare.Read))
-        {
-            held = Check.Throws<IOException>(
-                () => File.Move(holding, Path.Combine(ScratchWorkspace.Root, "free-2.bin")),
-                "nor one somebody else is holding");
-        }
-
-        var overwriting = workspace.CreateRandomFile(64);
-        var denied = Path.Combine(ScratchWorkspace.Root, "denied-destination.bin");
-        File.WriteAllText(denied, "occupied by somebody who will not let go");
-
-        UnauthorizedAccessException refused;
-
-        using (new FileStream(denied, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-        {
-            refused = Check.Throws<UnauthorizedAccessException>(
-                () => File.Move(overwriting, denied, overwrite: true),
-                "and an overwriting move onto a destination nobody may open is refused as an access failure");
-        }
-
-        Check.Equal(TakenName, landed.HResult, Carried("a name that is taken", landed));
-        Check.Equal(AbsentSource, absent.HResult, Carried("a source that is not there", absent));
-        Check.Equal(HeldFile, held.HResult, Carried("a file somebody is holding", held));
-        Check.Equal(DeniedDestination, refused.HResult, Carried("a destination nobody may open", refused));
-
-        Check.True(
-            NameCollision.IsTaken(landed),
-            $"0x{landed.HResult:X8} is a name being taken, which is what earns the next free number beside it");
-
-        Check.False(
-            NameCollision.IsTaken(absent),
-            $"while 0x{absent.HResult:X8} is a payload that is not there, and is charged to the caller's budget");
-
-        Check.False(
-            NameCollision.IsTaken(held),
-            $"and 0x{held.HResult:X8} is a payload somebody is holding, which is their business and not a collision");
-
-        Check.False(
-            NameCollision.IsTaken(refused),
-            $"and 0x{refused.HResult:X8} is not an IOException at all, so what it carries is never read");
-
-        workspace.Dispose();
-        return Task.CompletedTask;
-    }
 
     /// <summary>
     /// What is in the way is asked about again on every attempt rather than answered once before the first:
@@ -3567,19 +3462,6 @@ internal static class RestoreSuite
 
         return bytes;
     }
-
-    /// <summary>
-    /// A failure line naming what a refusal carried, whole and masked.
-    /// </summary>
-    /// <param name="claim">What the case is saying raised it, in a noun phrase.</param>
-    /// <param name="refusal">The refusal the filesystem raised.</param>
-    /// <returns>The phrase a failed <see cref="Check.Equal{T}"/> carries after its expected and actual.</returns>
-    /// <remarks>
-    /// The two halves of the same number, because that is the arithmetic the judgment under test is about
-    /// and a reader holding two six-figure hex values cannot do it in their head.
-    /// </remarks>
-    private static string Carried(string claim, Exception refusal) =>
-        $"{claim}, carrying 0x{refusal.HResult:X8} — {refusal.HResult & 0xFFFF} once HRESULT_CODE has taken the low half";
 
     /// <summary>
     /// The one entry of a listing that was deleted from <paramref name="path"/>.

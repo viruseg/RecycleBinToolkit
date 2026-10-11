@@ -505,15 +505,33 @@ internal static class NativeBinSuite
     private const int ErrorAlreadyExists = unchecked((int)0x800700B7);
 
     /// <summary>
+    /// Win32 <c>ERROR_ACCESS_DENIED</c>: an overwriting move onto a destination nobody may open.
+    /// </summary>
+    private const int ErrorAccessDenied = unchecked((int)0x80070005);
+
+    /// <summary>
     /// A refusal carrying a taken name's code is answered as a taken name, and a refusal carrying anything
     /// else is not. That is what lets the same path be given a fresh name without a locked file being given
     /// one instead.
     /// </summary>
     /// <remarks>
-    /// Every refusal here is raised by the filesystem on this machine rather than written down by the case,
-    /// and the names it collides on are composed by <see cref="NativeBinLayout"/>, so they are the shape the
-    /// runner writes: a <c>CREATE_NEW</c> over a record that is already there, a move onto a payload that is
-    /// already there, a file somebody is holding, and a source that is not there at all.
+    /// <b>The one case that reads <see cref="NameCollision.IsTaken"/>, for both of the paths that call
+    /// it.</b> They shared it after each had a copy of its own, and two cases asserting one judgment's answers
+    /// would be the same duplication one layer up. Every refusal below is raised by the filesystem on this
+    /// machine rather than written down by the case, and together they are the set the judgment has to tell
+    /// apart: a <c>CREATE_NEW</c> over a record that is already there, a move onto a payload that is already
+    /// there, a file somebody is holding, a source that is not there at all, and an overwriting move onto a
+    /// destination that will not open.
+    /// <para>
+    /// The last of those is the only one here that is not an <see cref="IOException"/>: the runtime raises an
+    /// <see cref="UnauthorizedAccessException"/>, so the narrowing answers it without asking what it carries.
+    /// It cannot reach the restore path's branch, because <c>Place</c> overwrites only under
+    /// <see cref="RestoreAction.Replace"/> and the filter beside it asks only under
+    /// <see cref="RestoreAction.Rename"/> — so it is staged here for what the judgment answers, not for a
+    /// branch it cannot enter. Nothing in the suite pins the narrowing itself: the only exceptions these two
+    /// call sites raise that are not an <see cref="IOException"/> carry 5 or <c>0x80070057</c>, and neither is
+    /// 80 or 183, so removing the narrowing would change no answer.
+    /// </para>
     /// <para>
     /// <b>The loop this feeds is not what is witnessed.</b> <see cref="NativeBinLayout.NextStem"/> draws six
     /// characters out of thirty-six and takes no argument, so no run can ask it for the name it is about to
@@ -561,6 +579,22 @@ internal static class NativeBinSuite
             () => File.Move(Path.Combine(ScratchWorkspace.Root, "never-created.bin"), Path.Combine(ScratchWorkspace.Root, "also-free.bin")),
             "and neither can one that is not there");
 
+        var overwriting = CreateFile("overwritten-into");
+        var denied = Path.Combine(ScratchWorkspace.Root, "held-destination.bin");
+        File.WriteAllText(denied, "occupied by somebody who will not let go");
+
+        UnauthorizedAccessException deniedRefused;
+
+        using (new FileStream(denied, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            deniedRefused = Check.Throws<UnauthorizedAccessException>(
+                () => File.Move(overwriting, denied, overwrite: true),
+                "and an overwriting move into a destination nobody may open is refused as an access failure");
+        }
+
+        Check.Equal(ErrorAccessDenied, deniedRefused.HResult,
+            $"which arrives as 0x{ErrorAccessDenied:X8} (got 0x{deniedRefused.HResult:X8}, win32 {deniedRefused.HResult & 0xFFFF})");
+
         Check.True(
             NameCollision.IsTaken(recordRefused),
             $"a refusal carrying 0x{recordRefused.HResult:X8} is a name being taken, which is what earns the fresh one");
@@ -571,11 +605,15 @@ internal static class NativeBinSuite
 
         Check.False(
             NameCollision.IsTaken(holdRefused),
-            $"while 0x{holdRefused.HResult:X8} is a fact about the caller's own file, and is reported on its first attempt");
+            $"while 0x{holdRefused.HResult:X8} is a fact about the caller's own file, and no name of this library's own was lost");
 
         Check.False(
             NameCollision.IsTaken(absentRefused),
             $"and 0x{absentRefused.HResult:X8} is not a name either");
+
+        Check.False(
+            NameCollision.IsTaken(deniedRefused),
+            $"and 0x{deniedRefused.HResult:X8} is not even an IOException, so what it carries is never read");
 
         workspace.Dispose();
         return Task.CompletedTask;

@@ -68,16 +68,6 @@ internal static class RestoreRunner
     private const double MaxJitterFraction = 0.2;
 
     /// <summary>
-    /// How many names one entry is given before a collision is taken to be a real refusal.
-    /// </summary>
-    /// <remarks>
-    /// Only a name the filesystem reports as taken counts, and only this many of them: the probability of one
-    /// is about two in a billion, and a refusal that is <em>not</em> a collision — a held destination, a denied
-    /// directory — is spent against <see cref="RecycleBinOptions.MaxAttempts"/> rather than against this.
-    /// </remarks>
-    private const int NameAttempts = 3;
-
-    /// <summary>
     /// Puts every entry back and reports what happened to each.
     /// </summary>
     /// <param name="items">
@@ -828,11 +818,12 @@ internal static class RestoreRunner
     /// move, not on somebody else being faster at naming files. A refusal under any other action, and any
     /// refusal that is not a name being taken, leaves this method by raising.
     /// <para>
-    /// The names are counted against <see cref="NameAttempts"/> so that a name taken on every attempt cannot
-    /// loop here for ever, and bounded at that because the probability of one is about two in a billion. <b>No
-    /// case in this repository witnesses the loop</b>: taking a free name away between the query and the move
-    /// is a hook inside this class rather than a thing a run can arrange. What <see cref="NameCollision.IsTaken"/>
-    /// is compared against was measured rather than assumed, and the measurement is written down there.
+    /// The names are counted against <see cref="NameCollision.NameAttempts"/> so that a name taken on every
+    /// attempt cannot loop here for ever, and bounded at that because the probability of one is about two in
+    /// a billion. <b>No case in this repository witnesses the loop</b>: taking a free name away between the
+    /// query and the move is a hook inside this class rather than a thing a run can arrange. What
+    /// <see cref="NameCollision.IsTaken"/> is compared against was measured rather than assumed, and the
+    /// measurement is written down there.
     /// </para>
     /// <para>
     /// A directory is one <see cref="Directory.Move(string, string)"/> rather than a walk of what is inside
@@ -880,7 +871,7 @@ internal static class RestoreRunner
 
                 return;
             }
-            catch (Exception ex) when (name < NameAttempts && decision.Action == RestoreAction.Rename && NameCollision.IsTaken(ex))
+            catch (Exception ex) when (name < NameCollision.NameAttempts && decision.Action == RestoreAction.Rename && NameCollision.IsTaken(ex))
             {
                 decision = decision with { TargetPath = RestorePathPlanner.WithFreeNumber(wantedPath) };
             }

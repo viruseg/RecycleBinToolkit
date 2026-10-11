@@ -67,12 +67,12 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 211 registered cases, of which four are load cases, so `--all` runs 207 of them. The rest is
+There are 210 registered cases, of which four are load cases, so `--all` runs 206 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
 cases that recycle one and runs the cases that are about a volume with no bin. On `D:`, which has a bin:
-**197 pass and 10 skip**, with nothing failing. That is the last `--all` on `D:` — 196 and 10 over 206 —
-plus `RestoreSuite.ATakenFreeNameIsRecognisedByItsCodeAndAnAbsentHeldOrDeniedOneIsNot`, which was run on
-its own there and is not yet inside a full run. A volume with no bin and a share are both unmeasured
+**196 pass and 10 skip**, with nothing failing — measured by one `--all` on `D:`. The collision case has
+since gained the refusal a recycle cannot raise and was re-run on its own there; the counts are the run's.
+A volume with no bin and a share are both unmeasured
 here: measure before quoting either. `--all` prints the counts, so a count in a document that disagrees
 with them is the document being wrong.
 

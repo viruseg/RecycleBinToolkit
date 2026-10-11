@@ -1,22 +1,28 @@
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Whether a refusal is a name this library drew being taken, which is the one refusal worth trying again
-/// under a different name. Read by the two paths that draw a name of their own,
+/// Whether a refusal is a name this library drew being taken, and how many names one item is given before
+/// that stops being worth another. Shared by the two paths that draw a name of their own,
 /// <see cref="NativeRecycleRunner"/> and <see cref="RestoreRunner"/>.
 /// </summary>
 /// <remarks>
 /// <b>One judgment, because two of them is how this one was wrong twice.</b> Each of those classes had its
 /// own copy of the comparison, they had drifted apart in the type they took, and the masking landed on the
 /// restore path first and in the recycle runner afterwards — a case was written for the recycle runner and
-/// none for the other. They share this now, so there is a second copy to find.
+/// none for the other. They share this now, so there is no second copy to find.
 /// <para>
-/// <b>The comparison is witnessed from both call paths; the branch either of them takes is not.</b>
-/// <c>NativeBinSuite</c> and <c>RestoreSuite</c> each stage the refusals their own move raises and read them
-/// back through here. What no run can arrange is the collision that reaches the branch: neither
-/// <see cref="NativeBinLayout.NextStem"/> nor <see cref="RestorePathPlanner.WithFreeNumber"/> takes a name to
-/// collide on, so making either call site land on a taken name would take a hook inside the library rather than
-/// an arrangement in a test.
+/// <b>What is answered here is whether a refusal was a name being taken, and how many names one item may be
+/// given.</b> How many times an item is asked again is <see cref="RecycleBinOptions.MaxAttempts"/>'s and not
+/// this class's, and it asks again on the same name: a locked file is not answered with a different one here,
+/// it is asked again by the caller's own budget.
+/// </para>
+/// <para>
+/// <b>The comparison is witnessed; the branch either call site takes is not.</b>
+/// <c>NativeBinSuite.ATakenNameIsRecognisedByItsCodeAndALockedFileIsNot</c> stages the refusals the judgment
+/// has to tell apart and reads them back through here. What no run can arrange is the collision that reaches
+/// the branch: neither <see cref="NativeBinLayout.NextStem"/> nor
+/// <see cref="RestorePathPlanner.WithFreeNumber"/> takes a name to collide on, so making either call site land
+/// on a taken name would take a hook inside the library rather than an arrangement in a test.
 /// </para>
 /// </remarks>
 internal static class NameCollision
@@ -32,6 +38,17 @@ internal static class NameCollision
     /// can be compared against the two above.
     /// </summary>
     private const int ErrorMask = 0xFFFF;
+
+    /// <summary>
+    /// How many names one item is given before a collision is taken to be a real failure.
+    /// </summary>
+    /// <remarks>
+    /// Only a name the filesystem reports as taken counts, and only this many of them: the probability of one
+    /// is about two in a billion, and a refusal that is <em>not</em> a collision — a locked file, a held
+    /// destination, a denied directory — is spent against <see cref="RecycleBinOptions.MaxAttempts"/> rather
+    /// than against this.
+    /// </remarks>
+    internal const int NameAttempts = 3;
 
     /// <summary>
     /// Whether a refusal was a name being taken rather than the item being unavailable.
@@ -61,8 +78,8 @@ internal static class NameCollision
     /// <c>HRESULT_CODE</c> macro, and what it leaves behind is what keeps the answer narrow: <c>0x80070005</c>
     /// is 5, <c>0x80070020</c> is 32 and <c>0x80070002</c> is 2, none of which is a name — so a destination
     /// somebody is holding, a locked file and a source that is not there are never answered with a different
-    /// one, and the one that arrives as an <see cref="UnauthorizedAccessException"/> is not asked about its code
-    /// at all.
+    /// one, and one that arrives as something other than an <see cref="IOException"/> is not asked about its
+    /// code at all.
     /// </para>
     /// </remarks>
     internal static bool IsTaken(Exception failure) =>
