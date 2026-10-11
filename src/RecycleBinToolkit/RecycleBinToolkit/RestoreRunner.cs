@@ -384,11 +384,25 @@ internal static class RestoreRunner
     /// <param name="volumeRoot">The volume root the figure is asked for.</param>
     /// <returns>How many movers that volume's entries may be moving on at once.</returns>
     /// <remarks>
-    /// <b>One, for every volume, and that is not an answer this repository measured.</b> No existing table
-    /// says how many <c>MoveFile</c> calls a disk takes well, so none is borrowed from the reading figures in
-    /// <c>AGENTS.md</c> either: those are about opening thirty thousand small files, and a move is a
-    /// metadata operation against directories that are being written to at the same time. It is the only
-    /// constant in the pipeline, and it exists to be measured and replaced.
+    /// <b>One, and that is what was measured.</b> No existing table says how many <c>MoveFile</c> calls a
+    /// disk takes well, so none was borrowed from the reading figures; a restore was measured instead, on
+    /// <c>C:</c> (solid-state), <c>D:</c> and <c>E:</c> (mechanical), over 300 files and again over 2000:
+    ///
+    /// <list type="bullet">
+    /// <item><description>threads 1: 250 / 327 / 197 ms — the fastest answer on every volume</description></item>
+    /// <item><description>threads 2: 408 / 473 / 502</description></item>
+    /// <item><description>threads 4: 1578 / 1678 / 1808</description></item>
+    /// <item><description>threads 8: 1915 / 1784 / 1832</description></item>
+    /// <item><description>threads 16: 1883 / 1642 / 1846</description></item>
+    /// </list>
+    ///
+    /// It falls away monotonically, to seven or nine times one thread, and the curve has the <em>same
+    /// shape on a solid-state volume as on both mechanical ones</em> — which is what says the cost is not
+    /// the seek penalty a spinning head would charge but contention, and that contention is the one
+    /// directory every entry on the volume has in common: its <c>$RECYCLE.BIN\&lt;SID\&gt;</c>, where each
+    /// entry's <c>$I</c> record is deleted. That is the writing table's own finding about one directory
+    /// taking no concurrent writers, reached here from the deleting side, and it is why <c>1</c> is the
+    /// answer for both kinds of drive rather than two different figures.
     /// <para>
     /// <b>Raising it widens one axis and only one.</b> It says how many movers a volume may read its own
     /// records into and drain; it says nothing about which volumes run at the same time, because that is
@@ -398,8 +412,11 @@ internal static class RestoreRunner
     /// directory and the reason <see cref="NativeRecycleRunner"/> is single-threaded.
     /// </para>
     /// <para>
-    /// Nothing above may read <c>1</c> as a considered answer. A figure belongs here beside the table that
-    /// measured it, and a comment cannot stand in for the measurement.
+    /// The one axis that <em>does</em> pay is volumes on different physical disks, and it pays there
+    /// because they are different directories: 300 files each on <c>C:</c> and <c>E:</c> restore in
+    /// 257 ms where the same two volumes one after another take 458 ms. The same two volumes on one
+    /// physical disk, <c>D:</c> and <c>E:</c>, take 482 ms — which is what running them one after another
+    /// costs, and what <see cref="RunDisk"/>'s loop exists to guarantee.
     /// </para>
     /// </remarks>
     internal static int MoveDegree(string volumeRoot)

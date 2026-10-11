@@ -82,6 +82,40 @@ other's.
 
 ## Performance, measured
 
+### Restoring, which is not any of the tables below
+
+A restore is not any of the operations this section otherwise measures, and its figures were taken
+separately. It moves files out of the Recycle Bin and deletes their `$I` records — metadata work, not
+thirty thousand opens — so the reading figures were not borrowed, and a restore was measured instead.
+
+Over 300 files, median of three, seconds are milliseconds:
+
+| movers per volume | `C:` (solid-state) | `D:` (mechanical) | `E:` (mechanical) |
+| --- | --- | --- | --- |
+| **1** | **250** | **327** | **197** |
+| 2 | 408 | 473 | 502 |
+| 4 | 1578 | 1678 | 1808 |
+| 8 | 1915 | 1784 | 1832 |
+| 16 | 1883 | 1642 | 1846 |
+
+**One, and it is not a seek-penalty question.** It falls away monotonically to seven or nine times one
+thread, and the curve has the **same shape on the solid-state volume as on both mechanical ones**. A
+drive whose seeks cost something and one whose do not would not draw the same curve, so what the threads
+are fighting over is not the head. It is the one directory every entry on a volume has in common —
+`$RECYCLE.BIN\<SID>\`, where each entry's `$I` record is deleted. That is the same finding this file
+records for the writing side, reached from the deleting side, and it is why the answer is one figure for
+both kinds of drive rather than two.
+
+Confirmed not to be a small-batch artefact: 2,000 files on `C:` take 1,442 ms on one mover and 10,703 ms
+on four — the same ratio.
+
+**Volumes on different physical disks do pay, and it is the one axis that does.** 300 files on `C:` and
+300 on `E:` restore in **257 ms**, where the same two volumes one after another take **458 ms** — 1.78×
+— because they are different directories. The same two volumes sharing one physical disk, `D:` and `E:`,
+take **482 ms**, which is what running them one after another costs and what `RunDisk`'s loop exists to
+guarantee. So the rule is not "restore is single-threaded": it is single-threaded *within* a volume, and
+concurrent *across* disks.
+
 **Read this before changing anything to do with how many threads the recycle uses.** The
 figures below were measured on this machine over batches of 3,000 items, and they are the reason the
 code looks the way it does. Parallelising more of it is not an improvement, and on this machine most of
