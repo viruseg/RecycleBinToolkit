@@ -51,9 +51,10 @@ public sealed class RecycleBinRestoreResult
     /// now has rather than the one it was deleted from. A stale path in a successful result is worse than
     /// one more thing the caller has to read.
     /// <para>
-    /// An item that was skipped is not here — it is in <see cref="Conflicts"/> under
-    /// <see cref="RecycleRestoreConflictAction.Skipped"/>, and the relative order is the one it had among
-    /// the items that came back.
+    /// An item the caller handed in that was skipped is not here — it is in <see cref="Conflicts"/> under
+    /// <see cref="RecycleRestoreConflictAction.Skipped"/>. A file that was inside a directory is not such
+    /// an item: the directory carries its own conflict record, and a file of its tree that gave way has no
+    /// record of its own anywhere in this result.
     /// </para>
     /// </remarks>
     public IReadOnlyList<string> RestoredPaths { get; }
@@ -62,9 +63,10 @@ public sealed class RecycleBinRestoreResult
     /// Paths that were already occupied, and what was done about the items that wanted them.
     /// </summary>
     /// <remarks>
-    /// Empty when nothing was in the way. A conflict that <see cref="RestoreFileConflict.Skip"/> or one
-    /// of the merging policies left alone is here and not in <see cref="Failures"/>, so an item that stayed
-    /// in the Recycle Bin does not make <see cref="Succeeded"/> false — only
+    /// Empty when nothing was in the way. A conflict that a <c>Skip</c> or a merging policy left alone —
+    /// <see cref="RestoreFileConflict.Skip"/>, <see cref="RestoreDirectoryConflict.Skip"/> or any of the
+    /// merging values — is here and not in <see cref="Failures"/>, so an item that stayed in the Recycle Bin
+    /// does not make <see cref="Succeeded"/> false. Only
     /// <see cref="RestoreFileConflict.Error"/> and <see cref="RestoreDirectoryConflict.Error"/> do that.
     /// </remarks>
     public IReadOnlyList<RecycleRestoreConflict> Conflicts { get; }
