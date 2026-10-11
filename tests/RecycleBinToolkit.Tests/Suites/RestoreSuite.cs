@@ -10,7 +10,9 @@ internal static class RestoreSuite
     [
         new TestCase("RestoreSuite." + nameof(DefaultsAreTheDocumentedOnes), DefaultsAreTheDocumentedOnes),
         new TestCase("RestoreSuite." + nameof(VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot), VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot),
-        new TestCase("RestoreSuite." + nameof(EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode), EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode)
+        new TestCase("RestoreSuite." + nameof(EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode), EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode),
+        new TestCase("RestoreSuite." + nameof(RenamingTakesTheFirstFreeNumberBeforeTheExtension), RenamingTakesTheFirstFreeNumberBeforeTheExtension),
+        new TestCase("RestoreSuite." + nameof(ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt), ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt)
     ];
 
     /// <summary>
@@ -233,6 +235,191 @@ internal static class RestoreSuite
         Check.Equal(0, passed.Items.Count(h => h.HResult != 0), "an entry the listing already read carries no code");
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A name nobody is using becomes the same name with <c>(1)</c> in front of the extension, and a name
+    /// somebody is using becomes the same name with the next number nobody is using.
+    /// </summary>
+    /// <remarks>
+    /// The convention is what the public options promise — <see cref="RestoreFileConflict.Rename"/> writes it
+    /// out in prose, and this is the only code behind it — so what is pinned here is the spelling, not the
+    /// arithmetic: where the number goes, where a double extension splits, and that the counting starts at one.
+    /// <para>
+    /// The number is never read back out of the name it produced. <c>report (5).txt</c> is a name, not a
+    /// statement about how many reports there are, so it becomes <c>report (5) (1).txt</c> when taken — a
+    /// parser that looked for the bracketed digits would answer <c>report (5) (6).txt</c> instead, and would
+    /// pick a name that is already gone. What is asserted about an already-numbered name is that it is not
+    /// re-parsed.
+    /// </para>
+    /// <para>
+    /// A name that is nothing but an extension — <c>.gitignore</c> — is the one case where there is no stem
+    /// to put the number in front of, and the number goes after the whole name rather than in front of an
+    /// empty one.
+    /// </para>
+    /// <para>
+    /// The last shape is the one the buffer itself decides: a candidate is assembled on the stack for an
+    /// ordinary path and on the heap for one too long for that, and the two arms have to answer identically.
+    /// A single flat component cannot reach the heap arm from this root — 255 characters is the most one
+    /// component may be, and what the scratch root itself uses leaves less room than that — so the deep
+    /// path is built from nested components, which is what a deep tree on a long-path volume produces
+    /// anyway. Its length is asserted rather than assumed, so the case cannot quietly stop covering the arm
+    /// it is written for.
+    /// </para>
+    /// </remarks>
+    private static Task RenamingTakesTheFirstFreeNumberBeforeTheExtension(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var original = workspace.CreateRandomFile(64);
+        var originalName = Path.GetFileName(original);
+
+        var first = RestorePathPlanner.WithFreeNumber(original);
+
+        Check.Equal(
+            Path.Combine(ScratchWorkspace.Root, Path.GetFileNameWithoutExtension(originalName) + " (1)" + Path.GetExtension(originalName)),
+            first,
+            "with the name free, the first number is 1");
+
+        // The squatter is the name the first call answered, not the name it was asked about: the number
+        // counts what is taken among the numbered names, and the one just handed out is the one taken.
+        File.WriteAllText(first, "occupied");
+
+        Check.Equal(
+            Path.Combine(ScratchWorkspace.Root, Path.GetFileNameWithoutExtension(originalName) + " (2)" + Path.GetExtension(originalName)),
+            RestorePathPlanner.WithFreeNumber(original),
+            "once taken, the next number is 2");
+
+        // A double extension is split at the last dot, which is what Path.GetExtension says.
+        Check.Equal("archive.tar (1).gz", Path.GetFileName(RestorePathPlanner.WithFreeNumber(Path.Combine(ScratchWorkspace.Root, "archive.tar.gz"))), "the number goes before the extension");
+
+        Check.True(RestorePathPlanner.WithFreeNumber(Path.Combine(ScratchWorkspace.Root, "noext")).EndsWith("noext (1)", StringComparison.Ordinal), "a name with no extension still takes a number");
+
+        // Nothing is re-parsed, so an extension that is itself a number is just an extension and a name
+        // that already carries one gains a second rather than counting on from the first.
+        Check.True(RestorePathPlanner.WithFreeNumber(Path.Combine(ScratchWorkspace.Root, "report.2")).EndsWith("report (1).2", StringComparison.Ordinal), "a numeric extension is an extension, not a number");
+        Check.True(RestorePathPlanner.WithFreeNumber(first).EndsWith("(1) (1).bin", StringComparison.Ordinal), "a name already carrying a number is not read back as one");
+
+        // Path.GetExtension reads ".gitignore" as an extension with no stem in front of it, so a name that
+        // is nothing but an extension would otherwise be numbered into " (1).gitignore".
+        Check.Equal(".gitignore (1)", Path.GetFileName(RestorePathPlanner.WithFreeNumber(Path.Combine(ScratchWorkspace.Root, ".gitignore"))), "a name that is only an extension takes the number after the whole name");
+
+        // The name is assembled in a buffer on the stack for an ordinary path and on the heap for one too
+        // long for that, and the two have to answer the same thing. One flat component cannot reach the
+        // heap arm from this root — 255 characters is the most a name may be, and the root is shorter than
+        // that leaves room — so the path is built from nested components, which is what a deep tree on a
+        // volume with long paths enabled actually produces.
+        var component = new string('n', 200);
+        var deep = Path.Combine(ScratchWorkspace.Root, component, component);
+        Directory.CreateDirectory(deep);
+
+        var longPath = Path.Combine(deep, "leaf.bin");
+        File.WriteAllText(longPath, "occupied");
+
+        var numbered = RestorePathPlanner.WithFreeNumber(longPath);
+
+        Check.Equal("leaf (1).bin", Path.GetFileName(numbered), "a path too long for the stack buffer still takes its number before the extension");
+        Check.Equal(Path.GetDirectoryName(longPath), Path.GetDirectoryName(numbered), "and it lands in the same directory, however deep that is");
+        Check.True(longPath.Length > 320, $"the path really did leave the stack buffer: {longPath.Length} characters");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// What is in the way of a path is asked once and answered twice: as the action, and as the kind of
+    /// occupant, which is the half of the answer <see cref="RecycleRestoreConflict"/> reports to a caller.
+    /// </summary>
+    /// <remarks>
+    /// A destination holding the other kind is a conflict like any other, so both cross-kind cases are here:
+    /// a file arriving where a directory is, and the reverse. Asserting them is what stops the planner from
+    /// answering <see cref="RestoreAction.Move"/> to a path that is occupied by something.
+    /// <para>
+    /// The three merge modes answer <see cref="RestoreAction.Move"/> rather than a fourth action. A directory
+    /// is never replaced whole and never silently kept away from what it is restoring into, so what a merge
+    /// needs is permission to put the tree at that path — which is what moving there means — and
+    /// <see cref="RestorePathPlanner.DecideMerged"/> then decides what happens to each file inside it.
+    /// </para>
+    /// <para>
+    /// <see cref="RestoreDirectoryConflict.Error"/> and <see cref="RestoreFileConflict.Error"/> answer
+    /// <see cref="RestoreAction.Skip"/>: whether the item also lands in the failures is the caller's answer
+    /// from the options, and an action is not a place to put it. An enum value outside either policy reaches
+    /// the same arm, which is the one that touches nothing.
+    /// </para>
+    /// </remarks>
+    private static Task ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var free = Path.Combine(ScratchWorkspace.Root, "free.bin");
+        var takenByFile = Path.Combine(ScratchWorkspace.Root, "taken.bin");
+        var takenByDirectory = Path.Combine(ScratchWorkspace.Root, "taken");
+
+        File.WriteAllText(takenByFile, "a file");
+        Directory.CreateDirectory(takenByDirectory);
+
+        var defaults = new RecycleBinOptions();
+
+        var freeFile = RestorePathPlanner.Decide(free, isDirectory: false, defaults);
+        Check.Equal(RestoreAction.Move, freeFile.Action, "a free path is moved to");
+        Check.Equal(free, freeFile.TargetPath, "and it lands where it wanted to");
+        Check.False(freeFile.OccupiedByDirectory, "nothing is in the way of a free path");
+
+        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(free, isDirectory: true, defaults).Action, "a free path is the same answer for a directory");
+
+        var replaced = RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RecycleBinOptions { FileConflict = RestoreFileConflict.Replace });
+        Check.Equal(RestoreAction.Replace, replaced.Action, "the file policy replaces");
+        Check.Equal(takenByFile, replaced.TargetPath, "and it lands on the path that was occupied");
+        Check.False(replaced.OccupiedByDirectory, "what is in the way is a file");
+
+        var renamed = RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename });
+        Check.Equal(RestoreAction.Rename, renamed.Action, "the file policy renames");
+        Check.Equal(RestorePathPlanner.WithFreeNumber(takenByFile), renamed.TargetPath, "and it lands under the first free name, which is the one naming gives");
+        Check.False(renamed.OccupiedByDirectory, "renaming does not change what was in the way");
+
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByFile, isDirectory: false, defaults).Action, "the default file policy skips");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RecycleBinOptions { FileConflict = RestoreFileConflict.Error }).Action, "and refusing is the same action as skipping");
+
+        var renamedDirectory = RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory });
+        Check.Equal(RestoreAction.Rename, renamedDirectory.Action, "renaming a directory takes a free name rather than merging into what is there");
+        Check.Equal(RestorePathPlanner.WithFreeNumber(takenByDirectory), renamedDirectory.TargetPath, "and it lands under the first free name");
+        Check.True(renamedDirectory.OccupiedByDirectory, "a directory was in the way");
+
+        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, defaults).Action, "the default directory policy merges rather than skipping");
+        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip }).Action, "and every merge mode answers the same");
+        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeReplace }).Action, "all three");
+        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeRename }).Action, "all three of them");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.Skip }).Action, "while leaving the directory in the bin is a skip");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.Error }).Action, "and refusing is the same action as skipping");
+
+        // The cross-kind cases: each is a conflict like any other, and the policy that answers is the one
+        // for the kind arriving rather than the one for the kind in the way.
+        var fileIntoDirectory = RestorePathPlanner.Decide(takenByDirectory, isDirectory: false, new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename });
+        Check.Equal(RestoreAction.Rename, fileIntoDirectory.Action, "a file arriving at a directory is renamed rather than moved over it");
+        Check.True(fileIntoDirectory.OccupiedByDirectory, "and the directory it found is reported as a directory");
+
+        var directoryIntoFile = RestorePathPlanner.Decide(takenByFile, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory });
+        Check.Equal(RestoreAction.Rename, directoryIntoFile.Action, "a directory arriving at a file takes a free name");
+        Check.False(directoryIntoFile.OccupiedByDirectory, "and the file it found is not a directory");
+
+        // An enum value outside either policy is reachable by an unvalidated caller and lands on the arm
+        // that touches nothing, rather than on a default that could move something.
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RecycleBinOptions { FileConflict = (RestoreFileConflict)42 }).Action, "a file policy that names nothing answers skip");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = (RestoreDirectoryConflict)42 }).Action, "and so does a directory policy");
+
+        // What a merge decides per file, against the three modes that reach it and one that never does.
+        Check.Equal(RestoreAction.Replace, RestorePathPlanner.DecideMerged(takenByFile, RestoreDirectoryConflict.MergeReplace), "a merge that replaces overwrites the file in the way");
+        Check.Equal(RestoreAction.Rename, RestorePathPlanner.DecideMerged(takenByFile, RestoreDirectoryConflict.MergeRename), "a merge that renames sets the file down beside it");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.DecideMerged(takenByFile, RestoreDirectoryConflict.MergeSkip), "a merge that skips leaves the file in the way alone");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.DecideMerged(takenByFile, RestoreDirectoryConflict.RenameDirectory), "a value that is decided before the walk begins and never during it is answered as skip");
+
+        // Nothing above wrote to the Recycle Bin or moved anything: the only names on disk are the two
+        // this case put there, and what is in the way is still what was put there.
+        Check.Equal("a file", File.ReadAllText(takenByFile), "the file in the way was not touched");
+        Check.True(Directory.Exists(takenByDirectory), "and neither was the directory");
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
