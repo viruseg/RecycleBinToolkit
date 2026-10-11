@@ -281,10 +281,13 @@ internal static class RestoreRunner
         Restored,
 
         /// <summary>
-        /// The entry took the occupant's place. An overwrite resolves the conflict by itself, so it leaves
-        /// nothing to report beyond the path — which is what makes this a kind of its own rather than the
-        /// one above it: the entry in the bin is gone and no record says anything was in the way.
+        /// The entry took the occupant's place, overwriting what was there.
         /// </summary>
+        /// <remarks>
+        /// Carried as a kind of its own to name the event rather than to change the output: an overwrite
+        /// resolves its own conflict, so this reaches exactly the lists <see cref="Restored"/> does and
+        /// leaves no record that anything was in the way.
+        /// </remarks>
         Replaced,
 
         /// <summary>
