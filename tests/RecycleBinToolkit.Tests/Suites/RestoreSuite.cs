@@ -27,7 +27,11 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(ADirectoryRestoringOntoAFileIsAConflict), ADirectoryRestoringOntoAFileIsAConflict),
         new TestCase("RestoreSuite." + nameof(AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing), AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing),
         new TestCase("RestoreSuite." + nameof(OneEntryFailingDoesNotCostTheOthersTheirAnswers), OneEntryFailingDoesNotCostTheOthersTheirAnswers),
-        new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure)
+        new TestCase("RestoreSuite." + nameof(APayloadThatMovedAndARecordThatWouldNotGoIsAFailure), APayloadThatMovedAndARecordThatWouldNotGoIsAFailure),
+        new TestCase("RestoreSuite." + nameof(TheVolumeOverloadRestoresEveryVolumeItWasGiven), TheVolumeOverloadRestoresEveryVolumeItWasGiven),
+        new TestCase("RestoreSuite." + nameof(ANullVolumeIsRefusedRatherThanRestoredAround), ANullVolumeIsRefusedRatherThanRestoredAround),
+        new TestCase("RestoreSuite." + nameof(AnEmptyListOfVolumesIsAnEmptyResult), AnEmptyListOfVolumesIsAnEmptyResult),
+        new TestCase("RestoreSuite." + nameof(ARestoredPathIsTheOneItsRecordNamed), ARestoredPathIsTheOneItsRecordNamed),
     ];
 
     /// <summary>
@@ -1400,6 +1404,221 @@ internal static class RestoreSuite
         }
 
         File.Delete(item.IndexPath);
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The volume overload takes a listing's own groups and restores every entry they hold, so a caller
+    /// holding a listing does not have to flatten it before it can put anything back.
+    /// </summary>
+    /// <remarks>
+    /// The groups are built here rather than handed straight from a listing, and the reason is the machine
+    /// rather than the API: a bin on a working desktop holds everything else its owner has deleted, and
+    /// restoring that group whole would put all of it back. Taking the listing and keeping the two entries
+    /// this case recycled is what holds a whole-group restore to this case's own material.
+    /// <para>
+    /// The second group is empty and its root is a drive this machine may not have, which is the shape a
+    /// listing over several volumes hands back for one that held nothing. It contributes nothing and is not
+    /// refused: a caller cannot tell an empty bin from a volume that was never reached by way of the
+    /// result, so the groups it passes on are what it has to work with.
+    /// </para>
+    /// <para>
+    /// The order of the answer is asserted rather than its count, because the count is what a restore that
+    /// ignored the groups would also answer: two entries restored and no conflicts is right whichever order
+    /// they were restored in, and only the paths say the groups were flattened rather than one of them chosen.
+    /// </para>
+    /// </remarks>
+    private static async Task TheVolumeOverloadRestoresEveryVolumeItWasGiven(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var a = workspace.CreateRandomFile(64);
+        var b = workspace.CreateRandomFile(2048);
+        var bytes = File.ReadAllBytes(b);
+        var baseline = BaselineCount();
+
+        Check.True(
+            (await RecycleBin.RecycleAsync([a, b], cancellationToken: context.CancellationToken)).Succeeded,
+            "both files reached the bin");
+
+        var listed = await RecycleBin.GetItemsAsync(
+            ScratchWorkspace.VolumeRoot,
+            cancellationToken: context.CancellationToken);
+
+        IReadOnlyList<RecycleBinVolumeContents> volumes =
+        [
+            new RecycleBinVolumeContents(
+                ScratchWorkspace.VolumeRoot,
+                [FindTheEntryFor(listed, a), FindTheEntryFor(listed, b)]),
+            new RecycleBinVolumeContents(@"W:\", [])
+        ];
+
+        var result = await RecycleBin.RestoreAsync(volumes, cancellationToken: context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(0, result.Failures.Count, "so nothing reached the failures list");
+        Check.Equal(2, result.ItemsRestored, "both entries were restored");
+        Check.Equal(0, result.Conflicts.Count, "and neither collided with anything");
+        Check.Equal(2, result.RestoredPaths.Count, "both are named");
+        Check.Equal(a, result.RestoredPaths[0], "in the order the groups were given and the entries sat inside them");
+        Check.Equal(b, result.RestoredPaths[1], "the second one second");
+        Check.True(File.Exists(a) && File.Exists(b), "and both are back on disk");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(b)), "one of them byte for byte");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the bin is back to its baseline");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A <see langword="null"/> among the groups is refused before anything is touched, because a group that
+    /// is not there has no entries to restore and no volume to say which one could not be answered.
+    /// </summary>
+    /// <remarks>
+    /// A failure entry would be the alternative, and it is the wrong shape: <see cref="RecycleFailure.Path"/>
+    /// is a path, and there is not one here to name — the group is absent rather than empty, and the two are
+    /// different facts. Which is why the group carries this case's own entry: a runner that flattened first
+    /// and validated after would have moved a payload and then raised, and the file being where it was left
+    /// is what says it did not.
+    /// <para>
+    /// The parameter name is asserted because it is the only thing that says <em>which</em> argument was
+    /// refused, and the message that says "volumes" is what sends a caller looking in the right place.
+    /// </para>
+    /// </remarks>
+    private static async Task ANullVolumeIsRefusedRatherThanRestoredAround(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var neverWritten = new RecycleBinItem(
+            Path.Combine(ScratchWorkspace.Root, "never-written-record.bin"),
+            Path.Combine(ScratchWorkspace.Root, "never-written-payload.bin"),
+            0,
+            false);
+
+        IReadOnlyList<RecycleBinVolumeContents> volumes =
+        [
+            new RecycleBinVolumeContents(ScratchWorkspace.VolumeRoot, [neverWritten]),
+            null!
+        ];
+
+        var thrown = await Check
+            .ThrowsAsync<ArgumentException>(
+                () => RecycleBin.RestoreAsync(volumes, cancellationToken: context.CancellationToken),
+                "a null group raises rather than being reported as an entry that did not come back")
+            .ConfigureAwait(false);
+
+        Check.Equal("volumes", thrown.ParamName, "and the exception names the argument that was refused");
+
+        Check.False(File.Exists(neverWritten.PayloadPath), "while the entry beside it was never moved");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// No groups at all is a call that succeeds and does nothing: the same answer an empty
+    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RecycleBinOptions?, CancellationToken)"/>
+    /// over an empty list gives, and the way to ask for it is to say which list is meant.
+    /// </summary>
+    /// <remarks>
+    /// The argument is typed rather than written as an empty collection expression, and that is the claim as
+    /// much as the result is: both overloads take a first parameter of a different type, so an untyped
+    /// <c>RestoreAsync([])</c> is a call the compiler cannot resolve. A caller who means "nothing" says which
+    /// nothing, and this is what that looks like.
+    /// <para>
+    /// Nothing here reads or writes the Recycle Bin, which is why no volume requirement is declared: a bin
+    /// that is not there is as good a place to assert this as one that is.
+    /// </para>
+    /// </remarks>
+    private static async Task AnEmptyListOfVolumesIsAnEmptyResult(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        IReadOnlyList<RecycleBinVolumeContents> none = [];
+
+        var result = await RecycleBin.RestoreAsync(none, cancellationToken: context.CancellationToken);
+
+        Check.True(result.Succeeded, "an empty call reports having done what it was asked");
+        Check.Equal(0, result.ItemsRestored, "and restored nothing");
+        Check.Equal(0, result.RestoredSize, "of no size");
+        Check.Equal(0, result.RestoredPaths.Count, "so nothing is named");
+        Check.Equal(0, result.Conflicts.Count, "nothing collided");
+        Check.Equal(0, result.Failures.Count, "and nothing failed");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The path a restore reports for an entry it put back where the record says is the one the record
+    /// named: the caller's own spelling from the day it was deleted, including a trailing separator when it
+    /// was deleted from a path written as a directory.
+    /// </summary>
+    /// <remarks>
+    /// <b>The reported path and the path on disk are two readings of one name, and only one of them is
+    /// something a caller can hand to <see cref="File.Exists(string)"/>.</b> The payload is moved to the
+    /// trimmed spelling, because a move is given the name rather than the separator; the answer carries the
+    /// record's, because every other path this library reports is the caller's own spelling kept verbatim
+    /// and a record is the caller's own bytes. So <c>File.Exists</c> is false of a reported directory path
+    /// whose record carries a separator, and <see cref="Directory.Exists(string)"/> is the check that answers
+    /// for it.
+    /// <para>
+    /// A renamed entry is the other reading of the same rule and is not what this case is about: it is
+    /// reported under the free name it landed at rather than under what its record said.
+    /// </para>
+    /// <para>
+    /// This case is what keeps that written down rather than remembered: the README states it, and a
+    /// restore that started trimming the reported path instead would leave the documentation describing a
+    /// behaviour nothing does.
+    /// </para>
+    /// <para>
+    /// The record is written by recycling the very path with the separator on it, which is the only way a
+    /// real bin gets one: <see cref="RecycleBatch"/> writes the normalised path it validated, and
+    /// <see cref="Path.GetFullPath(string)"/> keeps the separator a caller spelled.
+    /// </para>
+    /// </remarks>
+    private static async Task ARestoredPathIsTheOneItsRecordNamed(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var root = Path.Combine(ScratchWorkspace.Root, "spelled-as-a-directory");
+        Directory.CreateDirectory(root);
+
+        var leaf = Path.Combine(root, "leaf.bin");
+        var bytes = RandomBytes(4096);
+        File.WriteAllBytes(leaf, bytes);
+
+        // The separator is on the path handed in, so it is what ends up in the record. Every other case in
+        // this suite recycles a path spelled as a file and could not tell the two readings apart.
+        var spelled = root + Path.DirectorySeparatorChar;
+
+        Check.True(
+            await RecycleBin.RecycleAsync(spelled, cancellationToken: context.CancellationToken),
+            "a directory spelled with a trailing separator recycles like any other");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            spelled);
+
+        Check.True(item.IsDirectory, "and it comes back as the directory it was");
+
+        var result = await RecycleBin.RestoreAsync([item], cancellationToken: context.CancellationToken);
+
+        Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
+        Check.Equal(1, result.RestoredPaths.Count, "the entry is named");
+
+        // The record's spelling, so the reported path and the recorded one are one string.
+        Check.Equal(spelled, result.RestoredPaths[0], "under the path its record named, separator and all");
+        Check.Equal(item.OriginalPath, result.RestoredPaths[0], "which is what the entry was deleted from");
+
+        // The trimmed spelling, so the tree is back and File.Exists is not the check that says so.
+        Check.True(Directory.Exists(root), $"the directory is back at {root}");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(leaf)), "with its file inside it, byte for byte");
+        Check.False(File.Exists(result.RestoredPaths[0]), "and File.Exists is false of the reported spelling, which is why the README says Directory.Exists is the check for it");
 
         workspace.Dispose();
     }

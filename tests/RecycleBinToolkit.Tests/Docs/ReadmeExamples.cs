@@ -11,17 +11,17 @@ namespace RecycleBinToolkit.Tests.Docs;
 
 internal static class ReadmeExamples
 {
-    internal static async Task QuickStart()
-    {
-        await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
-    }
-
     internal static async Task QuickStartWithTheBinItself()
     {
         await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
 
         await RecycleBin.GetItemsAsync();
         await RecycleBin.EmptyAsync(@"W:\");
+    }
+
+    internal static async Task QuickStart()
+    {
+        await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
     }
 
     internal static async Task BatchReportingFailures()
@@ -72,20 +72,13 @@ internal static class ReadmeExamples
             InitialRetryDelay = TimeSpan.FromMilliseconds(100),
             OverallTimeout = TimeSpan.FromSeconds(5),
             ThrowOnError = false,
-            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+            FileConflict = RestoreFileConflict.Rename,
+            DirectoryConflict = RestoreDirectoryConflict.MergeReplace
         };
 
         // ThrowOnError is the global switch: with it off a refusal arrives in Failures instead of raising.
         Console.WriteLine(options.OverallTimeout);
-    }
-
-    internal static void ReadHResult()
-    {
-        var failure = new RecycleFailure(@"W:\x.bin", unchecked((int)0x80270027), 1, RecycleFailureStage.Performing);
-
-        // Success and failure are told apart by the severity bit rather than by comparing with zero.
-        bool moveSucceeded = (failure.HResult & unchecked((int)0x80000000)) == 0;
-        Console.WriteLine(moveSucceeded);
     }
 
     internal static void ResultMembers()
@@ -97,6 +90,15 @@ internal static class ReadmeExamples
         // Succeeded means gone from disk, not necessarily recycled: a file removed permanently under an
         // explicit policy counts as a success. Check PermanentlyDeletedPaths when that matters.
         Console.WriteLine($"{result.Succeeded} {result.Elapsed} {result.FirstFailure is null}");
+    }
+
+    internal static void ReadHResult()
+    {
+        var failure = new RecycleFailure(@"W:\x.bin", unchecked((int)0x80270027), 1, RecycleFailureStage.Performing);
+
+        // Success and failure are told apart by the severity bit rather than by comparing with zero.
+        bool moveSucceeded = (failure.HResult & unchecked((int)0x80000000)) == 0;
+        Console.WriteLine(moveSucceeded);
     }
 
     internal static async Task RecycleOneFile()
@@ -200,6 +202,43 @@ internal static class ReadmeExamples
         foreach (var failure in emptied.Failures)
         {
             Console.Error.WriteLine($"{failure.Path} was not emptied: 0x{failure.HResult:X8}");
+        }
+    }
+
+    internal static async Task RestoreOneItemAndReportWhatWasInItsWay()
+    {
+        var contents = await RecycleBin.GetItemsAsync(@"W:\");
+
+        // One entry of one volume, out of a listing that holds something.
+        var entry = contents.Items[0].Items[0];
+
+        // A path somebody took again while the entry sat in the bin is the ordinary collision. Rename sets
+        // the entry down beside it under the first free name; Skip would leave it in the bin, and Error
+        // would report it as a failure. A directory is its own question — see DirectoryConflict.
+        var options = new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename };
+
+        var result = await RecycleBin.RestoreAsync([entry], options);
+
+        Console.WriteLine($"{result.ItemsRestored} item(s), {result.RestoredSize} byte(s), in {result.Elapsed.TotalMilliseconds:F0} ms");
+
+        // Succeeded is the failures list alone. An entry left in the bin because its path was taken is the
+        // answer Rename asked for, so it is reported here rather than raised.
+        foreach (var path in result.RestoredPaths)
+        {
+            Console.WriteLine($"{path} is back");
+        }
+
+        foreach (var conflict in result.Conflicts)
+        {
+            // Under RestoredRenamed this is where the entry landed, not the path it collided with — which
+            // no record names. Under Skipped it is the path that was occupied.
+            Console.WriteLine($"{conflict.Path} was already there: {conflict.Action}");
+        }
+
+        foreach (var failure in result.Failures)
+        {
+            // Still in the bin, and still worth a second attempt: nothing here is undone.
+            Console.Error.WriteLine($"{failure.Path} did not come back: {failure.Stage} 0x{failure.HResult:X8}");
         }
     }
 

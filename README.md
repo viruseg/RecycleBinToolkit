@@ -1,7 +1,7 @@
 # RecycleBinToolkit
 
 Move files and directories to the Windows Recycle Bin from .NET, with per-item diagnostics that
-tell you *why* an item failed — and read, empty, and inspect the Recycle Bin itself.
+tell you *why* an item failed — and read, restore, empty, and inspect the Recycle Bin itself.
 
 ```csharp
 using RecycleBinToolkit;
@@ -31,6 +31,7 @@ that tell you *why* an item failed:
 | A single bad path aborts the whole queue | Path problems are reported per item and never abort a batch |
 | A path that cannot be described is deleted **permanently** while reporting success | Detected before the move happens; the policy is yours to choose |
 | A delete that lands outside the Recycle Bin is reported as success | The destination is chosen by the library itself, so there is no reported location to disagree with |
+| A delete that cannot be taken back, because nothing knows where the item came from | A restore puts the entry back where its own record says it was deleted from, and reports a conflict or a failure per entry |
 
 ## Why it exists
 
@@ -136,10 +137,12 @@ if (!result.Succeeded)
 | `RecycleBin.RecycleAsync(string? filePath, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<bool>` | Recycles one file or directory. `true` when it is gone from disk. |
 | `RecycleBin.RecycleAsync(IReadOnlyList<string?> filePaths, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinResult>` | Recycles a batch and reports the outcome of every item. |
 | `RecycleBin.GetItemsAsync(string? volumeRoot = null, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinContents>` | Lists what is in the Recycle Bin. |
+| `RecycleBin.RestoreAsync(IReadOnlyList<RecycleBinItem> items, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinRestoreResult>` | Puts listed entries back where their records say they came from. |
+| `RecycleBin.RestoreAsync(IReadOnlyList<RecycleBinVolumeContents> volumes, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinRestoreResult>` | The same, for the volume groups of a listing. |
 | `RecycleBin.EmptyAsync(string? volumeRoot = null, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinEmptyResult>` | Empties it, and reports how much it freed. |
 | `RecycleBin.GetStatusAsync(string volumeRoot, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinStatus>` | Whether it is in use for a volume, and why not if it is not. |
 
-All five are safe to call from any thread.
+All seven are safe to call from any thread.
 
 ### `RecycleAsync(string?, RecycleBinOptions?, CancellationToken)`
 
@@ -190,11 +193,11 @@ token is cancelled. Per-item problems are data, not exceptions.
 ## The Recycle Bin itself
 
 `RecycleBin` is one class, and this is the half of it that looks at the bin from the outside. `RecycleAsync`
-moves items *in*; the three methods below read, empty, and report on what is already there.
+moves items *in*; the four methods below read, restore, empty, and report on what is already there.
 
-All three are batch-shaped: they never throw for an environmental problem. A volume
+All four are batch-shaped: they never throw for an environmental problem. A volume
 that is not mounted or an entry that cannot be described is data in the result, because a service
-that lists or empties drives must survive one unmounted letter.
+that lists, restores, empties or checks drives must survive one unmounted letter.
 
 ### `GetItemsAsync`
 
@@ -218,6 +221,42 @@ A path inside a volume names no volume of its own, and it is refused rather than
 to the volume containing it — as `EmptyAsync` refuses it and `GetStatusAsync` answers it with
 `VolumeNotFound`. Refused rather than answered empty, because an empty listing is a claim about the bin
 and a caller whose root was one character off cannot tell that from a bin that really is empty.
+
+### `RestoreAsync`
+
+Puts entries back where their own records say they were deleted from. Two overloads, taking the same
+arguments after the first:
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `items` | `IReadOnlyList<RecycleBinItem>` | Entries to restore, as a listing returned them. Repeated entries are restored once, the second one reported. |
+| `volumes` | `IReadOnlyList<RecycleBinVolumeContents>` | The volume groups of a listing, or any subset of them. Flattened group by group, in the order given, and restored as one batch. |
+| `options` | `RecycleBinOptions?` | As above. `DirectoryConflict` and `FileConflict` decide what happens to a path that is already occupied. |
+| `cancellationToken` | `CancellationToken` | Cancels the work between entries. A cancelled restore raises and returns nothing: what was already put back is found by listing the bin, not by reading a result. |
+
+**Returns** a [`RecycleBinRestoreResult`](#recyclebinrestoreresult), **never throws** for a per-entry
+problem, and applies no version gate: it reads records and moves payloads, and writes none, so it is
+as available on a machine too old to *write* a record as `GetItemsAsync` is.
+
+The payload is moved back first and its `$I` record deleted second. That order is not
+interchangeable: the other one leaves a payload in `$RECYCLE.BIN` that nothing describes — no listing
+shows it, and no restore can put it back, because a restore needs a record to say where a payload came
+from. This order's failure is the opposite shape and is recoverable: the file is already back where it
+belongs, its entry is still in the bin, and the result says so.
+
+A destination whose parent folders are gone is made on the way — a record names where a thing came
+from and says nothing about the folders on the way to it.
+
+**Exceptions** `ArgumentNullException` when the list is null. `ArgumentException` when one of the
+volume groups is null: a group that is not there has no entries to restore and no volume root to name,
+so there is no path to report it at and nothing to say which volume could not be answered — and nothing
+is attempted, so the groups beside it are untouched. `OperationCanceledException` when the token is
+cancelled. Per-entry problems are data, not exceptions.
+
+> **Overload note.** The two overloads take a first parameter of different types, so an **untyped** empty
+> collection expression does not compile: `RestoreAsync([])` applies to both and C# cannot choose between
+> them. Name the list — `IReadOnlyList<RecycleBinItem> none = [];` or `Array.Empty<RecycleBinItem>()` —
+> and the call resolves. An empty list either way is a call that succeeds and does nothing.
 
 ### `EmptyAsync`
 
@@ -263,7 +302,7 @@ act on.
 
 ### `RecycleBin`
 
-The entry point. A static class with the five methods above. Work runs on the thread pool, so a caller
+The entry point. A static class with the seven methods above. Work runs on the thread pool, so a caller
 never blocks inside the bin.
 
 ### `RecycleBinOptions`
@@ -280,6 +319,13 @@ Immutable; set with object initialisers. Every property has a production default
 | `ThrowOnError` | `bool` | `true` | Whether a failure raises instead of being returned. |
 | `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. |
 | `PreloadItemDetails` | `bool` | `false` | Read every `$I` record during `GetItemsAsync` instead of leaving each entry to read its own on first access. Off by default, because a listing reads no records at all that way. See [Lazy fields](#lazy-fields). |
+| `FileConflict` | `RestoreFileConflict` | `Skip` | What a restore does with a **file** whose path is already occupied. See [`RestoreFileConflict`](#restorefileconflict). |
+| `DirectoryConflict` | `RestoreDirectoryConflict` | `MergeSkip` | What a restore does with a **directory** whose path is already occupied. See [`RestoreDirectoryConflict`](#restoredirectoryconflict). |
+
+Two properties rather than one shared policy, because a directory can be merged into what is
+already there and a file cannot. Neither has anything to do with `ThrowOnError`: a restore is a
+batch, so a conflict is data — resolved ones in `Conflicts`, and the ones an `Error` policy refuses
+in `Failures` as well. No single entry of a restore raises.
 
 ```csharp
 // Every property has a production default, so RecycleBinOptions.Default — which is what a null
@@ -290,7 +336,9 @@ var options = new RecycleBinOptions
     InitialRetryDelay = TimeSpan.FromMilliseconds(100),
     OverallTimeout = TimeSpan.FromSeconds(5),
     ThrowOnError = false,
-    NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
+    NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+    FileConflict = RestoreFileConflict.Rename,
+    DirectoryConflict = RestoreDirectoryConflict.MergeReplace
 };
 
 // ThrowOnError is the global switch: with it off a refusal arrives in Failures instead of raising.
@@ -358,6 +406,8 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `PermanentDeleteFailed` | You asked for a path to be removed for good — because its volume cannot recycle it and `NoRecycleBinAction` was `NoRecycleBinAction.DeletePermanently` — but the file system refused: a handle is held, the attributes are read-only. The file is exactly as you left it. |
 | `Enumeration` | An entry in the Recycle Bin could not be read or removed, or a volume could not be read. Only reachable while reading or emptying the Recycle Bin. |
 | `VolumeGuidPathNotAddressable` | The path names its volume by GUID, as `\\?\Volume{GUID}\…`. The volume has no drive letter to be measured, emptied or reported against, so the path was refused before anything was asked: `Attempts` is `0` and `HResult` is `0`. Address the same location by drive letter or mount point instead. |
+| `RestoreFailed` | Only reachable while restoring. An entry's payload would not move, its record would not go, or its record could not be read to say where it belonged — in which case `Path` is the entry's own `$I` record inside the bin, the only path it carries without reading that record. A file of a merged directory that could not be placed arrives here under its own path rather than the directory's. The entry is still in the Recycle Bin, so a second attempt is worth making; the one exception is a payload that had already moved and only its record was left, and then the file is on disk and the next attempt meets a conflict instead. |
+| `RestoreConflictRefused` | Only reachable while restoring, and only under `FileConflict` or `DirectoryConflict` set to `Error`. The path was already occupied, nothing on disk was touched, and the entry stays in the bin. Every other policy reports the same event in `Conflicts` alone and leaves `Succeeded` true, so this stage is what opting into `Error` gets instead. `Attempts` and `HResult` are both `0`: the refusal is settled before any move. |
 
 `HResult` carries the file system's code where the file system refused, or `0` where nothing was
 attempted. Test `(HResult & 0x80000000) != 0` to tell a refusal from a success code.
@@ -392,9 +442,9 @@ One entry in the Recycle Bin. Immutable.
 
 There is no `Name`: it is the last component of `OriginalPath`.
 
-**There is no `RecycledPath`, so a listed entry cannot be restored from this listing.** To put an
-entry back, walk the bin yourself — `<volume>$RECYCLE.BIN\<SID>\`, where each entry is a `$I`
-record and a `$R` payload — as Explorer's own Restore does.
+**An entry is put back by handing it to [`RestoreAsync`](#restoreasync).** There is still no
+`RecycledPath`: the path an entry came from *is* `OriginalPath`, and a restore moves the payload back
+there, which is what Explorer's own Restore does over the same records.
 
 #### Lazy fields
 
@@ -512,6 +562,101 @@ The outcome of an empty. Immutable.
 | `BytesFreed` | `long` | Bytes they occupied. Measured, never negative. |
 | `Failures` | `IReadOnlyList<RecycleFailure>` | Volumes that could not be emptied or measured. |
 | `Elapsed` | `TimeSpan` | Wall-clock time the caller waited. |
+
+### `RecycleBinRestoreResult`
+
+The outcome of a restore. Immutable.
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `RestoredPaths` | `IReadOnlyList<string>` | Where each entry now is, in full, in the order it was asked for. |
+| `Conflicts` | `IReadOnlyList<RecycleRestoreConflict>` | Paths that were already occupied, and what was done about them. |
+| `Failures` | `IReadOnlyList<RecycleFailure>` | Entries that did not come back. Empty when `Succeeded`. |
+| `ItemsRestored` | `long` | Entries that left the Recycle Bin. Never negative, never more than the number handed in. |
+| `RestoredSize` | `long` | Bytes those entries carried back, taken from their own records rather than measured afterwards. |
+| `Elapsed` | `TimeSpan` | Wall-clock time the caller waited, including queueing behind other work. |
+| `Succeeded` | `bool` | `true` when nothing failed — decided by `Failures` alone, and not by `Conflicts`. |
+
+Each list keeps the relative order the entries were handed in, so a caller reading two of them can still
+say which came before which. It is **not** an index you can line up against the input: a list holds only
+the entries that belong in it, so one entry of three may appear in none of the three.
+
+`Succeeded` is `true` for a restore that skipped everything it was asked about. An entry left in the bin
+because its path was taken is the answer `Skip` asks for, not a failure to report it as one; only the two
+`Error` policies move an entry into `Failures` as well.
+
+**An entry that was put back where its record says is reported under that path — your own spelling from
+the day it was deleted, trailing separator and all.** The payload is moved to the trimmed name, because a
+move is given a name rather than a separator, so `File.Exists` is false of a restored *directory* whose
+record carries one and `Directory.Exists` is the check that answers for it. Every other path this library
+reports is the caller's own spelling kept verbatim, and a record is the caller's own bytes. A renamed
+entry is the other reading of the same rule: it is reported under the free name it landed at, because that
+is where it is.
+
+Nothing here is undone afterwards: a merge that did not finish stays merged, and this result is the only
+place that says so.
+
+### `RecycleRestoreConflict`
+
+One path that was already occupied when a restore reached it, and what was done about it. Reported rather
+than raised — a conflict is an outcome the caller asked about by choosing a policy, and a batch that hits
+one carries on with the entries after it.
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `Path` | `string` | The path the item wanted — except under `RestoredRenamed` and `MergedRenamed`, where it is where the item landed. The path it collided at is then named by no record in the result; the item is in `RestoredPaths` either way. |
+| `OccupiedByDirectory` | `bool` | Whether what stood in the way is a directory rather than a file. Always about the collided path, never about the free name the item was set down under. |
+| `Action` | `RecycleRestoreConflictAction` | What was done about it. |
+
+One enumerator rather than one per policy, because a caller reads this to answer a single question — what
+was in the way, and what was done about the item that wanted it. The policies differ on the answer, not
+on the question.
+
+#### `RecycleRestoreConflictAction`
+
+| Value | Meaning |
+| --- | --- |
+| `Skipped` | Nothing on disk was touched and the entry is still in the Recycle Bin. This is also what an `Error` policy reports, in `Conflicts` rather than in `Failures`. |
+| `RestoredRenamed` | The entry was set down whole beside the occupied path, under the first free name. |
+| `MergedSkipped` | A merge left a file that was in the way alone, and the incoming file went back into the Recycle Bin as an entry of its own. Under `MergeSkip` — the default — one record carries the directory's name rather than one per file that gave way, because nothing about those files was resolved. |
+| `MergedReplaced` | A merge overwrote a file that was in the way. One record per file, under `MergeReplace`. |
+| `MergedRenamed` | A merge set an incoming file down under a free name of its own, `report.txt` becoming `report (1).txt`. One record per file, and `Path` is where that file ended up. |
+
+### `RestoreFileConflict`
+
+What a restore does with a **file** whose original path is already occupied.
+
+| Value | Effect |
+| --- | --- |
+| `Skip` | The default. The entry stays in the Recycle Bin and nothing on disk is touched — the only value that cannot destroy anything you did not ask to destroy, because the incoming file is the one that gives way and it is still in the bin afterwards. |
+| `Replace` | The file already there is overwritten. That is your own file and your own instruction; it does not extend to a directory, which is never replaced whole. |
+| `Rename` | The entry is set down beside the occupied path under the first free name. The number starts at one and the extension is kept, splitting on the last dot, so `archive.tar.gz` becomes `archive.tar (1).gz`. Nothing already on disk is renamed, moved or removed. |
+| `Error` | As `Skip`, and the entry is reported in `Failures` as well — so `Succeeded` is `false`, while the operation still carries on with the entries after it. |
+
+A destination occupied by the *other* kind is a conflict like any other, and the policy applied is the
+one for the kind arriving. So `Replace` onto a directory has nothing to overwrite and is reported as a
+failure at stage `RestoreFailed`, with everything on disk left exactly as it was.
+
+### `RestoreDirectoryConflict`
+
+What a restore does with a **directory** whose original path is already occupied.
+
+| Value | Effect |
+| --- | --- |
+| `MergeSkip` | The default, for the same reason. The directory's contents are merged into the one already there, and every file of the same name already there is left exactly as it is. A file that does not fit is not left inside the payload — that payload is deleted once the directory is dealt with and the file would go with it — so it goes back into the Recycle Bin as an entry of its own, restorable later by the same call. |
+| `MergeReplace` | As above, overwriting each file of the same name already there. A subdirectory of the same name is merged rather than replaced: the only way to replace a directory is to delete what is there first and find out afterwards whether the move was possible, and those bytes are yours. |
+| `MergeRename` | As above, setting each incoming file that clashes down under a free name of its own. |
+| `RenameDirectory` | The whole tree is set down beside the one already there under a free name, contents merged with nothing. The tree arrives as it was, so nothing inside it has to agree with anything outside it. |
+| `Skip` | The entry stays in the Recycle Bin and nothing on disk is touched — not even the missing parent folders, so an item that is not put back leaves nothing behind. |
+| `Error` | As `Skip`, and the entry is reported in `Failures` as well, so `Succeeded` is `false`. |
+
+No value writes outside the directory you named, and none touches a directory the restore was not
+restoring: what is already on disk is left alone, overwritten, or set beside — never renamed, moved or
+removed.
+
+A destination nothing occupies is a whole-directory move, not a walk of what is inside it. A destination
+that *is* occupied is a merge walk, and the three merge modes report one conflict per file they settle —
+except `MergeSkip`, which reports the directory once.
 
 ### `RecycleBinStatus`
 
@@ -659,6 +804,47 @@ Console.WriteLine($"freed {emptied.BytesFreed} byte(s) from {emptied.ItemsRemove
 foreach (var failure in emptied.Failures)
 {
     Console.Error.WriteLine($"{failure.Path} was not emptied: 0x{failure.HResult:X8}");
+}
+```
+
+### Restore one item, and report what was in its way
+
+The [overloads](#restoreasync) are batch-shaped like the three above, so a restore reports rather than
+raises: what came back, what something was already sitting on, and what did not move at all.
+
+```csharp
+var contents = await RecycleBin.GetItemsAsync(@"W:\");
+
+// One entry of one volume, out of a listing that holds something.
+var entry = contents.Items[0].Items[0];
+
+// A path somebody took again while the entry sat in the bin is the ordinary collision. Rename sets
+// the entry down beside it under the first free name; Skip would leave it in the bin, and Error
+// would report it as a failure. A directory is its own question — see DirectoryConflict.
+var options = new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename };
+
+var result = await RecycleBin.RestoreAsync([entry], options);
+
+Console.WriteLine($"{result.ItemsRestored} item(s), {result.RestoredSize} byte(s), in {result.Elapsed.TotalMilliseconds:F0} ms");
+
+// Succeeded is the failures list alone. An entry left in the bin because its path was taken is the
+// answer Rename asked for, so it is reported here rather than raised.
+foreach (var path in result.RestoredPaths)
+{
+    Console.WriteLine($"{path} is back");
+}
+
+foreach (var conflict in result.Conflicts)
+{
+    // Under RestoredRenamed this is where the entry landed, not the path it collided with — which
+    // no record names. Under Skipped it is the path that was occupied.
+    Console.WriteLine($"{conflict.Path} was already there: {conflict.Action}");
+}
+
+foreach (var failure in result.Failures)
+{
+    // Still in the bin, and still worth a second attempt: nothing here is undone.
+    Console.Error.WriteLine($"{failure.Path} did not come back: {failure.Stage} 0x{failure.HResult:X8}");
 }
 ```
 
@@ -846,6 +1032,10 @@ the engine, over whatever the entry point resolved
    ├─ NativeRecycleRunner     record first, then the move; retries are per path
    ├─ NativeBinLister         pairs from the walk, every volume at once; records only under PreloadItemDetails
    └─ NativeBinEmptier        payload first, then the record, counted from the walk
+
+the restore engine, over the entries a listing handed back
+   ├─ RestoreRunner           payload first, then the record; one answer per entry, in the caller's order
+   └─ RestorePathPlanner      what is in the way of a path, and what to do about the item that wanted it
 
 RecycleBinContents.LoadItemDetails  warms a listing after the fact
   └─ ItemDetailLoader        one volume at a time, at that volume's own degree of parallelism

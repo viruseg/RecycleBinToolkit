@@ -362,6 +362,70 @@ public static class RecycleBin
     }
 
     /// <summary>
+    /// Restores every entry in every volume group of a listing, to the paths they were deleted from.
+    /// </summary>
+    /// <param name="volumes">
+    /// The groups to restore, as <see cref="RecycleBinContents.Items"/> returned them — or any subset of
+    /// them, filtered by the caller. A group holding nothing contributes nothing. A
+    /// <see langword="null"/> group is an <see cref="ArgumentException"/> rather than a failure entry: it has
+    /// no entries to restore and no volume root to name, so there is no path to report it at and nothing to
+    /// say which volume could not be answered.
+    /// </param>
+    /// <param name="options">
+    /// Settings. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>.
+    /// <see cref="RecycleBinOptions.DirectoryConflict"/> and <see cref="RecycleBinOptions.FileConflict"/>
+    /// decide what a restore does about a path that is already occupied.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the work between entries.</param>
+    /// <returns>
+    /// What every entry became, in the order the groups were passed in and the entries sat inside them.
+    /// </returns>
+    /// <remarks>
+    /// The groups are flattened and handed to the entry overload, so the answer of a group of fifty volumes
+    /// is the answer of the fifty thousand entries they hold rather than fifty answers. Which volume an entry
+    /// came from is settled by its own record path and not by the group it arrived in, so a caller may hand
+    /// the same entry in more than once and it is restored once, as it would be in a flat list.
+    /// <para>
+    /// Everything else is as
+    /// <see cref="RestoreAsync(IReadOnlyList{RecycleBinItem}, RecycleBinOptions?, CancellationToken)"/>
+    /// promises: each entry's outcome is reported on its own, the elapsed time covers the wait, and no
+    /// machine gate applies because nothing here writes an index record.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="volumes"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">
+    /// One of the groups is <see langword="null"/>. Nothing was attempted and every other group was left
+    /// alone, because the argument is settled before any entry is read.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before the work started, or between entries.
+    /// </exception>
+    /// <exception cref="IOException">
+    /// An entry's payload would not move, or its record would not go — see the entry overload for what
+    /// each of those leaves behind.
+    /// </exception>
+    public static async Task<RecycleBinRestoreResult> RestoreAsync(
+        IReadOnlyList<RecycleBinVolumeContents> volumes,
+        RecycleBinOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(volumes);
+
+        if (volumes.Any(volume => volume is null))
+        {
+            throw new ArgumentException(
+                "A volume group was null. A group that is not there has no entries to restore and no volume root to name.",
+                nameof(volumes));
+        }
+
+        return await RestoreAsync(
+                RecycleBinVolumeContents.Flatten(volumes),
+                options,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Reports whether the Recycle Bin is in use for a volume, and why.
     /// </summary>
     /// <param name="volumeRoot">Volume root to inspect, such as <c>"X:\\"</c>.</param>

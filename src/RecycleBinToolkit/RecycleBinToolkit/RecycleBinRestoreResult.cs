@@ -51,6 +51,13 @@ public sealed class RecycleBinRestoreResult
     /// now has rather than the one it was deleted from. A stale path in a successful result is worse than
     /// one more thing the caller has to read.
     /// <para>
+    /// An item that was put back where its record said is reported under that record's own spelling, which
+    /// is the spelling the caller used on the day the item was deleted. That spelling may end in a
+    /// directory separator — <see cref="Path.GetFullPath(string)"/> keeps one — and a move is given the
+    /// trimmed name, so <see cref="File.Exists(string)"/> answers <see langword="false"/> of a reported
+    /// directory that has one where <see cref="Directory.Exists(string)"/> answers <see langword="true"/>.
+    /// </para>
+    /// <para>
     /// An item the caller handed in that was skipped is not here — it is in <see cref="Conflicts"/> under
     /// <see cref="RecycleRestoreConflictAction.Skipped"/>. A file that was inside a directory is not such
     /// an item: under <see cref="RestoreDirectoryConflict.MergeSkip"/> the directory carries its own
