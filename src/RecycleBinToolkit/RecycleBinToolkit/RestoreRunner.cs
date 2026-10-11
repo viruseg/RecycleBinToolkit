@@ -663,9 +663,9 @@ internal static class RestoreRunner
             {
                 switch (decision.Action)
                 {
-                    case RestoreAction.Move when Merges(item, decision, options):
-                        slots[position] = Merge(item, decision.TargetPath, options, putBack, cancellationToken);
-                        break;
+                case RestoreAction.Move when Merges(item, decision, options):
+                    slots[position] = Merge(item, decision.TargetPath, options, putBack, attempt, cancellationToken);
+                    break;
 
                     // The three that put a payload down share one arm, because they differ only in the kind
                     // they report and in whether the move is an overwrite — and a retry loop is what they have
@@ -1021,6 +1021,10 @@ internal static class RestoreRunner
     /// <param name="targetPath">The path the record named, which is a directory that is already there.</param>
     /// <param name="options">The normalised settings the restore runs under.</param>
     /// <param name="putBack">The guard the put-back is written behind.</param>
+    /// <param name="attempt">
+    /// The attempt this entry was on, which a merge that could not finish is reported at: a merge answers
+    /// rather than raising, so this is the same count every other failed placement of this entry would carry.
+    /// </param>
     /// <param name="cancellationToken">Cancels the walk between entries.</param>
     /// <returns>
     /// What became of the entry. A merge that could not finish is
@@ -1056,6 +1060,7 @@ internal static class RestoreRunner
         string targetPath,
         RecycleBinOptions options,
         SemaphoreSlim putBack,
+        int attempt,
         CancellationToken cancellationToken)
     {
         var state = new MergeState();
@@ -1098,7 +1103,7 @@ internal static class RestoreRunner
             {
                 OccupiedByDirectory = true,
                 HResult = refused.Value,
-                Attempts = 1,
+                Attempts = attempt,
                 MergeConflicts = state.Conflicts,
                 MergeFailures = state.Failures
             };
