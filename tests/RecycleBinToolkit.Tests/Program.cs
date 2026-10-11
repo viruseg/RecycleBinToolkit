@@ -20,4 +20,5 @@ return await TestRunner.RunAsync(args,
         .Concat(EmptySuite.Cases)
         .Concat(StatusSuite.Cases)
         .Concat(RegistrySuite.Cases)
+        .Concat(RestoreSuite.Cases)
         .ToArray());

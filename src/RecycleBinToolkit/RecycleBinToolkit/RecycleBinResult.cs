@@ -61,7 +61,34 @@ public enum RecycleFailureStage
     /// Nothing was attempted, which is what <see cref="RecycleFailure.Attempts"/> reports as zero.
     /// </para>
     /// </remarks>
-    VolumeGuidPathNotAddressable = 9
+    VolumeGuidPathNotAddressable = 9,
+
+    /// <summary>
+    /// An item in the Recycle Bin could not be restored: its payload would not move, its record would not
+    /// go, or the record could not be read to say where it belonged. Only reachable while restoring.
+    /// </summary>
+    /// <remarks>
+    /// While a directory is being merged this is also where a file of its tree that could not be placed
+    /// arrives, under that file's own path rather than the directory's.
+    /// <para>
+    /// The item is still in the Recycle Bin, which is what makes a second attempt worth making. The one
+    /// exception is a payload that had already moved and only its record was left: the file is on disk
+    /// then, and the next attempt meets a conflict rather than this.
+    /// </para>
+    /// </remarks>
+    RestoreFailed = 10,
+
+    /// <summary>
+    /// The path a restore wanted was already occupied and the caller asked for that to be an error rather
+    /// than a conflict to resolve.
+    /// </summary>
+    /// <remarks>
+    /// What was in the way was not touched, and the item stays in the Recycle Bin. Under
+    /// <see cref="RestoreFileConflict.Skip"/> or <see cref="RestoreDirectoryConflict.Skip"/> the same
+    /// situation arrives in <see cref="RecycleBinRestoreResult.Conflicts"/> alone, and the result still
+    /// succeeded.
+    /// </remarks>
+    RestoreConflictRefused = 11
 }
 
 /// <summary>

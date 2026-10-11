@@ -385,10 +385,12 @@ internal static class ContractSuite
         Check.Equal(7, (int)RecycleFailureStage.PermanentDeleteFailed, "PermanentDeleteFailed keeps number 7");
         Check.Equal(8, (int)RecycleFailureStage.NoRecycleBinOnVolume, "NoRecycleBinOnVolume keeps number 8, declared above the two that follow it in the source");
         Check.Equal(9, (int)RecycleFailureStage.VolumeGuidPathNotAddressable, "VolumeGuidPathNotAddressable takes number 9");
+        Check.Equal(10, (int)RecycleFailureStage.RestoreFailed, "RestoreFailed takes number 10, past every stage that existed before a restore");
+        Check.Equal(11, (int)RecycleFailureStage.RestoreConflictRefused, "RestoreConflictRefused takes number 11, after it");
         Check.Equal(
-            6,
+            8,
             Enum.GetValues<RecycleFailureStage>().Length,
-            "six stages survive, so a new stage that reuses a gap is caught here rather than in a caller's persisted value");
+            "eight stages survive, so a new stage that reuses a gap is caught here rather than in a caller's persisted value");
 
         return Task.CompletedTask;
     }

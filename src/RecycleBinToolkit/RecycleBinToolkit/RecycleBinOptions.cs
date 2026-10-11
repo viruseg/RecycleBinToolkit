@@ -81,9 +81,38 @@ public sealed class RecycleBinOptions
     public bool PreloadItemDetails { get; init; }
 
     /// <summary>
+    /// What a restore does with a directory whose original path is already occupied. The default is
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, which merges and leaves what is already there
+    /// as it is.
+    /// </summary>
+    /// <remarks>
+    /// It says nothing about <see cref="ThrowOnError"/>: a restore is a batch, so a conflict is data —
+    /// resolved ones in <see cref="RecycleBinRestoreResult.Conflicts"/>, and the ones
+    /// <see cref="RestoreDirectoryConflict.Error"/> refuses in <see cref="RecycleBinRestoreResult.Failures"/>
+    /// as well. No single item raises.
+    /// </remarks>
+    public RestoreDirectoryConflict DirectoryConflict { get; init; } = RestoreDirectoryConflict.MergeSkip;
+
+    /// <summary>
+    /// What a restore does with a file whose original path is already occupied. The default is
+    /// <see cref="RestoreFileConflict.Skip"/>, which leaves the file where the caller put it and leaves
+    /// the item in the Recycle Bin.
+    /// </summary>
+    /// <remarks>
+    /// Two properties rather than one shared policy, because a directory can be merged into what is
+    /// already there and a file cannot; see <see cref="RestoreDirectoryConflict"/> for the other half.
+    /// </remarks>
+    public RestoreFileConflict FileConflict { get; init; } = RestoreFileConflict.Skip;
+
+    /// <summary>
     /// Returns a copy with out-of-range values clamped into a usable range, so an unvalidated
     /// caller-supplied instance cannot produce a zero-attempt or negative-delay loop.
     /// </summary>
+    /// <remarks>
+    /// Every property is named here, because a property this initialiser does not mention is not clamped
+    /// but reset — silently, on every internal call, back to the property initialiser's default. A caller
+    /// who asked for one behaviour would get another with nothing raised and nothing reported.
+    /// </remarks>
     internal RecycleBinOptions Normalize() => new()
     {
         MaxAttempts = Math.Max(1, MaxAttempts),
@@ -91,7 +120,9 @@ public sealed class RecycleBinOptions
         OverallTimeout = ClampTimeout(OverallTimeout),
         ThrowOnError = ThrowOnError,
         NoRecycleBinAction = NoRecycleBinAction,
-        PreloadItemDetails = PreloadItemDetails
+        PreloadItemDetails = PreloadItemDetails,
+        DirectoryConflict = DirectoryConflict,
+        FileConflict = FileConflict
     };
 
     /// <summary>
