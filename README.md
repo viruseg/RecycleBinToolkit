@@ -1211,12 +1211,12 @@ covered by their own suites. The default run writes only inside the directory it
 `--scratch`. On a volume with no Recycle Bin the cases that recycle there skip rather than fail, and
 the cases that are about such a volume run instead of skipping.
 
-**Of the 210 cases, `--all` runs 206.** Four are load cases that run only on request: the ten-cycle stress
+**Of the 211 cases, `--all` runs 207.** Four are load cases that run only on request: the ten-cycle stress
 run, and the three cases that each move the whole 94-file fixture set in one call.
 `--all` and `--filter` never run them — `--load` runs those four cases and nothing else. Nothing is
 covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
 and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
-The remainder is the volume's decision rather than a flag's: **196 pass and 10 skip** where there is a
+The remainder is the volume's decision rather than a flag's: **197 pass and 10 skip** where there is a
 bin, with nothing failing, measured by one `--all` on `D:`. The collision case has since gained the
 refusal a recycle cannot raise and was re-run on its own there; the counts are the run's. A volume with no
 Recycle Bin and a share are both unmeasured

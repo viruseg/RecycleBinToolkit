@@ -45,6 +45,14 @@ internal static class NativeBinLayout
     internal const int StemLength = 6;
 
     /// <summary>
+    /// How many distinct stems <see cref="StemLength"/> characters over <see cref="StemAlphabet"/> can
+    /// spell: thirty-six to the sixth, which is 2,176,782,336. The space is what makes an entry's name
+    /// identifiable without reading its record, and it is the reason
+    /// <see cref="BinStemSequencer"/> can run out of indices only on a bin no caller has.
+    /// </summary>
+    internal const long StemSpace = 2176782336;
+
+    /// <summary>
     /// The SID of the user this process runs as, which names the one bin directory this library reads and
     /// writes. The same one the Shell folder shows an unelevated caller.
     /// </summary>
@@ -89,23 +97,99 @@ internal static class NativeBinLayout
         return directory;
     }
 
-    /// <summary>
-    /// The random part an entry two names share.
+/// <summary>
+    /// Six characters drawn at random from the alphabet Windows uses.
     /// </summary>
     /// <param name="destination">Receives <see cref="StemLength"/> characters from the alphabet Windows uses.</param>
     /// <remarks>
-    /// Nothing is probed, and that is the whole point. Both names this becomes are refused by the
+    /// <b>The fallback, not the ordinary answer.</b> <see cref="BinStemSequencer"/> hands out names that
+    /// climb, because a directory's index is ordered and appending at its right edge keeps every write of
+    /// a batch in the same leaf instead of scattering them over a million kilobytes of index. This is what
+    /// that sequencer falls back on: a bin directory it could not walk, and a stem space it has used up.
+    /// Neither is a shape an ordinary delete is in.
+    /// <para>
+    /// What the two paths share is that nothing is probed. Both names this becomes are refused by the
     /// filesystem if they are taken — the record is created with <see cref="FileMode.CreateNew"/>, which
-    /// fails rather than overwriting, and a move onto a name that exists fails rather than replacing it.
-    /// A payload left behind by a crash with no record of its own therefore cannot be overwritten and
+    /// fails rather than overwrites, and a move onto a name that exists fails rather than replacing it. A
+    /// payload left behind by a crash with no record of its own therefore cannot be overwritten and
     /// cannot be silently joined to the wrong record; it costs the caller one path that did not move, and
     /// the caller gives that path a fresh name.
-    /// <para>
-    /// Asking first would be a filesystem round trip on every path in the batch to avoid that, against a
-    /// collision of about one name in thirty-six to the sixth — two in a billion. That trade is not close.
     /// </para>
     /// </remarks>
-    internal static void NextStem(Span<char> destination) => NextStemInto(destination);
+    internal static void NextStem(Span<char> destination)
+    {
+        for (var i = 0; i < destination.Length; i++)
+        {
+            destination[i] = StemAlphabet[Random.Shared.Next(StemAlphabet.Length)];
+        }
+    }
+
+    /// <summary>
+    /// Writes the stem that names <paramref name="index"/>, most significant character first and padded with
+    /// leading zeros so every stem is the same length.
+    /// </summary>
+    /// <param name="destination">Receives exactly <see cref="StemLength"/> characters.</param>
+    /// <param name="index">
+    /// Which stem, from zero. Anything below <see cref="StemSpace"/> is spellable in
+    /// <see cref="StemLength"/> characters; a caller holding a larger one has run out of the space and is
+    /// asked to fall back to <see cref="NextStem"/> instead.
+    /// </param>
+    internal static void FormatStem(Span<char> destination, long index)
+    {
+        for (var i = destination.Length - 1; i >= 0; i--)
+        {
+            destination[i] = StemAlphabet[(int)(index % StemAlphabet.Length)];
+            index /= StemAlphabet.Length;
+        }
+    }
+
+    /// <summary>
+    /// Reads back what <see cref="FormatStem"/> wrote, which is what lets one name be compared with
+    /// another without a second field to carry the comparison in.
+    /// </summary>
+    /// <param name="stem">The characters that follow an entry's marker and half-letter.</param>
+    /// <param name="index">Receives which stem it is.</param>
+    /// <returns>
+    /// <see langword="false"/> when any character is outside <see cref="StemAlphabet"/>, which is the
+    /// answer for a name that is not one of this format's rather than an exception — the caller is walking
+    /// a directory that holds whatever else was ever put in it, and one foreign name is not a reason to
+    /// stop.
+    /// </returns>
+    /// <remarks>
+    /// Both cases are accepted, because a directory index is case-insensitive and a name is not
+    /// obliged to arrive in the case it was created in.
+    /// </remarks>
+    internal static bool TryParseStem(ReadOnlySpan<char> stem, out long index)
+    {
+        long value = 0;
+
+        foreach (var character in stem)
+        {
+            var digit = DigitValue(character);
+
+            if (digit < 0)
+            {
+                index = 0;
+                return false;
+            }
+
+            value = (value * StemAlphabet.Length) + digit;
+        }
+
+        index = value;
+        return true;
+    }
+
+    /// <summary>
+    /// Where a character sits in <see cref="StemAlphabet"/>, or <c>-1</c> for a character that is not in it.
+    /// </summary>
+    private static int DigitValue(char character) => character switch
+    {
+        >= 'A' and <= 'Z' => character - 'A',
+        >= 'a' and <= 'z' => character - 'a',
+        >= '0' and <= '9' => (character - '0') + 26,
+        _ => -1,
+    };
 
     /// <summary>
     /// The path a record of the given stem is to be written to.
@@ -274,13 +358,5 @@ internal static class NativeBinLayout
         head[at++] = IndexPrefix;
 
         return string.Concat(directory, head, name[2..]);
-    }
-
-    private static void NextStemInto(Span<char> destination)
-    {
-        for (var i = 0; i < destination.Length; i++)
-        {
-            destination[i] = StemAlphabet[Random.Shared.Next(StemAlphabet.Length)];
-        }
     }
 }

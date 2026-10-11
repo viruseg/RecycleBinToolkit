@@ -71,10 +71,11 @@ internal static class NativeRecycleRunner
         var recycled = new List<string>(collapsed.Count);
         var failuresByPath = new Dictionary<string, RecycleFailure>(collapsed.Count, StringComparer.OrdinalIgnoreCase);
 
-        // One bin directory per volume, created at most once for the whole operation. Every path on a
-        // volume needs it, and asking the filesystem to make a directory that already exists is a round
-        // trip that answers "yes" — twenty thousand of them on a twenty-thousand-path batch.
-        var bins = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // One bin directory per volume, created at most once for the whole operation, and one sequencer of
+        // names beside it for the same reason: twenty thousand paths on one volume need the directory made
+        // once and the names handed out from one counter, and twenty thousand of either is twenty thousand
+        // round trips the caller should not be paying.
+        var bins = new Dictionary<string, (string Path, BinStemSequencer Stems)>(StringComparer.OrdinalIgnoreCase);
 
         // Taken once, before the loop, because the budget it bounds is the batch's and not each round's.
         // Added here rather than inside the wait it is checked by: a deadline recomputed there is a fresh
@@ -92,7 +93,7 @@ internal static class NativeRecycleRunner
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (TryRecycle(target, bins, out var failure))
+                if (TryRecycle(target, bins, cancellationToken, out var failure))
                 {
                     recycled.Add(target.InputPath);
                     continue;
@@ -164,7 +165,7 @@ internal static class NativeRecycleRunner
     /// order leaves data that is gone and recorded nowhere, which is the one outcome a Recycle Bin exists to
     /// prevent.
     /// </remarks>
-    private static bool TryRecycle(RecycleTarget target, Dictionary<string, string> bins, out RecycleFailure? failure)
+    private static bool TryRecycle(RecycleTarget target, Dictionary<string, (string Path, BinStemSequencer Stems)> bins, CancellationToken cancellationToken, out RecycleFailure? failure)
     {
         var root = Path.GetPathRoot(target.FullPath);
 
@@ -174,10 +175,11 @@ internal static class NativeRecycleRunner
             return false;
         }
 
-        if (!bins.TryGetValue(root, out var binDirectory))
+        if (!bins.TryGetValue(root, out var bin))
         {
-            binDirectory = NativeBinLayout.EnsureBinDirectory(root);
-            bins.Add(root, binDirectory);
+            var binDirectory = NativeBinLayout.EnsureBinDirectory(root);
+            bin = (binDirectory, new BinStemSequencer(binDirectory, cancellationToken));
+            bins.Add(root, bin);
         }
 
         var isDirectory = target.IsDirectory;
@@ -187,10 +189,10 @@ internal static class NativeRecycleRunner
 
         for (var attempt = 1; ; attempt++)
         {
-            NativeBinLayout.NextStem(stem);
+            bin.Stems.Next(stem);
 
-            var indexPath = NativeBinLayout.IndexPath(binDirectory, stem, extension);
-            var payloadPath = NativeBinLayout.PayloadPath(binDirectory, stem, extension);
+            var indexPath = NativeBinLayout.IndexPath(bin.Path, stem, extension);
+            var payloadPath = NativeBinLayout.PayloadPath(bin.Path, stem, extension);
 
             try
             {
@@ -202,8 +204,8 @@ internal static class NativeRecycleRunner
             catch (IOException ex) when (attempt < NameCollision.NameAttempts && NameCollision.IsTaken(ex))
             {
                 // The record's name was taken. CreateNew refused rather than overwriting somebody else's
-                // record, which is the check working; a fresh name is the answer, and generating one costs
-                // six random numbers.
+                // record, which is the check working; a fresh name is the answer, and the counter
+                // above has already moved on past the one that was taken.
                 continue;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)

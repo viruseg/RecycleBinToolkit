@@ -67,10 +67,10 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 210 registered cases, of which four are load cases, so `--all` runs 206 of them. The rest is
+There are 211 registered cases, of which four are load cases, so `--all` runs 207 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
 cases that recycle one and runs the cases that are about a volume with no bin. On `D:`, which has a bin:
-**196 pass and 10 skip**, with nothing failing — measured by one `--all` on `D:`. The collision case has
+**197 pass and 10 skip**, with nothing failing — measured by one `--all` on `D:`. The collision case has
 since gained the refusal a recycle cannot raise and was re-run on its own there; the counts are the run's.
 A volume with no bin and a share are both unmeasured
 here: measure before quoting either. `--all` prints the counts, so a count in a document that disagrees
@@ -294,6 +294,31 @@ Two measurements that are worth not re-deriving:
 
 Do not add parallelism to the recycle path. If a future measurement on some other hardware says
 otherwise, that measurement goes here first, and the constant it changed goes in the same commit.
+
+### The name a delete is given, and nothing measured about it
+
+Entry names climb: `$I000000.ext`, `$I000001.ext`, and so on, where before each was six characters
+drawn at random. `BinStemSequencer` walks the bin once per volume per operation, puts every stem it
+finds into a `HashSet<long>`, and hands out the lowest one not in it. Two consequences are worth writing
+down and one is a trap.
+
+The trap is that the set is **not** what keeps a name from being overwritten. `NativeIndexFile.Write`
+still creates with `FileMode.CreateNew`, and a refusal carrying a taken name's code is still
+`NameCollision.IsTaken`'s to judge — that is unchanged, and a name another process created between the
+walk and the create is answered by it exactly as before. Anything that treats the set as the authority is
+reintroducing the overwrite this library does not do.
+
+The consequence worth knowing is that **the stem is the key, not the stem with its extension**. A set
+keyed on the name minus its marker would let `$I000000.txt` and `$I000000.bin` both exist, hand one
+index to two files whose extensions differ, and put each write at a different end of the directory's
+index — which is the scattering the order was for.
+
+**Nothing here is measured.** The hypothesis is that writes clustered at one leaf of a directory's index
+are cheaper than writes scattered over many, and no figure has been taken for it: not before, not after,
+not on either kind of volume. Anyone quoting a speed-up for this is quoting something that was not
+measured. The walk itself is a cost the previous code did not pay — one directory listing per volume per
+operation, which a delete of a single file into a full bin now carries and a delete of ten thousand at
+once would have paid anyway — and it has not been weighed against anything either.
 
 ---
 

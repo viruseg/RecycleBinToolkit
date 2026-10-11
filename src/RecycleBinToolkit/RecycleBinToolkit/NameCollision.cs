@@ -18,11 +18,12 @@ namespace RecycleBinToolkit;
 /// </para>
 /// <para>
 /// <b>The comparison is witnessed; the branch either call site takes is not.</b>
-/// <c>NativeBinSuite.ATakenNameIsRecognisedByItsCodeAndALockedFileIsNot</c> stages the refusals the judgment
-/// has to tell apart and reads them back through here. What no run can arrange is the collision that reaches
-/// the branch: neither <see cref="NativeBinLayout.NextStem"/> nor
-/// <see cref="RestorePathPlanner.WithFreeNumber"/> takes a name to collide on, so making either call site land
-/// on a taken name would take a hook inside the library rather than an arrangement in a test.
+    /// <c>NativeBinSuite.ATakenNameIsRecognisedByItsCodeAndALockedFileIsNot</c> stages the refusals the judgment
+    /// has to tell apart and reads them back through here. What no run can arrange is the collision that reaches
+    /// the branch: <see cref="BinStemSequencer"/> starts above every name in the bin and moves on by one, so
+    /// making it land on a taken name would take another process writing to the same bin at that instant, and
+    /// making <see cref="RestorePathPlanner.WithFreeNumber"/> do it would take a hook inside the library rather
+    /// than an arrangement in a test.
 /// </para>
 /// </remarks>
 internal static class NameCollision

@@ -37,6 +37,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeRecycleAcceptsAPathPastMaxPath), NativeRecycleAcceptsAPathPastMaxPath),
         new TestCase("NativeBinSuite." + nameof(NativeRecycleAcceptsAPathFarPastMaxPath), NativeRecycleAcceptsAPathFarPastMaxPath),
         new TestCase("NativeBinSuite." + nameof(NativeRecycleMovesADirectory), NativeRecycleMovesADirectory),
+        new TestCase("NativeBinSuite." + nameof(RecycledNamesClimbAboveWhateverTheBinAlreadyHolds), RecycledNamesClimbAboveWhateverTheBinAlreadyHolds),
         new TestCase("NativeBinSuite." + nameof(NativeIndexRecordCarriesVersionTwoAndTheOriginalPath), NativeIndexRecordCarriesVersionTwoAndTheOriginalPath),
         new TestCase("NativeBinSuite." + nameof(NativeRecycleReportsALockedFileAndLeavesNoIndexRecord), NativeRecycleReportsALockedFileAndLeavesNoIndexRecord),
         new TestCase("NativeBinSuite." + nameof(NativeWriteSupportIsAvailableOnThisMachine), NativeWriteSupportIsAvailableOnThisMachine),
@@ -211,6 +212,65 @@ internal static class NativeBinSuite
         workspace.Dispose();
     }
 
+    /// <summary>
+    /// Two files recycled in one call are given two names that climb, and a bin that already holds entries
+    /// is never written into at or below the ones it holds.
+    /// </summary>
+    /// <remarks>
+    /// <b>What this pins is an order, and the order is the whole of what changed.</b> The names are still six
+    /// characters over the alphabet Windows uses, and the record is still created with
+    /// <see cref="FileMode.CreateNew"/>, so nothing about safety rests on the names being where they land —
+    /// this is about where a batch of writes to one directory goes, not about whether they are allowed to.
+    /// <para>
+    /// <b>One call, because two would prove something weaker.</b> A second call reads the bin again and
+    /// starts above what the first one left there, which is the claim about a bin that already holds
+    /// entries. What that does not prove is that two names inside one call are adjacent, and it is the
+    /// adjacency — never leaving the leaf a directory index writes to — that is the point.
+    /// <para>
+    /// <b>The assertion is the difference being one, not which is larger.</b> Which of the two came first is a
+    /// property of nothing anyone depends on, and pinning it would make this a test of call order.
+    /// </para>
+    /// </remarks>
+    private static async Task RecycledNamesClimbAboveWhateverTheBinAlreadyHolds(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the names to be written into");
+
+        var first = CreateFile("climbing-first");
+        var second = CreateFile("climbing-second");
+
+        var result = await RecycleBin.RecycleAsync([first, second], RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        Check.True(result.Succeeded, $"both files recycle in one call (first failure: {Describe(result.FirstFailure)})");
+
+        var firstStem = StemOfRecordFor(first);
+        var secondStem = StemOfRecordFor(second);
+
+        Check.Equal(1, Math.Abs(firstStem - secondStem),
+            $"the two names of one call are adjacent, so a batch of writes stays in one leaf of the bin's directory index (got {firstStem} and {secondStem})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The stem of the record written for <paramref name="originalPath"/>, as the number
+    /// <see cref="NativeBinLayout.FormatStem"/> spells it.
+    /// </summary>
+    private static long StemOfRecordFor(string originalPath)
+    {
+        var indexPath = RecordOf(originalPath)
+            ?? throw new InvalidOperationException($"no record in the bin names {originalPath}");
+
+        var name = Path.GetFileName(indexPath);
+
+        if (name.Length < NativeBinLayout.StemLength + 2
+            || !NativeBinLayout.TryParseStem(name.AsSpan(2, NativeBinLayout.StemLength), out var index))
+        {
+            throw new InvalidOperationException($"the record is not named over this library's alphabet: {indexPath}");
+        }
+
+        return index;
+    }
     /// <summary>
     /// The record this backend writes is the one Windows reads, so it has to say what Windows expects:
     /// version 2, the size, and the moment of deletion. A record that is merely readable by this library
@@ -539,11 +599,13 @@ internal static class NativeBinSuite
     /// 183 — so removing the narrowing would change no answer.
     /// </para>
     /// <para>
-    /// <b>The loop this feeds is not what is witnessed.</b> <see cref="NativeBinLayout.NextStem"/> draws six
-    /// characters out of thirty-six and takes no argument, so no run can ask it for the name it is about to
-    /// draw, and making the runner itself collide would take a hook in the runner. What is reached is the
-    /// decision its two catch filters make, which could not tell a collision from a locked file for as long
-    /// as it compared the whole HRESULT rather than the code inside it.
+    /// <b>The loop this feeds is not what is witnessed.</b> <see cref="BinStemSequencer"/> starts above
+    /// every name in the bin and hands out the next one, so making the runner itself collide would take
+    /// another process writing to the same bin at that instant — and <see cref="NativeBinLayout.NextStem"/>,
+    /// which the sequencer falls back on, draws six characters out of thirty-six and takes no argument
+    /// either. What is reached is the decision its two catch filters make, which could not tell a
+    /// collision from a locked file for as long as it compared the whole HRESULT rather than the code
+    /// inside it.
     /// </para>
     /// </remarks>
     private static Task ATakenNameIsRecognisedByItsCodeAndALockedFileIsNot(TestContext context)
