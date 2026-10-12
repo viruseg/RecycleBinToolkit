@@ -3334,9 +3334,9 @@ internal static class RestoreSuite
     /// <para>
     /// <b>The cancellation is up front, and that is the only kind this suite witnesses.</b> Nothing here
     /// stops between entries — that is a race against the machine's speed, or a hook in the engine, and the
-    /// second is a change to the library rather than to what is known about it. The limitation is stated on
-    /// the README's cancellation bullet and on <see cref="RestoreRunner"/> as well, since a reader of the
-    /// documentation meets the claim and not this file.
+    /// second is a change to the library rather than to what is known about it. This is the only place that
+    /// limitation is written down: the library's own documentation makes no claim about where a cancelled
+    /// restore stops, so a reader of the documentation is never misled about it.
     /// </para>
     /// </remarks>
     private static async Task ACancelledRestoreRaisesAndLeavesNoHalfAnswer(TestContext context)

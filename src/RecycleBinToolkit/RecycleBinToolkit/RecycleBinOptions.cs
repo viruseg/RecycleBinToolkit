@@ -6,84 +6,64 @@ namespace RecycleBinToolkit;
 /// <remarks>
 /// Every property has a production-ready default, so <see cref="Default"/> is a valid argument for
 /// every call. A single value is overridden with an object initialiser:
-/// <c>new RecycleBinOptions { ThrowOnError = false }</c>.
+/// <c>new RecycleBinOptions { ThrowOnError = false }</c>. Out-of-range values are clamped rather than
+/// rejected, so an unvalidated instance cannot produce a zero-attempt or negative-delay loop.
 /// </remarks>
 public sealed class RecycleBinOptions
 {
-    /// <summary>
-    /// Shared instance carrying the documented defaults.
-    /// </summary>
+    /// <summary>Shared instance carrying the documented defaults.</summary>
     public static RecycleBinOptions Default { get; } = new();
 
-    /// <summary>
-    /// How many times an item is attempted before it is reported as a failure.
-    /// </summary>
-    /// <remarks>
-    /// The default is <c>6</c>.
-    /// </remarks>
+    /// <summary>How many times an item is attempted before it is reported as a failure. Defaults to <c>6</c>, clamped to at least 1.</summary>
     public int MaxAttempts { get; init; } = 6;
 
     /// <summary>
-    /// Delay before the first retry. It doubles on every subsequent attempt.
+    /// Delay before the first retry, doubling on every subsequent attempt. Defaults to <c>50</c>
+    /// milliseconds; negative values clamp to zero.
     /// </summary>
-    /// <remarks>
-    /// The default is <c>50</c> milliseconds.
-    /// </remarks>
     public TimeSpan InitialRetryDelay { get; init; } = TimeSpan.FromMilliseconds(50);
 
     /// <summary>
-    /// Upper bound on the wall-clock time spent retrying the whole batch.
+    /// Upper bound on the wall-clock time spent retrying the whole batch. Defaults to <c>30</c> seconds.
+    /// One budget for the call, not one per item or per volume: a backoff that does not fit what is left of
+    /// it ends the loop immediately rather than starting an over-budget round.
     /// </summary>
-    /// <remarks>
-    /// The default is <c>30</c> seconds.
-    /// </remarks>
     public TimeSpan OverallTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Whether a failure raises an exception instead of being reported through
-    /// <see cref="RecycleBinResult.Failures"/>.
+    /// <see cref="RecycleBinResult.Failures"/>. Defaults to <c>true</c>.
     /// </summary>
-    /// <remarks>
-    /// The default is <c>true</c>.
-    /// </remarks>
     public bool ThrowOnError { get; init; } = true;
 
     /// <summary>
-    /// What happens to a file whose volume cannot recycle it. The default is
+    /// What happens to a file whose volume cannot recycle it. Defaults to
     /// <see cref="NoRecycleBinAction.Throw"/>, which refuses it and leaves the file in place.
-    /// </summary>
-    /// <remarks>
     /// <see cref="ThrowOnError"/> still decides whether the refusal raises or is returned through
     /// <see cref="RecycleBinResult.Failures"/>.
-    /// </remarks>
+    /// </summary>
     public NoRecycleBinAction NoRecycleBinAction { get; init; } = NoRecycleBinAction.Throw;
 
     /// <summary>
-    /// Whether a listing reads every Recycle Bin record up front instead of reading one when a caller
-    /// first asks for its details. The default is <c>false</c>.
+    /// Whether a listing reads every entry's record up front instead of leaving each entry to read its own
+    /// on first use. Defaults to <c>false</c>, so a listing pays nothing for details nobody asks for.
     /// </summary>
     /// <remarks>
-    /// <see cref="RecycleBinItem.OriginalPath"/> and <see cref="RecycleBinItem.DeletedAt"/> come from an
-    /// entry's <c>$I</c> record, and a bin of eighteen thousand entries is eighteen thousand reads — about
-    /// five seconds warm and thirty cold on a mechanical volume. Left off, a listing pays nothing for
-    /// details nobody asks for. Turned on, they are read during the listing, in parallel, and an entry
-    /// whose record cannot be read is reported in <see cref="RecycleBinContents.Failures"/> instead of
-    /// being returned.
+    /// Turned on, the reads happen during the listing rather than one at a time from the caller's own loop,
+    /// and an entry whose record cannot be read is reported in <see cref="RecycleBinContents.Failures"/>
+    /// rather than being returned and raising later. A caller that reads every item's path pays the same
+    /// either way, only spread differently.
     /// <para>
-    /// A caller that reads every item's path — to display them, to match them against its own paths —
-    /// pays the same cost either way, spread over the listing rather than over its own loop.
-    /// </para>
-    /// <para>
-    /// It says nothing about <see cref="RecycleBin.EmptyAsync"/>, which does not
-    /// read records for entries whose payload is present.
+    /// It says nothing about <see cref="RecycleBin.EmptyAsync"/>, which does not read records for entries
+    /// whose payload is present.
     /// </para>
     /// </remarks>
     public bool PreloadItemDetails { get; init; }
 
     /// <summary>
-    /// What a restore does with a directory whose original path is already occupied. The default is
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, which is to merge and leave what is already there
-    /// as it is — a file of the tree that does not fit goes back into the Recycle Bin as an entry of its own
+    /// What a restore does with a directory whose original path is already occupied. Defaults to
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, which merges and leaves what is already there as it
+    /// is — a file of the tree that does not fit goes back into the Recycle Bin as an entry of its own
     /// rather than being lost with the payload it was in.
     /// </summary>
     /// <remarks>
@@ -92,38 +72,27 @@ public sealed class RecycleBinOptions
     /// <see cref="RestoreDirectoryConflict.Error"/> refuses in <see cref="RecycleBinRestoreResult.Failures"/>
     /// as well. No single item raises.
     /// <para>
-    /// A merge reports a conflict per file it settled rather than per entry — which under
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> is one record for the whole tree however many files
-    /// gave way, since each of those is an entry in the bin rather than a record — and one record per
-    /// overwritten or renamed file under the other two. None of the three reaches a failure stage
-    /// <em>of its own</em> — a file of the tree the filesystem would not take, and a payload or a record
-    /// that would not go afterwards, are reported at
+    /// A merge reports a conflict per file it settled rather than per entry, and none of the three reaches a
+    /// failure stage <em>of its own</em>: a file of the tree the filesystem would not take, and a payload or
+    /// a record that would not go afterwards, are reported at
     /// <see cref="RecycleFailureStage.RestoreFailed"/> like any other refused move.
     /// </para>
     /// </remarks>
     public RestoreDirectoryConflict DirectoryConflict { get; init; } = RestoreDirectoryConflict.MergeSkip;
 
     /// <summary>
-    /// What a restore does with a file whose original path is already occupied. The default is
-    /// <see cref="RestoreFileConflict.Skip"/>, which leaves the file where the caller put it and leaves
-    /// the item in the Recycle Bin.
+    /// What a restore does with a file whose original path is already occupied. Defaults to
+    /// <see cref="RestoreFileConflict.Skip"/>, which leaves the file where the caller put it and leaves the
+    /// entry in the Recycle Bin.
     /// </summary>
-    /// <remarks>
-    /// Two properties rather than one shared policy, because a directory can be <em>set down whole</em> under
-    /// a free name and a file only ever under its own, and because merging a tree into what is already there
-    /// is a question a file cannot be asked; see <see cref="RestoreDirectoryConflict"/> for the other half.
-    /// </remarks>
     public RestoreFileConflict FileConflict { get; init; } = RestoreFileConflict.Skip;
 
     /// <summary>
-    /// Returns a copy with out-of-range values clamped into a usable range, so an unvalidated
-    /// caller-supplied instance cannot produce a zero-attempt or negative-delay loop.
+    /// Returns a copy with out-of-range values clamped into a usable range.
     /// </summary>
-    /// <remarks>
-    /// Every property is named here, because a property this initialiser does not mention is not clamped
-    /// but reset — silently, on every internal call, back to the property initialiser's default. A caller
-    /// who asked for one behaviour would get another with nothing raised and nothing reported.
-    /// </remarks>
+    // Every property is named here, because a property this initialiser does not mention is not clamped
+    // but reset — silently, on every internal call, back to the property initialiser's default. A caller
+    // who asked for one behaviour would get another with nothing raised and nothing reported.
     internal RecycleBinOptions Normalize() => new()
     {
         MaxAttempts = Math.Max(1, MaxAttempts),
@@ -139,11 +108,9 @@ public sealed class RecycleBinOptions
     /// <summary>
     /// Keeps the overall budget short enough that adding the time already spent cannot overflow.
     /// </summary>
-    /// <remarks>
-    /// The deadline is the elapsed time plus this budget, and a caller is free to set a budget close to
-    /// <see cref="TimeSpan.MaxValue"/>. That addition throws, and it throws from the retry loop of an
-    /// operation documented never to throw — before any retry decision has been made at all.
-    /// </remarks>
+    // The deadline is the elapsed time plus this budget, and a caller is free to set a budget close to
+    // TimeSpan.MaxValue. That addition throws, and it throws from the retry loop of an operation documented
+    // never to throw — before any retry decision has been made at all.
     private static TimeSpan ClampTimeout(TimeSpan overallTimeout)
     {
         if (overallTimeout < TimeSpan.Zero)
