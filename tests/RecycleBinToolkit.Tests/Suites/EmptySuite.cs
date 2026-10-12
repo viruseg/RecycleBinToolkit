@@ -56,7 +56,7 @@ internal static class EmptySuite
         Check.True(recycled.Succeeded, $"the files reached the volume's Recycle Bin (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
         Check.Equal(files.Count, recycled.RecycledPaths.Count, "all of them did");
 
-        var emptied = await RecycleBin.EmptyAsync(volumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(1, emptied.VolumesEmptied.Count, $"naming one volume covers one volume (got {string.Join(", ", emptied.VolumesEmptied)})");
         Check.Equal(volumeRoot, emptied.VolumesEmptied[0], "and it is that volume");
@@ -87,7 +87,7 @@ internal static class EmptySuite
             RecycleBinVolumeState.IsVolumeRoot(string.Empty),
             "an empty string is not a volume root, however it is reduced");
 
-        var result = await RecycleBin.EmptyAsync(string.Empty, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var result = await RecycleBin.EmptyAsync(string.Empty, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, result.VolumesEmptied.Count, "no volume is emptied in answer to an empty path");
         Check.Equal(0, result.ItemsRemoved, "and nothing is removed");
@@ -130,10 +130,10 @@ internal static class EmptySuite
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
 
-        var status = await RecycleBin.GetStatusAsync(forwardSlash, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(forwardSlash, context.CancellationToken).ConfigureAwait(false);
         Check.Equal(volumeRoot, status.VolumeRoot, "the status reads a forward-slash root as the volume it is");
 
-        var result = await RecycleBin.EmptyAsync(forwardSlash, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var result = await RecycleBin.EmptyAsync(forwardSlash, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(
             0,
@@ -175,7 +175,7 @@ internal static class EmptySuite
         Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
 
         var bare = volumeRoot.TrimEnd(Path.DirectorySeparatorChar);
-        var result = await RecycleBin.EmptyAsync(bare, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var result = await RecycleBin.EmptyAsync(bare, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(
             0,
@@ -224,10 +224,10 @@ internal static class EmptySuite
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "there is something in the bin for the check to be about");
 
-        var status = await RecycleBin.GetStatusAsync(prefixed, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var status = await RecycleBin.GetStatusAsync(prefixed, context.CancellationToken).ConfigureAwait(false);
         Check.Equal(volumeRoot, status.VolumeRoot, "the status names the plain volume, so there is one volume to act on");
 
-        var result = await RecycleBin.EmptyAsync(prefixed, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var result = await RecycleBin.EmptyAsync(prefixed, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(
             0,
@@ -267,7 +267,7 @@ internal static class EmptySuite
 
         var (countBefore, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
-        var result = await RecycleBin.EmptyAsync(ScratchWorkspace.Root, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var result = await RecycleBin.EmptyAsync(ScratchWorkspace.Root, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, result.VolumesEmptied.Count, "a directory inside a volume is not a volume that got emptied");
         Check.Equal(0, result.ItemsRemoved, "and nothing was removed in answer to it");
@@ -304,7 +304,7 @@ internal static class EmptySuite
             .ConfigureAwait(false);
 
         var stopwatch = Stopwatch.StartNew();
-        var emptied = await RecycleBin.EmptyAsync(volumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
         stopwatch.Stop();
 
         Check.True(emptied.Elapsed > TimeSpan.Zero, $"the reported time is measured rather than left at zero ({emptied.Elapsed})");
@@ -345,7 +345,7 @@ internal static class EmptySuite
             RecycleBinProbe.Measure(volumeRoot).Items - countBefore >= 1,
             "the file reached the Recycle Bin before emptying");
 
-        var emptied = await RecycleBin.EmptyAsync(volumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         var after = await RecycleBin.GetItemsAsync(volumeRoot, GetItemsOptions.Default, context.CancellationToken).ConfigureAwait(false);
         var left = Listing.OnlyEntries(after, volumeRoot);
@@ -382,7 +382,7 @@ internal static class EmptySuite
             .ConfigureAwait(false);
         Check.True(recycled.Succeeded, "the files were recycled");
 
-        var emptied = await RecycleBin.EmptyAsync(volumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(emptied.ItemsRemoved >= fileCount, $"the removed item count covers the batch (got {emptied.ItemsRemoved}, expected at least {fileCount})");
         Check.True(emptied.BytesFreed >= fileCount * (long)fileSize, $"the freed byte count covers the batch (got {emptied.BytesFreed}, expected at least {fileCount * fileSize})");
@@ -417,12 +417,12 @@ internal static class EmptySuite
         Check.True(recycled.Succeeded, $"the file reached the bin before the empty (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
         Check.Equal(files.Count, recycled.RecycledPaths.Count, "so the volume's Recycle Bin was not empty to begin with");
 
-        var first = await RecycleBin.EmptyAsync(volumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var first = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, first.Failures.Count, $"the first empty reached the volume (failures: {string.Join(", ", first.Failures.Select(f => $"{f.Stage} 0x{f.HResult:X8}"))})");
         Check.True(first.ItemsRemoved >= files.Count, $"and it removed what was in it (got {first.ItemsRemoved})");
 
-        var second = await RecycleBin.EmptyAsync(volumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var second = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, second.Failures.Count, "emptying an empty volume is not a failure");
         Check.Equal(0, second.ItemsRemoved, "nothing was removed, so nothing is reported removed");
@@ -439,7 +439,7 @@ internal static class EmptySuite
     {
         var letter = AbsentVolume.Letter();
         AbsentVolume.RequireAbsent(letter, "emptying a volume that is not there");
-        var emptied = await RecycleBin.EmptyAsync(AbsentVolume.RootOf(letter), RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(AbsentVolume.RootOf(letter), context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, emptied.ItemsRemoved, "an absent volume removes nothing");
         Check.Equal(0, emptied.BytesFreed, "an absent volume frees nothing");

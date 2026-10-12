@@ -47,7 +47,7 @@ public static class RecycleBin
     /// </exception>
     public static async Task<bool> RecycleAsync(
         string? filePath,
-        RecycleBinOptions? options = null,
+        RecycleOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         var effective = options ?? RecycleOptions.Default;
@@ -83,6 +83,9 @@ public static class RecycleBin
     /// </param>
     /// <param name="options">
     /// Settings. <see langword="null"/> means <see cref="RecycleOptions.Default"/>.
+    /// <see cref="RecycleOptions.ThrowOnError"/> is a single-path switch and the batch reports every
+    /// per-item failure through <see cref="RecycleBinResult.Failures"/>, so setting it changes nothing
+    /// on this overload.
     /// </param>
     /// <param name="cancellationToken">
     /// Cancels the validation scan and the work between paths. A cancelled batch raises and returns no
@@ -101,7 +104,7 @@ public static class RecycleBin
     /// </exception>
     public static async Task<RecycleBinResult> RecycleAsync(
         IReadOnlyList<string?> filePaths,
-        RecycleBinOptions? options = null,
+        RecycleOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(filePaths);
@@ -179,7 +182,7 @@ public static class RecycleBin
     /// </exception>
     public static async Task<RecycleBinContents> GetItemsAsync(
         string? volumeRoot = null,
-        RecycleBinOptions? options = null,
+        GetItemsOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         var effective = options ?? GetItemsOptions.Default;
@@ -211,9 +214,6 @@ public static class RecycleBin
     /// hold a Recycle Bin. A path inside a volume is not a volume root and is reported in
     /// <see cref="RecycleBinEmptyResult.Failures"/> rather than emptied as that whole volume.
     /// </param>
-    /// <param name="options">
-    /// Settings. <see langword="null"/> means the library's defaults.
-    /// </param>
     /// <param name="cancellationToken">
     /// Cancels the sweep between entries. A cancellation part way through raises
     /// <see cref="OperationCanceledException"/> — so a caller who cancels gets no result at all, and what
@@ -229,7 +229,6 @@ public static class RecycleBin
     /// </exception>
     public static async Task<RecycleBinEmptyResult> EmptyAsync(
         string? volumeRoot = null,
-        RecycleBinOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         if (cancellationToken.IsCancellationRequested)
@@ -304,7 +303,7 @@ public static class RecycleBin
     /// </exception>
     public static async Task<RecycleBinRestoreResult> RestoreAsync(
         IReadOnlyList<RecycleBinItem> items,
-        RecycleBinOptions? options = null,
+        RestoreOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(items);
@@ -364,7 +363,7 @@ public static class RecycleBin
     /// </exception>
     public static async Task<RecycleBinRestoreResult> RestoreAsync(
         IReadOnlyList<RecycleBinVolumeContents> volumes,
-        RecycleBinOptions? options = null,
+        RestoreOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(volumes);
@@ -387,10 +386,6 @@ public static class RecycleBin
     /// Reports whether the Recycle Bin is in use for a volume, and why.
     /// </summary>
     /// <param name="volumeRoot">Volume root to inspect, such as <c>"X:\\"</c>.</param>
-    /// <param name="options">
-    /// Accepted for uniformity with the other methods and not used: this one answers what a volume's
-    /// configuration says, not how items are moved.
-    /// </param>
     /// <param name="cancellationToken">Cancels the wait.</param>
     /// <returns>
     /// The status of that volume. A volume whose own setting was never recorded answers
@@ -405,13 +400,10 @@ public static class RecycleBin
     /// <exception cref="ArgumentException"><paramref name="volumeRoot"/> is null, empty or whitespace.</exception>
     public static Task<RecycleBinStatus> GetStatusAsync(
         string volumeRoot,
-        RecycleBinOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(volumeRoot);
         cancellationToken.ThrowIfCancellationRequested();
-
-        _ = options;
 
         return Task.FromResult(RecycleBinVolumeState.Inspect(volumeRoot));
     }

@@ -1,7 +1,7 @@
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Settings for <see cref="RecycleBin.RecycleAsync(string?, RecycleBinOptions?, CancellationToken)"/> and
+/// Settings for <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/> and
 /// its batch overload.
 /// </summary>
 /// <remarks>

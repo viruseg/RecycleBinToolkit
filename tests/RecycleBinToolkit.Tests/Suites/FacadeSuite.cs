@@ -173,7 +173,7 @@ internal static class FacadeSuite
     }
 
     /// <summary>
-    /// The same refusal raises under <see cref="RecycleBinOptions.ThrowOnError"/>, and the file is still
+    /// The same refusal raises under <see cref="RecycleOptions.ThrowOnError"/>, and the file is still
     /// there when the exception surfaces.
     /// </summary>
     /// <remarks>
@@ -391,7 +391,7 @@ internal static class FacadeSuite
         try
         {
             await RecycleBin
-                .EmptyAsync(ScratchWorkspace.VolumeRoot, new RecycleOptions { ThrowOnError = false })
+                .EmptyAsync(ScratchWorkspace.VolumeRoot)
                 .ConfigureAwait(false);
 
             Directory.Delete(binDirectory);
@@ -423,6 +423,12 @@ internal static class FacadeSuite
     /// first root, and the case that fails if it refuses the batch as a whole. Both are silent failures
     /// of the other kind — a batch that skips the healthy paths, and a batch that gives up on all of them
     /// because of one.
+    /// <para>
+    /// The batch carries <see cref="RecycleOptions.ThrowOnError"/> turned off, and that is not what keeps
+    /// the healthy path out of the failures: the batch overload never raises for a per-item failure, so the
+    /// refusal arrives in <see cref="RecycleBinResult.Failures"/> whatever the flag says. This is the case
+    /// that says so on the overload rather than in a sentence about the option.
+    /// </para>
     /// <para>
     /// The second volume is a drive letter nothing is mounted on, found on this machine rather than named
     /// in the source. Its path fails at <see cref="RecycleFailureStage.PathValidation"/> rather than at
@@ -610,8 +616,10 @@ internal static class FacadeSuite
     /// <remarks>
     /// The hold is what a directory another process is working in looks like, and it is the only way to make
     /// the file system say no on demand. The stage is pinned rather than the exception type because the
-    /// contract is the report, not the throw: with <see cref="RecycleBinOptions.ThrowOnError"/> off there is
-    /// none. A stage of <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> here would say the caller had
+    /// contract is the report, not the throw: the batch overload carries
+    /// <see cref="RecycleOptions.ThrowOnError"/> but never reads it, so the refusal arrives in
+    /// <see cref="RecycleBinResult.Failures"/> whatever the flag says. A stage of
+    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> here would say the caller had
     /// not consented — the opposite of what was asked, and the reason the stage is checked rather than left.
     /// <para>
     /// A removal is only this library's own on a volume that cannot recycle, so the file is written on the
@@ -675,7 +683,7 @@ internal static class FacadeSuite
     /// A batch of two rather than one path, because a single path makes the two lists indistinguishable
     /// from one — a bug that reported a permanently deleted path as recycled would also report the reverse
     /// as true. Two paths on the run's own volume, both of which the option removes, is what the batch can
-    /// honestly be here: a call carries one <see cref="RecycleBinOptions.NoRecycleBinAction"/> and the
+    /// honestly be here: a call carries one <see cref="RecycleOptions.NoRecycleBinAction"/> and the
     /// volume it runs on answers for every path in it, so a batch that reached one branch and another has
     /// to span two volumes of different kinds, and this run names one volume. What the assertions still
     /// catch is the recording rather than the mixture: a path in both lists, and a path recorded in one
@@ -1064,9 +1072,13 @@ internal static class FacadeSuite
 
     /// <summary>
     /// Calls the private batch validator the way <see cref="RecycleBatch.Run"/> does through
-    /// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>,
+    /// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleOptions?, CancellationToken)"/>,
     /// unwrapping what reflection hands back.
     /// </summary>
+    /// <remarks>
+    /// The parameter stays the base type because the method being called takes the base type: this mirrors
+    /// <c>RecycleBatch.BuildTargets</c>'s own signature rather than the public one's.
+    /// </remarks>
     private static void BuildTargets(
         IReadOnlyList<string?> filePaths,
         RecycleBinOptions options,

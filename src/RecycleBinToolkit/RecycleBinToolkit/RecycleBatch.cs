@@ -10,7 +10,7 @@ namespace RecycleBinToolkit;
 /// The half of a recycle that is this library's own judgement rather than the Recycle Bin's: a path is
 /// described once, a volume is asked once, and everything that must not be moved is taken out of the
 /// list before the first move is attempted. <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?},
-/// RecycleBinOptions?, CancellationToken)"/> owns the arguments, the hop to the thread pool, and how the
+/// RecycleOptions?, CancellationToken)"/> owns the arguments, the hop to the thread pool, and how the
 /// outcome is handed back; this owns what happens on the far side of it.
 /// <para>
 /// Runs on one pool thread, so a caller is not charged for the validation scan on its own thread — which,

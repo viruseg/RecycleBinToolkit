@@ -1,7 +1,7 @@
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Settings for <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RecycleBinOptions?, CancellationToken)"/>
+/// Settings for <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/>
 /// and its overload over the volume groups of a listing.
 /// </summary>
 /// <remarks>

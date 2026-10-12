@@ -45,7 +45,7 @@ namespace RecycleBinToolkit;
 /// A cancellation is not one of those answers. It raises <see cref="OperationCanceledException"/> out of
 /// <see cref="Run"/> and returns nothing, because a restore is not transactional and so what it got through
 /// is found by listing the bin — the same answer
-/// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleBinOptions?, CancellationToken)"/>
+/// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleOptions?, CancellationToken)"/>
 /// gives for its own cancellation.
 /// </para>
 /// <para>
@@ -1041,7 +1041,7 @@ internal static class RestoreRunner
     /// what the record's size says, and the entry would look restorable for ever while never restoring.
     /// So it goes back into the Recycle Bin as an entry of its own — through
     /// <see cref="NativeRecycleRunner"/>, the machinery <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?},
-    /// RecycleBinOptions?, CancellationToken)"/> uses, rather than through a second implementation of writing
+    /// RecycleOptions?, CancellationToken)"/> uses, rather than through a second implementation of writing
     /// a record — and the caller is handed back a directory whose files are either at their paths or in the
     /// bin again, with the answer saying which is which.
     /// </para>

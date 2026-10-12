@@ -142,17 +142,17 @@ if (!result.Succeeded)
 
 | Method | Returns | Description |
 | --- | --- | --- |
-| `RecycleBin.RecycleAsync(string? filePath, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<bool>` | Recycles one file or directory. `true` when it is gone from disk. |
-| `RecycleBin.RecycleAsync(IReadOnlyList<string?> filePaths, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinResult>` | Recycles a batch and reports the outcome of every item. |
-| `RecycleBin.GetItemsAsync(string? volumeRoot = null, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinContents>` | Lists what is in the Recycle Bin. |
-| `RecycleBin.RestoreAsync(IReadOnlyList<RecycleBinItem> items, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinRestoreResult>` | Puts listed entries back where their records say they came from. |
-| `RecycleBin.RestoreAsync(IReadOnlyList<RecycleBinVolumeContents> volumes, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinRestoreResult>` | The same, for the volume groups of a listing. |
-| `RecycleBin.EmptyAsync(string? volumeRoot = null, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinEmptyResult>` | Empties it, and reports how much it freed. |
-| `RecycleBin.GetStatusAsync(string volumeRoot, RecycleBinOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinStatus>` | Whether it is in use for a volume, and why not if it is not. |
+| `RecycleBin.RecycleAsync(string? filePath, RecycleOptions? options = null, CancellationToken cancellationToken = default)` | `Task<bool>` | Recycles one file or directory. `true` when it is gone from disk. |
+| `RecycleBin.RecycleAsync(IReadOnlyList<string?> filePaths, RecycleOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinResult>` | Recycles a batch and reports the outcome of every item. |
+| `RecycleBin.GetItemsAsync(string? volumeRoot = null, GetItemsOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinContents>` | Lists what is in the Recycle Bin. |
+| `RecycleBin.RestoreAsync(IReadOnlyList<RecycleBinItem> items, RestoreOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinRestoreResult>` | Puts listed entries back where their records say they came from. |
+| `RecycleBin.RestoreAsync(IReadOnlyList<RecycleBinVolumeContents> volumes, RestoreOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinRestoreResult>` | The same, for the volume groups of a listing. |
+| `RecycleBin.EmptyAsync(string? volumeRoot = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinEmptyResult>` | Empties it, and reports how much it freed. |
+| `RecycleBin.GetStatusAsync(string volumeRoot, CancellationToken cancellationToken = default)` | `Task<RecycleBinStatus>` | Whether it is in use for a volume, and why not if it is not. |
 
 All seven are safe to call from any thread.
 
-### `RecycleAsync(string?, RecycleBinOptions?, CancellationToken)`
+### `RecycleAsync(string?, RecycleOptions?, CancellationToken)`
 
 Recycles a single file or directory.
 
@@ -181,14 +181,14 @@ With `ThrowOnError` off, nothing is thrown: a bad path returns `false`.
 > **Overload note.** A bare `RecycleAsync(null)` is ambiguous between the two overloads and
 > does not compile. Cast it: `(string?)null`, or pass a list.
 
-### `RecycleAsync(IReadOnlyList<string?>, RecycleBinOptions?, CancellationToken)`
+### `RecycleAsync(IReadOnlyList<string?>, RecycleOptions?, CancellationToken)`
 
 Recycles a batch. This overload **never throws** for a per-item failure.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `filePaths` | `IReadOnlyList<string?>` | Paths to recycle. Entries may be null or missing; each is reported as a failure without aborting the batch. Repeated paths are recycled once. |
-| `options` | `RecycleOptions?` | As above. |
+| `options` | `RecycleOptions?` | Retry settings. `null` means `RecycleOptions.Default`. `ThrowOnError` is on this type but **not read here**: the batch reports every per-item failure in `Failures` rather than raising, so setting it changes nothing on this overload. Use `RecycleAsync(string?, …)` if you want a single failure to raise. |
 | `cancellationToken` | `CancellationToken` | Cancels the scan that validates the batch and the work between paths. A cancelled batch stops part way and raises `OperationCanceledException` carrying no result: which files went is found by reading the bin. |
 
 **Returns** a `RecycleBinResult` describing every item.
@@ -281,7 +281,6 @@ Empties the Recycle Bin.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `volumeRoot` | `string?` | Volume root to empty, or `null` for every volume, in which case every mounted Fixed or Removable volume is covered in a single call. A path inside a volume is not a volume root: it is reported in `Failures` rather than emptied as that whole volume. |
-| `options` | `RecycleBinOptions?` | `null` means the library's defaults. |
 | `cancellationToken` | `CancellationToken` | Cancels the sweep. The sweep stops between entries and raises, so a caller who cancels gets no result at all, and what was removed is found by reading the bin rather than by reading the result. |
 
 **Returns** a `RecycleBinEmptyResult`.
@@ -302,7 +301,6 @@ Whether the Recycle Bin is in use for one volume.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `volumeRoot` | `string` | Volume root to inspect. Must be a volume root, not a directory inside one. |
-| `options` | `RecycleBinOptions?` | Accepted for uniformity and **not used**. This method answers what a volume's configuration says, not how items are moved. |
 | `cancellationToken` | `CancellationToken` | Checked before the work starts. |
 
 **Returns** a `RecycleBinStatus`. **Throws** `ArgumentException` for a null or blank path.

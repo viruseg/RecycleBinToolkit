@@ -1052,8 +1052,8 @@ internal static class NativeBinSuite
         var secondRoot = AbsentVolume.RootOf(second);
         var firstRoot = ScratchWorkspace.VolumeRoot;
 
-        await RecycleBin.EmptyAsync(secondRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
-        await RecycleBin.EmptyAsync(firstRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        await RecycleBin.EmptyAsync(secondRoot, context.CancellationToken).ConfigureAwait(false);
+        await RecycleBin.EmptyAsync(firstRoot, context.CancellationToken).ConfigureAwait(false);
 
         var emptied = NativeBinEmptier.Empty([secondRoot, firstRoot], context.CancellationToken);
 
@@ -1157,7 +1157,7 @@ internal static class NativeBinSuite
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for the files to be counted and removed from");
 
-        await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         const int fileSize = 8192;
         var files = CreateMany(5, sizeBytes: fileSize);
@@ -1178,7 +1178,7 @@ internal static class NativeBinSuite
 
         Check.Equal(files.Count, counted, $"every recycled file left a record ({records.Count} records found)");
 
-        var emptied = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var emptied = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, emptied.Failures.Count, $"nothing failed ({string.Join("; ", emptied.Failures.Select(f => f.Path))})");
         Check.Equal(counted, emptied.ItemsRemoved, $"every record that was there is removed and named ({counted})");
@@ -1199,8 +1199,8 @@ internal static class NativeBinSuite
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin to empty twice");
 
-        var first = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
-        var second = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        var first = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, context.CancellationToken).ConfigureAwait(false);
+        var second = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(0, second.ItemsRemoved, "a second empty removes nothing");
         Check.Equal(0, second.BytesFreed, "and frees nothing");
@@ -1245,7 +1245,7 @@ internal static class NativeBinSuite
         var recycled = await RecycleBin.RecycleAsync([path], RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
         Check.True(recycled.Succeeded, $"the file is recycled (first failure: {Describe(recycled.FirstFailure)})");
 
-        await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         var binDirectory = BinDirectory;
         Check.True(Directory.Exists(binDirectory), $"this user's bin directory survives ({binDirectory})");
@@ -1283,7 +1283,7 @@ internal static class NativeBinSuite
         await cancelled.CancelAsync().ConfigureAwait(false);
 
         await Check.ThrowsAsync<OperationCanceledException>(
-            () => RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, RecycleOptions.Default, cancelled.Token),
+            () => RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, cancelled.Token),
             "an empty whose token is already cancelled raises rather than proceeding");
 
         Check.Equal(
@@ -1354,9 +1354,9 @@ var path = CreateDeepFile(PastMaxPath);
     }
 
     /// <summary>
-    /// <see cref="RecycleBinOptions.OverallTimeout"/> bounds the retrying of a whole batch, not each round's
+    /// <see cref="RecycleOptions.OverallTimeout"/> bounds the retrying of a whole batch, not each round's
     /// wait taken on its own. A deadline recomputed before every backoff is a fresh budget every time, so the
-    /// loop runs to <see cref="RecycleBinOptions.MaxAttempts"/> whenever each individual delay fits — which is
+    /// loop runs to <see cref="RecycleOptions.MaxAttempts"/> whenever each individual delay fits — which is
     /// the case a caller setting a budget is exactly the one that hits.
     /// </summary>
     /// <remarks>
@@ -1551,7 +1551,7 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         // makes one entry undeletable without the case having to put the file in the bin in a broken state.
         using (new FileStream(NativeBinLayout.ToPayloadPath(RecordOf(stuck)), FileMode.Open, FileAccess.Read, FileShare.None))
         {
-            var emptied = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+            var emptied = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, context.CancellationToken).ConfigureAwait(false);
 
             Check.True(emptied.VolumesEmptied.Count == 0,
                 $"a volume that kept something is not named as emptied (named: {string.Join(", ", emptied.VolumesEmptied)})");
@@ -1569,8 +1569,8 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin to empty twice");
 
-        await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
-        var second = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, context.CancellationToken).ConfigureAwait(false);
+        var second = await RecycleBin.EmptyAsync(ScratchWorkspace.VolumeRoot, context.CancellationToken).ConfigureAwait(false);
 
         Check.Equal(1, second.VolumesEmptied.Count, "a volume with nothing left in it was emptied, and is named");
         Check.True(second.VolumesEmptied.Contains(ScratchWorkspace.VolumeRoot), $"by the root the caller named ({ScratchWorkspace.VolumeRoot})");

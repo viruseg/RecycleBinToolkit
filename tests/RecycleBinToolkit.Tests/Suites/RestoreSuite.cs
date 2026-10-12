@@ -1739,7 +1739,7 @@ internal static class RestoreSuite
     /// The put-back is the half of this that has no other case. A file the policy would not move is still
     /// inside the payload <c>$R</c>, and removing that payload afterwards takes the file with it — so it goes
     /// back into the bin with a record of its own, under the path it wanted, where a later
-    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RecycleBinOptions?, CancellationToken)"/>
+    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/>
     /// can bring it back once the squatter has moved on.
     /// <para>
     /// The entry is found again by that recorded path rather than counted, because "it is in the bin" and
@@ -3209,7 +3209,7 @@ internal static class RestoreSuite
 
     /// <summary>
     /// No groups at all is a call that succeeds and does nothing: the same answer an empty
-    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RecycleBinOptions?, CancellationToken)"/>
+    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/>
     /// over an empty list gives, and the way to ask for it is to say which list is meant.
     /// </summary>
     /// <remarks>
@@ -3392,7 +3392,7 @@ internal static class RestoreSuite
     /// answer, and the entries are left in the bin exactly as they were handed in.
     /// </summary>
     /// <remarks>
-    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RecycleBinOptions?, CancellationToken)"/>
+    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/>
     /// answers an already-cancelled token from its own prologue and never reaches the engine, so this is the
     /// case that pins what the engine does with one.
     /// <para>

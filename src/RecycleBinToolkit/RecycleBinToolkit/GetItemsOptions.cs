@@ -1,7 +1,7 @@
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Settings for <see cref="RecycleBin.GetItemsAsync(string?, RecycleBinOptions?, CancellationToken)"/>.
+/// Settings for <see cref="RecycleBin.GetItemsAsync(string?, GetItemsOptions?, CancellationToken)"/>.
 /// </summary>
 /// <remarks>
 /// <see cref="Default"/> is a valid argument, and <see langword="null"/> means the same thing.
