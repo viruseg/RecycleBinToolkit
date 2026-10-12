@@ -507,6 +507,51 @@ they are allowed to sit behind a flag:
 | `FacadeSuite.BatchOfGeneratedFilesIsRecycled` | `WorkflowSuite.FiveTouchedFilesAreAllRecycled`, `EmptySuite.EmptyReportsWhatItFreed` |
 | `WorkflowSuite.ReadPartialAndAppendThenRecycle` | `WorkflowSuite.FiveTouchedFilesAreAllRecycled` |
 
+## How documentation is written here
+
+Three surfaces carry prose in this repository: `README.md`, the XML documentation on the public surface,
+and comments in the code — `//` and `///` alike. They answer different questions, which is what the
+sections below are about. **How the sentences are built is one rule set for all three**, and this is it.
+
+**A fact is a row, not a paragraph.** A table cell, a bullet, or one sentence. A paragraph that reasons
+its way to the fact is the author's thinking, and a reader scanning for the fact has to find it first.
+Where a row would need a condition inside the condition — "X, or Y when Z, unless W" — it is two facts:
+split it, or give the row the short form and put the detail in a bullet under the table.
+
+**Use the standard word.** Technical prose has an established term for almost everything a library
+reports, and the non-standard phrase is nearly always the author's own and nearly always worse:
+
+| Do not write | Write |
+| --- | --- |
+| did not come back, is back, carried back | failed to restore, restored, total size in bytes |
+| removed for good | deleted permanently |
+| left cold, not read yet | unread, not loaded |
+| Wall-clock time the caller waited | elapsed time |
+| asserts a fact, answers for it | reports, returns |
+| the path it wanted | the destination path |
+
+If a phrase would not survive being read aloud to a colleague, it does not go in the file.
+
+**Nothing restates what the reader can already see.** Not the line under a comment, not the parameter
+type, not the default already in the table above, not the sentence in the paragraph above. A comment
+that repeats the code beneath it is worse than no comment: the first read registers nothing and the
+reader reads it twice.
+
+**Nothing defends the design.** "Kept for contract stability", "this is the only difference `Error`
+makes", "deliberately not `Enabled`" — a reader who did not ask whether the design is defensible is now
+being answered a question they did not ask, in prose, before the thing they did ask. State the
+behaviour; that is the contract. The justification belongs in this file, and it usually already is.
+
+**One fact, one place.** A fact stated in a table is not repeated in the paragraph under it, in the code
+block beside it, or in a second section. Every copy is a place to fall out of date and a place the
+reader starts to doubt. Elsewhere, point at it — `see Requirements` — and that is not a repetition.
+
+**One example per distinct thing.** Two examples differing only in the array literal, the drive letter or
+one flag are one example. Fifteen of them is fifteen chances to say the same thing more weakly.
+
+**The scannability test.** Read the section as a reader who already knows what they want and wants the
+answer, not the argument. If the answer is the third sentence of the third paragraph, it is buried.
+
 ## What README.md is for
 
 `README.md` answers three questions: **what this is, why you would reach for it, and what it will do
@@ -521,7 +566,9 @@ leaves able to write a call. Anything that does not serve that trip does not bel
   them and can do something about them.
 - Worked examples.
 - The version requirement, stated where a caller looks for it: `Requirements` and the method that
-  refuses.
+  refuses. **Stated once.** `Requirements` carries the build number and why the floor is where it is;
+  the method that refuses links to it rather than repeating the number, and no third section mentions
+  it. A fact with one owner is one fact; a fact restated in four places is four places to be wrong.
 
 **Does not belong:**
 
@@ -534,6 +581,12 @@ leaves able to write a call. Anything that does not serve that trip does not bel
 
 **The test for a borderline paragraph: could a caller write different code because of this?** If
 yes, it is in the README. If the answer is "they would understand the library better", it is here.
+
+**A type section is a table and short rows, not prose under it.** The shape that works is a member
+table, then one row per guarantee, then a table per rule that would otherwise run past 300 characters
+in a single cell. A guarantee the reader has to reconstruct from four sentences is a guarantee they
+will not act on. The same shape for `<returns>`, `<remarks>` and the comment tables: what is true, in
+a row.
 
 **Nothing gets deleted to satisfy that.** A fact that leaves the README changes homes, and the three
 are:
@@ -563,8 +616,12 @@ something that no longer builds.
   character, and the README sections follow the order of the methods in the file.
 - A README block may prepend `using RecycleBinToolkit;` so a reader can paste it as a standalone
   snippet. Nothing else in a block may differ from the method body.
-- Comments belong inside the code block, not only in the surrounding prose. A reader who copies the
-  block gets the comment with it. Keep them to what the method names cannot say.
+- **A comment that restates the code is deleted.** `var paths = Directory.GetFiles(..., TopDirectoryOnly)`
+  needs no note that it collects paths, and `var result = await RecycleBin.RecycleAsync(paths)` needs
+  none that it recycles them: a reader reads the English and gets the same. Keep a comment only where
+  the line cannot say it — why an unusual overload was chosen, what a value in the block means that is
+  not a local name. A comment is copied by whoever pastes the block, so a comment that helps only the
+  author is a cost to every reader.
 - The file compiles but is never run, so an example may hard-code paths and never touch the disk.
   Give each one a name that says what it demonstrates.
 - Nothing else may differ between a block and its method. An example that needs a helper this
@@ -595,14 +652,21 @@ decision record.
 - **`<returns>` says what the caller gets**, including the empty and sentinel cases: whether a list
   is empty, whether `null` means "none", what a count is measured from rather than computed after.
 - **`<exception>` documents only the intended contract.** Say what state the member left the caller
-  in — the file is still where it was — rather than narrating the path that led there.
+  in — the file is still where it was — rather than narrating the path that led there. **One row per
+  cause.** A single `<exception>` tag carrying "the move failed, or the volume refused it, or the
+  action was X, and only when `ThrowOnError` is on" is four rows the reader has to separate by hand,
+  and one of them will be read wrong.
 - **`<remarks>` survives only for a caveat the caller needs at the call site**, and only if it fits in
   a sentence or two. A method whose contract needs an essay is a method whose essay belongs in the
-  README.
+  README. Where the remark enumerates independent facts — what a skip does, what an error does, what a
+  merge does — it is a bullet list, not a paragraph that reasons from one to the next.
 - **Device structure stays out.** `$I`, `$R`, `$RECYCLE.BIN`, the SID, `NukeOnDelete`, `FILE_ID_INFO`
   and the version 2 record layout are how the bin is built, not what a caller does. The one exception
   is a fact a caller would trip over — that a restored path may carry a trailing separator, so
   `File.Exists` answers false of a directory — and that is stated as the trap, not as the layout.
+- **The version requirement is stated once, in the README's `Requirements`.** A `<remarks>` that
+  repeats the build number puts it in a tooltip the reader cannot act on and creates a second copy to
+  fall out of date. Link to `Requirements`; do not restate it.
 - **Never reference a test.** No `<summary>`, `<remarks>`, `<param>`, `<returns>` or `<exception>`
   anywhere in `src/` may mention a suite, a case, a test run or this repository's own coverage. The
   dependency is one-directional: tests reference the library, the library never references the tests.
@@ -612,6 +676,30 @@ decision record.
 **Internal and private members keep their comments.** They are not shown to a caller, they are the
 right home for a note to the next reader, and a `remarks` on one of them costs nothing. The rules
 above are about the surface a caller sees, not about the code's readability.
+
+## Comments in the code
+
+A `//` comment is read by whoever maintains the function next, which makes it the one place a *why*
+belongs. The rules from [How documentation is written here](#how-documentation-is-written-here) apply
+to it like anywhere else — the comment does not restate the line under it, and a phrase that would not
+survive being read aloud does not go in the file — and these three are the rest.
+
+| Kind | Belongs where | Example |
+| --- | --- | --- |
+| A business rule or domain invariant | A comment on the line that enforces it | Why this field is written before the move rather than after |
+| A workaround for a platform or a bug | A comment on the workaround, naming what it works around | Why `RtlGetVersion` rather than `Environment.OSVersion` |
+| A decision one function made | A comment on that function, in two or three lines | Why this runs sequentially: the measured numbers |
+| A decision the whole library made | `AGENTS.md`, not a comment | Why writing is single-threaded |
+| A measurement | `AGENTS.md`, with the sweep it came from | — |
+
+**A comment that explains the code is worse than none**, because it is read once and trusted, and it
+goes stale the moment the code changes while the comment does not. Prefer a name that says it: if a
+comment is explaining what a well-named local does, the name is wrong.
+
+**A comment may be longer than its neighbours.** A function whose behaviour is not obvious from its
+signature — a retry loop with a budget, a state machine, a walk that pairs two enumerations — earns a
+paragraph. What it does not earn is a second paragraph about why the author chose it, unless that
+reason is not visible anywhere else.
 
 ## Claims
 
