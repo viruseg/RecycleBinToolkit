@@ -88,6 +88,53 @@ A run that must not empty the bin says `--exclude EmptySuite`; that drops its el
 it prints are eleven lower than a plain `--all` and a document must not quote one run's figures as the
 other's.
 
+## How it works
+
+```
+RecycleBin            the entry point: moves items in, resolves volumes, reports
+   ├─ RecycleBatch           validates, de-duplicates, refuses what cannot be recycled, recycles on the pool
+   ├─ RecycleBinVolumeSet   which volumes an operation covers
+   ├─ RecycleBinVolumeState  volume table + registry facts
+   └─ RecycleBinVolumePolicy the decision, separated so it can be checked exhaustively
+
+the engine, over whatever the entry point resolved
+   ├─ NativeBinLayout         $RECYCLE.BIN\<SID>\ and the $I/$R name pair
+   ├─ NativeIndexFile         version 1 and 2 records, read and written
+   ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
+   ├─ NativeRecycleRunner     record first, then the move; retries are per path
+   ├─ NativeBinLister         pairs from the walk, every volume at once; records only under PreloadItemDetails
+   └─ NativeBinEmptier        payload first, then the record, counted from the walk; one group of volumes per disk
+
+the restore engine, over the entries a listing handed back
+   ├─ RestoreRunner           payload first, then the record; one answer per entry, in the caller's order; one mover pool per volume; a refused move asked again
+   └─ RestorePathPlanner      what is in the way of a path, and what to do about the item that wanted it
+
+RecycleBinContents.LoadItemDetails  warms a listing after the fact
+  └─ ItemDetailLoader        one volume at a time, at that volume's own degree of parallelism
+```
+
+**Record first, then the move.** A crash between the two leaves the caller's file exactly where it
+was and an index with no payload — litter the next empty collects. The other order leaves data that
+is gone and recorded nowhere, which is the one outcome a Recycle Bin exists to prevent.
+
+**Retries are per path, not per batch.** A move that fails is a property of one path, and retrying
+the others would repeat work that already succeeded. Only the items that failed are retried.
+
+**The per-volume bin is the unit.** Each volume's `$RECYCLE.BIN\<SID>\` is walked directly, so naming
+a volume selects which directories to read and to empty — never a filter over an enumeration that
+already happened.
+
+**`GetStatusAsync` answers configuration, but not the future.** Where the registry records a volume's
+own setting, that setting is the whole answer. A volume nothing was recorded for answers
+`Indeterminate`: unproven, never enabled. That is what makes it trustworthy enough for
+`RecycleAsync` to refuse a path rather than destroy it. It still does not predict the next delete:
+a volume mounted after the call, or a policy applied after it, changes the answer without the call
+having been wrong. Nothing is cached, so each call asks the question again.
+
+The threading arguments — why writing is single-threaded, why reading is not, and why the listing
+splits on the volume axis while the restore and the empty split on the disk axis — are in
+[Performance, measured](#performance-measured) below rather than repeated here.
+
 ## Performance, measured
 
 ### Restoring, which is not any of the tables below
@@ -351,6 +398,41 @@ not on either kind of volume. Anyone quoting a speed-up for this is quoting some
 measured. The walk itself is a cost the previous code did not pay — one directory listing per volume per
 operation, which a delete of a single file into a full bin now carries and a delete of ten thousand at
 once would have paid anyway — and it has not been weighed against anything either.
+
+---
+
+## Windows the library has to live with
+
+These are properties of the Recycle Bin rather than choices made here. They are what `README.md`
+used to carry under a heading called *Limitations*, which was the wrong home: a caller cannot act on
+any of them, and the ones they could act on were already in the API sections.
+
+**A per-volume key that outlives its bin still reads `Enabled`.** Windows records a volume's
+Recycle Bin setting when it configures one, and nothing removes that record when the bin later
+goes. A key left behind on a volume with no `$RECYCLE.BIN` is therefore treated as evidence that
+the volume recycles, because configuration is the evidence throughout. There is no second source to
+cross-check it against and no way to ask Windows whether the directory still exists as far as the
+answer is concerned.
+
+**The per-volume capacity is not treated as a switch.** A capacity of `0` is not reported as
+disabled. The Recycle Bin dialog offers no such setting, so nothing can turn it into one, and no
+measurement of what it would do is recorded here — so nothing claims to know.
+
+**The version requirement is a refusal, not a warning.** Windows 10 build 14393 is the first build
+that reads a version 2 index record. An older build does not reject one — it reads it as something
+it cannot use, so the item appears in the bin and cannot be restored from it. `RecycleAsync`
+therefore throws `RecycleBinNativeBackendUnavailableException` (a `PlatformNotSupportedException`)
+before it touches anything, and `ThrowOnError` does not suppress it: there is no path to report and
+no `RecycleFailureStage` that describes it, because nothing failed. `GetItemsAsync` and
+`EmptyAsync` are not gated — reading version 1 records is supported as well as writing version 2,
+and emptying parses nothing — so a machine too old to *write* can still *read* and *clear* at full
+speed.
+
+**Emptying a large bin is file deletion, and it is slow.** Measured: emptying roughly 13,600
+accumulated entries took 216 s. There is no progress callback to report from and no way to make it
+incremental, which is why a caller that needs responsiveness empties one volume at a time. Volumes
+on different physical disks are emptied together, which removes the wait one disk put in front of
+another; that is per disk and not per volume, so the partitions of one disk still take their turn.
 
 ---
 
