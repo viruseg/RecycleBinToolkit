@@ -42,8 +42,10 @@ public sealed class RecycleOptions : RecycleBinOptions
     }
 
     /// <summary>
-    /// Whether a failure raises an exception instead of being reported through
-    /// <see cref="RecycleBinResult.Failures"/>. Defaults to <c>true</c>.
+    /// Whether a failure raises rather than coming back as <see langword="false"/>, and only on
+    /// <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/> — the batch
+    /// overload reports its per-item failures through <see cref="RecycleBinResult.Failures"/> however
+    /// this is set. Defaults to <c>true</c>.
     /// </summary>
     public new bool ThrowOnError
     {
@@ -53,9 +55,11 @@ public sealed class RecycleOptions : RecycleBinOptions
 
     /// <summary>
     /// What happens to a file whose volume cannot recycle it. Defaults to
-    /// <see cref="NoRecycleBinAction.Throw"/>, which refuses it and leaves the file in place.
-    /// <see cref="ThrowOnError"/> still decides whether the refusal raises or is returned through
-    /// <see cref="RecycleBinResult.Failures"/>.
+    /// <see cref="NoRecycleBinAction.Throw"/>, which refuses it and leaves the file in place: that
+    /// refusal raises or comes back as <see langword="false"/> according to <see cref="ThrowOnError"/>
+    /// on <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/>, and
+    /// arrives in <see cref="RecycleBinResult.Failures"/> on the batch overload, which never raises
+    /// for one item.
     /// </summary>
     public new NoRecycleBinAction NoRecycleBinAction
     {

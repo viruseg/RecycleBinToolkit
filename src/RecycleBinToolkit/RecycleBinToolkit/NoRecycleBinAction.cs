@@ -5,7 +5,9 @@ public enum NoRecycleBinAction
 {
     /// <summary>
     /// Refuse the path and leave the file where it is. The default, and the only value that cannot lose
-    /// data. Raises only when <see cref="RecycleOptions.ThrowOnError"/> is on.
+    /// data. <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/> raises
+    /// for it only when <see cref="RecycleOptions.ThrowOnError"/> is on; the batch overload reports it
+    /// in <see cref="RecycleBinResult.Failures"/> and never raises.
     /// </summary>
     Throw = 0,
 
