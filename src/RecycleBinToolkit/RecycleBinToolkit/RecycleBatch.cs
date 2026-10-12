@@ -332,14 +332,12 @@ internal static class RecycleBatch
     /// <remarks>
     /// One question, answering everything validation needs. <c>File.Exists(a) || Directory.Exists(a)</c>
     /// costs two filesystem probes for every directory in the batch, because the file probe has to fail
-    /// first, and it is asked once per path before the move — 20,000 paths measured at 11 ms
-    /// each, which is 220 seconds of the caller's thread before the first await.
+    /// first, and it is asked once per path before the move.
     /// <para>
     /// <see cref="FileInfo"/> rather than <see cref="File.GetAttributes(string)"/>, and that is the whole reason
     /// the length comes for free: one status query reports attributes, size and timestamps together, and a
     /// separate call for the length would be a second round trip for a number the first one already
-    /// carried. The record written into the Recycle Bin's index needs that number, so a batch of
-    /// twenty thousand files pays for twenty thousand queries rather than forty thousand.
+    /// carried.
     /// </para>
     /// <para>
     /// It throws where the probes returned false, so the fallbacks are what keep a path the file system

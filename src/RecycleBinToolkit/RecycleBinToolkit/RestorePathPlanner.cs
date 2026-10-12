@@ -106,33 +106,19 @@ internal static class RestorePathPlanner
     /// </param>
     /// <returns>A path in the same directory as <paramref name="destinationPath"/>, under a name nothing is using.</returns>
     /// <remarks>
-    /// The split is <see cref="Path.GetExtension(string)"/>'s: on the last dot rather than the first, so
-    /// <c>archive.tar.gz</c> becomes <c>archive.tar (1).gz</c>. A name with no extension takes the number
-    /// whole, and a name that is nothing but an extension — <c>.gitignore</c> — takes it after the whole
-    /// name, because that call reports such a name as one long extension and there is no stem left in front
-    /// of the number to put it in.
-    /// <para>
-    /// Nothing is read back out of a name to decide where the next one starts. <c>report (5).txt</c> is a
-    /// name and not a statement about how many reports there are, so it becomes <c>report (5) (1).txt</c>;
-    /// a caller that parsed the bracketed digits would ask for <c>report (5) (6).txt</c>, a name nothing
-    /// has ever been asked for.
-    /// </para>
-    /// <para>
-    /// A candidate is free when nothing at all is using it, which is both <see cref="File.Exists"/> and
-    /// <see cref="Directory.Exists"/> saying no rather than one of them chosen from what the name looks
-    /// like. That is not redundant: each of those two is false of the other's kind, so a directory named
-    /// <c>Photos.2024</c> — whose name says file — and a file named <c>README</c> — whose name says
-    /// directory — would otherwise both be handed a number that is already taken, and the move that follows
-    /// would throw on a name this library picked itself. Asking both costs one extra query on a name that
-    /// turns out to be free, and cannot be wrong the way picking one is.
-    /// </para>
-    /// <para>
-    /// The candidate is composed in one span and the number written into it without an intermediate string.
-    /// It still has to become a <see cref="string"/> before the filesystem can be asked about it — both
-    /// probes take a <see cref="string"/> and nothing else, and that is the whole of the allocation here: one
-    /// per candidate examined, and the one that is free is the one returned. A caller on the ordinary path
-    /// never gets this far, because a destination nothing occupies is answered without naming anything.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>The split is <see cref="Path.GetExtension(string)"/>'s — the last dot, not the first — so
+    /// <c>archive.tar.gz</c> becomes <c>archive.tar (1).gz</c>. A name that is nothing but an extension takes
+    /// the number after the whole name, because that call reports such a name as one long extension.</item>
+    /// <item>Nothing is read back out of a name to decide where the next one starts: <c>report (5).txt</c>
+    /// becomes <c>report (5) (1).txt</c>.</item>
+    /// <item>A candidate is free when both <see cref="File.Exists"/> and <see cref="Directory.Exists"/> say
+    /// no, rather than one of them chosen from what the name looks like. Each is false of the other's kind,
+    /// so a directory named <c>Photos.2024</c> would otherwise be handed a number that is taken and the move
+    /// would throw on a name this library picked itself.</item>
+    /// <item>The candidate is composed in one span and has to become a <see cref="string"/> before the
+    /// filesystem can be asked about it: one allocation per candidate examined.</item>
+    /// </list>
     /// </remarks>
     internal static string WithFreeNumber(string destinationPath)
     {
@@ -244,25 +230,19 @@ internal static class RestorePathPlanner
     /// them, because that is the path a conflict record names rather than the one the item ends up at.
     /// </returns>
     /// <remarks>
-    /// The policy is the one for the kind arriving, not the kind in the way. A destination holding the other
-    /// kind is a conflict like any other — a file may be replaced by a directory or the reverse — and is
-    /// answered by the same branch a same-kind occupant is.
-    /// <para>
-    /// A destination holding a directory answers <see cref="RestoreAction.Move"/> under every merge mode.
-    /// That is not the same as moving a free directory whole: the tree is walked into what is there and each
-    /// entry inside it is settled by <see cref="DecideMerged"/>. A directory is never replaced whole,
-    /// because the only way to replace one is to delete it first and find out afterwards whether the move
-    /// was possible at all, and the bytes destroyed by that are the caller's. The same answer under all
-    /// three modes is what puts the policy in the right place: it decides what happens to each file, and
-    /// the destination is one directory either way.
-    /// </para>
-    /// <para>
-    /// Both <c>Error</c> policies answer <see cref="RestoreAction.Skip"/>, as does an enum value from
-    /// outside either policy. Which of the two a refusal is — whether the item also lands in
+    /// <list type="bullet">
+    /// <item>The policy is the one for the kind arriving, not the kind in the way. A destination holding the
+    /// other kind is a conflict like any other, answered by the same branch a same-kind occupant is.</item>
+    /// <item>A destination holding a directory answers <see cref="RestoreAction.Move"/> under every merge
+    /// mode, and the tree is walked into what is there rather than moved whole. A directory is never
+    /// replaced whole: the only way to replace one is to delete it first and find out afterwards whether the
+    /// move was possible, and the bytes destroyed by that are the caller's.</item>
+    /// <item>Both <c>Error</c> policies answer <see cref="RestoreAction.Skip"/>, as does an enum value from
+    /// outside either policy. Whether the entry also lands in
     /// <see cref="RecycleBinRestoreResult.Failures"/> rather than only in
-    /// <see cref="RecycleBinRestoreResult.Conflicts"/> — is the caller's answer from the options, not a
-    /// fifth action.
-    /// </para>
+    /// <see cref="RecycleBinRestoreResult.Conflicts"/> is the caller's answer from the options, not a fifth
+    /// action.</item>
+    /// </list>
     /// </remarks>
     internal static RestoreDecision Decide(string destinationPath, bool isDirectory, RecycleBinOptions options)
     {

@@ -61,36 +61,17 @@ internal static class VolumeSeekPenalty
 
     /// <summary>
     /// The most threads a solid-state volume's Recycle Bin records are read on. Reading a batch of records is
-    /// bound by per-file work the operating system does rather than by bandwidth, and past this many
-    /// threads the measurements on this machine stopped improving — so a wider machine gains nothing
-    /// from the extra ones.
+    /// bound by per-file work the operating system does rather than by bandwidth, and past this many threads
+    /// the measurements stopped improving — so a wider machine gains nothing from the extra ones.
     /// </summary>
-    /// <remarks>
-    /// Measured over 36,009 records warm on a solid-state volume: 1892 ms on one thread, 496 ms on eight,
-    /// 457 ms on sixteen, and 498 ms again on twenty-four. It is flat from eight and it stops paying at
-    /// that figure, so the cap is one per core.
-    /// </remarks>
     internal const int SolidStateReadDegreeCap = 8;
 
-    /// <summary>
-    /// The most threads a mechanical volume's Recycle Bin records are read on.
-    /// </summary>
+    /// <summary>The most threads a mechanical volume's Recycle Bin records are read on.</summary>
     /// <remarks>
-    /// Eight, and this is the figure a cold sweep put it at. Reading 30,010 records cold on a mechanical
-    /// volume, with the cache dropped and ten seconds of settling before each pass:
-    /// <list type="bullet">
-    /// <item><description>1 thread 73.1 s, 2 threads 23.7 s, 3 threads 13.6 s, 4 threads 12.4 s</description></item>
-    /// <item><description>6 threads 4.8 / 12.1 / 8.2 s, 8 threads 6.6 / 7.7 / 8.3 s, 16 threads 9.6 / 9.4 / 10.2 s</description></item>
-    /// </list>
-    /// Past eight it gets worse, and worse consistently: three passes each at eight averaged 7.7 s against
-    /// 9.6 s at sixteen. Those requests are seeks, and past this many in flight the head stops gaining.
-    /// <para>
-    /// Sixteen was here before this sweep and was taken from a warm measurement, where it won by seven
-    /// percent against eight. Cold is what a caller's first read does — the cache is empty — and it pays
-    /// twenty percent for that seven. Eight is the better trade on the measurement rather than on the
-    /// argument, and the argument that made one thread safe has turned out to have been right in kind and
-    /// wrong in degree.
-    /// </para>
+    /// Eight, which is where the cold sweep put it: the curve peaks there and falls away after, because
+    /// each request in flight past that is a seek the head cannot interleave. Sixteen was here before that
+    /// sweep and was taken from a warm measurement, where it won by seven percent. Cold is what a caller's
+    /// first read does, and it pays twenty percent for that seven. The sweep is in AGENTS.md.
     /// </remarks>
     internal const int MechanicalReadDegreeCap = 8;
 

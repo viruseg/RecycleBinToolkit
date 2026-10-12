@@ -120,12 +120,11 @@ public static class RecycleBin
         // ThrowOnError does not suppress it — nothing was attempted, so there is nothing to report as data.
         RecycleBinBackendGuard.RequireWriteSupport();
 
-        // Validating a batch is one filesystem probe per path and, on the volume measured here, about
-        // 11 ms each — so 20,000 paths is a little over three and a half minutes. Run inline that time is
-        // the caller's own, because an async method runs everything before its first await on the
-        // thread that called it: a caller on a UI thread would be frozen for the whole scan, and a caller
-        // holding a lock would hold it. Hopping to the pool first costs a scheduling round trip and buys
-        // back the caller's thread, which is the only one that has something else to be doing.
+        // Validating a batch is one filesystem probe per path, and it is slow enough that running it inline
+        // would be the caller's own time: an async method runs everything before its first await on the
+        // thread that called it, so a caller on a UI thread would be frozen for the whole scan and a
+        // caller holding a lock would hold it. Hopping to the pool first costs a scheduling round trip
+        // and buys back the caller's thread.
         return await Task
             .Run(() => RecycleBatch.Run(filePaths, effective, cancellationToken), cancellationToken)
             .ConfigureAwait(false);
