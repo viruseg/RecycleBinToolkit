@@ -81,7 +81,7 @@ internal static class PhysicalVolumeDisk
     /// <summary>
     /// Which physical disk a volume is a partition of.
     /// </summary>
-    /// <param name="volumeRoot">Volume root, such as <c>"X:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root, such as <c>"X:\"</c>.</param>
     /// <param name="key">
     /// The volume's disk, or <c>default</c> when this returns <see langword="false"/>.
     /// </param>

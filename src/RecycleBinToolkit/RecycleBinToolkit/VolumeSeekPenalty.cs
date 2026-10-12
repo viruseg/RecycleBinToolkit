@@ -89,7 +89,7 @@ internal static class VolumeSeekPenalty
     /// <summary>
     /// What kind of storage a volume sits on.
     /// </summary>
-    /// <param name="volumeRoot">Volume root, such as <c>"X:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root, such as <c>"X:\"</c>.</param>
     /// <returns>The driver's answer, or <see cref="VolumeStorageKind.Unknown"/>.</returns>
     /// <remarks>
     /// A UNC root answers <see cref="VolumeStorageKind.Unknown"/> without asking anything. A share has no
@@ -117,7 +117,7 @@ internal static class VolumeSeekPenalty
     }
 
     /// <summary>How many threads may read one volume's Recycle Bin at once.</summary>
-    /// <param name="volumeRoot">Volume root, such as <c>"X:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root, such as <c>"X:\"</c>.</param>
     /// <returns>
     /// One per core for a solid-state volume, two per core for a mechanical one, each capped where a cold
     /// sweep stopped improving, and one for a share.

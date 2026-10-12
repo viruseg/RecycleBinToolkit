@@ -75,7 +75,7 @@ internal static class NativeBinLayout
     /// <summary>
     /// The bin directory of a volume, composed without touching the filesystem.
     /// </summary>
-    /// <param name="volumeRoot">Volume root, such as <c>"X:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root, such as <c>"X:\"</c>.</param>
     /// <returns>The directory this user's entries live in on that volume.</returns>
     internal static string BinDirectory(string volumeRoot) =>
         Path.Combine(volumeRoot, RecycleBinFolder, CurrentSid);
@@ -83,7 +83,7 @@ internal static class NativeBinLayout
     /// <summary>
     /// The bin directory of a volume, created if nothing has ever been recycled there.
     /// </summary>
-    /// <param name="volumeRoot">Volume root, such as <c>"X:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root, such as <c>"X:\"</c>.</param>
     /// <returns>The directory this user's entries live in on that volume.</returns>
     /// <remarks>
     /// Creating it is what the Shell does on the first delete of a session, and doing it here is what lets

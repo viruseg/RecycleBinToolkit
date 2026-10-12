@@ -73,8 +73,9 @@ internal static class EmptySuite
     /// nothing in particular.
     /// </summary>
     /// <remarks>
-    /// The refusal has to happen before anything is attempted. An empty string reduced to a root is
-    /// <c>"\</c>, which names no volume at all. A refusal cannot act on that, so the path is checked first.
+    /// The refusal has to happen before anything is attempted. An empty string reduced to a root is a
+    /// single separator, which names no volume at all. A refusal cannot act on that, so the path is checked
+    /// first.
     /// <para>
     /// <see cref="RecycleBin.GetStatusAsync"/> throws on the same string rather than refusing it, because
     /// it takes no <see langword="null"/> to mean "everything"; that difference is its own and predates

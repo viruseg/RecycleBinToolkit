@@ -7,7 +7,7 @@ namespace RecycleBinToolkit;
 public sealed class RecycleBinVolumeContents
 {
     /// <summary>Creates the group for one volume.</summary>
-    /// <param name="volumeRoot">Volume root the entries were read from, such as <c>"X:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root the entries were read from, such as <c>"X:\"</c>.</param>
     /// <param name="items">
     /// The entries that volume's bin holds, in directory order. Empty when the volume has no bin or an empty
     /// one, which is an answer rather than a failure.
@@ -21,7 +21,7 @@ public sealed class RecycleBinVolumeContents
         Items = items;
     }
 
-    /// <summary>Volume root these entries were read from, such as <c>"X:\\"</c>.</summary>
+    /// <summary>Volume root these entries were read from, such as <c>"X:\"</c>.</summary>
     public string VolumeRoot { get; }
 
     /// <summary>The entries that volume's bin holds, in directory order.</summary>

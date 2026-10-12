@@ -159,7 +159,7 @@ public static class RecycleBin
 
     /// <summary>Reads the contents of the Recycle Bin.</summary>
     /// <param name="volumeRoot">
-    /// Volume root to read, such as <c>"X:\\"</c>, or <see langword="null"/> for every volume. A path
+    /// Volume root to read, such as <c>"X:\"</c>, or <see langword="null"/> for every volume. A path
     /// inside a volume is not a volume root: it is refused at stage
     /// <see cref="RecycleFailureStage.PathValidation"/> rather than answered for the whole volume
     /// containing it.
@@ -206,7 +206,7 @@ public static class RecycleBin
 
     /// <summary>Empties the Recycle Bin.</summary>
     /// <param name="volumeRoot">
-    /// Volume root to empty, such as <c>"X:\\"</c>, or <see langword="null"/> for every mounted volume
+    /// Volume root to empty, such as <c>"X:\"</c>, or <see langword="null"/> for every mounted volume
     /// that can hold a Recycle Bin. A path inside a volume is not a volume root and is reported in
     /// <see cref="RecycleBinEmptyResult.Failures"/>.
     /// </param>
@@ -348,7 +348,7 @@ public static class RecycleBin
     }
 
     /// <summary>Reports whether the Recycle Bin is in use for a volume.</summary>
-    /// <param name="volumeRoot">Volume root to inspect, such as <c>"X:\\"</c>.</param>
+    /// <param name="volumeRoot">Volume root to inspect, such as <c>"X:\"</c>.</param>
     /// <param name="cancellationToken">Checked before the work starts.</param>
     /// <returns>
     /// The status of that volume. A volume whose own setting was never recorded answers
