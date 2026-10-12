@@ -7,25 +7,18 @@ namespace RecycleBinToolkit.Tests.Suites;
 /// What the suite writes to, and how it comes to own it.
 /// </summary>
 /// <remarks>
-/// Every case in this repository writes files and deletes directories, and this one writes nothing
-/// outside the directory the run claimed under the volume root <c>--scratch</c> named. That rule and the
-/// half of this file that tests the claim mechanism used to be in tension: a claim was by definition a
-/// direct child of a volume root, so proving that one was made meant making one in the root.
-/// <para>
-/// There is no tension now, because a claim no longer has to be one.
-/// <see cref="ScratchDirectory"/> has two entry points rather than one with two rules: one claims the
-/// run's directory under a volume root, and the other refuses any parent that is not already inside it.
-/// So the nine cases below claim under <see cref="ScratchWorkspace.Root"/> — a directory the run already
-/// owns, and where every other case works — and the claim each of them makes is a real one in the real
-/// place. <see cref="ClaimRefusesAParentOutsideTheRunRoot"/> is the other half of the same rule: handed
-/// the volume root, the claim creates nothing at all.
-/// <para>
-/// A name written into the source is not something a case may take ownership of either.
+/// Every case in this repository writes files and deletes directories, and this one writes nothing outside
+/// the directory the run claimed under the volume root <c>--scratch</c> named.
+/// <list type="bullet">
+/// <item>There is no tension with testing the claim mechanism, because a claim no longer has to be a direct
+/// child of a volume root. <see cref="ScratchDirectory"/> has two entry points: one claims the run's
+/// directory under a volume root, the other refuses any parent not already inside it. So the cases below
+/// claim under <see cref="ScratchWorkspace.Root"/> and each claim is a real one in the real place.</item>
+/// <item>A name written into the source is not something a case may take ownership of either.
 /// <c>Directory.CreateDirectory</c> answers an existing directory with success, so a name from this file
-/// would be adopted and then removed with a recursive delete. The bystanders the cases need are claims of
-/// their own, and the one name a case has to invent is a Guid, which is the same check
-/// <see cref="ScratchDirectory"/> makes before it takes a name.
-/// </para>
+/// would be adopted and then removed with a recursive delete. The one name a case has to invent is a Guid,
+/// which is the same check <see cref="ScratchDirectory"/> makes before it takes a name.</item>
+/// </list>
 /// </remarks>
 internal static class ScratchSuite
 {

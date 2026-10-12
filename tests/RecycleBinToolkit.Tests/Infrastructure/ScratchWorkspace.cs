@@ -15,8 +15,8 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 /// named volume is, and a case that needs a volume of one kind is expected to read that answer rather than
 /// manufacture one. Nothing here refuses a volume the caller named, so a run on a flash drive, a share, or a
 /// machine whose policy turns the bin off starts instead of dying before the first case reports;
-/// <see cref="RequireNonRecycling"/> is how a case says it did not run here. What the answer means on any
-/// such volume is spelled out on <see cref="Reason"/>.
+/// <see cref="RequireNonRecycling"/> is how a case says it did not run here.
+/// </para>
 /// </remarks>
 internal sealed class ScratchWorkspace : IDisposable
 {
@@ -77,24 +77,15 @@ internal sealed class ScratchWorkspace : IDisposable
     /// volume can witness is that the cached value still agrees with the library, which is what
     /// <c>VolumeSuite.TheScratchVolumeReasonIsWhatTheLibraryReports</c> asserts and all it asserts.
     /// </para>
-    /// <para>
-    /// Cached for the life of the claim because the answer does not change under a run and the registry
-    /// reads are on a path the case count does not justify repeating. What keeps the cache from
-    /// answering about a volume the run has left is not the clearing but an invariant: this value is
-    /// written in one place, that place reads <see cref="VolumeRoot"/>, and <see cref="VolumeRoot"/> throws
-    /// while no run root is held — so a cached answer exists only while a run root does, and no path here
-    /// releases one without releasing the other. <see cref="Configure"/> and
-    /// <see cref="ReleaseRunRoot"/> clear it anyway, as insurance rather than as the argument: the guard is
-    /// one line, and the refactor that would give a reason to drop it is the one that makes the invariant
-    /// worth having written down.
-    /// </para>
-    /// <para>
-    /// A second <see cref="Configure"/> cannot bring in a different volume either way. It returns or throws
-    /// for every state in which a run root is already held, and the only call that reaches
-    /// <see cref="ScratchDirectory.ClaimRunRoot"/> is one made with none — where that class keeps a root of
-    /// its own for the life of the process and refuses a second claim. One volume per process, and with it
-    /// one answer.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>Cached for the life of the claim because the answer does not change under a run and the registry
+    /// reads are on a path the case count does not justify repeating. What keeps the cache from answering
+    /// about a volume the run has left is an invariant: this value is written in one place, that place reads
+    /// <see cref="VolumeRoot"/>, and <see cref="VolumeRoot"/> throws while no run root is held.</item>
+    /// <item>A second <see cref="Configure"/> cannot bring in a different volume either way. It returns or
+    /// throws for every state in which a run root is already held. One volume per process, and with it one
+    /// answer.</item>
+    /// </list>
     /// </remarks>
     /// <exception cref="InvalidOperationException"><see cref="Configure"/> has not run.</exception>
     public static RecycleBinAvailabilityReason Reason => _reason ??= RecycleBinVolumeState.Inspect(VolumeRoot).Reason;

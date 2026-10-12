@@ -224,17 +224,16 @@ internal static class NativeBinSuite
     /// <remarks>
     /// <b>What this pins is an order, and the order is the whole of what changed.</b> The names are still six
     /// characters over the alphabet Windows uses, and the record is still created with
-    /// <see cref="FileMode.CreateNew"/>, so nothing about safety rests on the names being where they land —
-    /// this is about where a batch of writes to one directory goes, not about whether they are allowed to.
-    /// <para>
-    /// <b>One call, because two would prove something weaker.</b> A second call reads the bin again and
-    /// starts above what the first one left there, which is the claim about a bin that already holds
-    /// entries. What that does not prove is that two names inside one call are adjacent, and it is the
-    /// adjacency — never leaving the leaf a directory index writes to — that is the point.
-    /// <para>
-    /// <b>The assertion is the difference being one, not which is larger.</b> Which of the two came first is a
-    /// property of nothing anyone depends on, and pinning it would make this a test of call order.
-    /// </para>
+    /// <see cref="FileMode.CreateNew"/>, so nothing about safety rests on where they land — this is about
+    /// where a batch of writes to one directory goes, not about whether they are allowed to.
+    /// <list type="bullet">
+    /// <item><b>One call, because two would prove something weaker.</b> A second call reads the bin again and
+    /// starts above what the first left there. What that does not prove is that two names inside one call are
+    /// adjacent, and the adjacency is the point.</item>
+    /// <item><b>The assertion is the difference being one, not which is larger.</b> Which of the two came
+    /// first is a property of nothing anyone depends on, and pinning it would make this a test of call
+    /// order.</item>
+    /// </list>
     /// </remarks>
     private static async Task RecycledNamesClimbAboveWhateverTheBinAlreadyHolds(TestContext context)
     {

@@ -129,18 +129,15 @@ internal static class FacadeSuite
     /// attempted and the failure carries no code.
     /// </summary>
     /// <remarks>
-    /// Nothing here is asserted about the volume beyond what this library did with the answer, which is
-    /// why the file is asserted to be untouched.
-    /// <para>
-    /// The file lives on the volume <c>--scratch</c> named, and this case needs that volume to have no
-    /// Recycle Bin, so <see cref="ScratchWorkspace.RequireNonRecycling"/> decides whether it runs at all:
-    /// a machine with a bin reports this one as not run rather than failing it.
-    /// </para>
-    /// <para>
-    /// <c>HResult</c> is pinned to <c>0</c>: the refusal is settled from configuration, so there is no
-    /// code to carry. What matters is that the volume's own name came through unchanged instead of being
-    /// normalised to something else, and that the failure names the volume rather than anything else.
-    /// </para>
+    /// Nothing here is asserted about the volume beyond what this library did with the answer, which is why
+    /// the file is asserted to be untouched.
+    /// <list type="bullet">
+    /// <item>The file lives on the volume <c>--scratch</c> named, and this case needs that volume to have no
+    /// Recycle Bin, so <see cref="ScratchWorkspace.RequireNonRecycling"/> decides whether it runs at all.</item>
+    /// <item><c>HResult</c> is pinned to <c>0</c>: the refusal is settled from configuration, so there is no
+    /// code to carry. What matters is that the volume's own name came through unchanged and that the failure
+    /// names the volume rather than anything else.</item>
+    /// </list>
     /// </remarks>
     private static async Task RefusedPathIsLeftOnDiskWhenThrowOnErrorIsOff(TestContext context)
     {
@@ -408,31 +405,21 @@ internal static class FacadeSuite
     /// the paths on the volumes that are there are still recycled.
     /// </summary>
     /// <remarks>
-    /// The gate groups a batch by volume root, so this is the case that fails if it inspects only the
-    /// first root, and the case that fails if it refuses the batch as a whole. Both are silent failures
-    /// of the other kind — a batch that skips the healthy paths, and a batch that gives up on all of them
-    /// because of one.
-    /// <para>
-    /// The batch carries <see cref="RecycleOptions.ThrowOnError"/> turned off, and that is not what keeps
-    /// the healthy path out of the failures: the batch overload never raises for a per-item failure, so the
-    /// refusal arrives in <see cref="RecycleBinResult.Failures"/> whatever the flag says. This is the case
-    /// that says so on the overload rather than in a sentence about the option.
-    /// </para>
-    /// <para>
-    /// The second volume is a drive letter nothing is mounted on, found on this machine rather than named
-    /// in the source. Its path fails at <see cref="RecycleFailureStage.PathValidation"/> rather than at
-    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/>, and that is the whole story about this
-    /// shape of bad volume: the path is not there either, and a path that is not there is settled before
-    /// any volume is asked about. Asserting the volume stage here would claim a detail this case never
-    /// measures — no volume with a bin in it is involved on either side of the batch. What is measured is
-    /// that one unusable path leaves the rest of the batch alone, and the healthy path is on the volume
-    /// that really is there and really does recycle.
-    /// </para>
-    /// <para>
-    /// Which means the case needs a volume that recycles, and says so rather than running on one that does
-    /// not: there, both halves are refused by the same gate and the contrast this case is about never
-    /// appears.
-    /// </para>
+    /// The gate groups a batch by volume root, so this is the case that fails if it inspects only the first
+    /// root, and the case that fails if it refuses the batch as a whole. Both are silent failures of the other
+    /// kind — a batch that skips the healthy paths, and a batch that gives up on all of them because of one.
+    /// <list type="bullet">
+    /// <item>The batch carries <see cref="RecycleOptions.ThrowOnError"/> turned off, and that is not what
+    /// keeps the healthy path out of the failures: the batch overload never raises for a per-item failure, so
+    /// the refusal arrives in <see cref="RecycleBinResult.Failures"/> whatever the flag says.</item>
+    /// <item>The second volume is a drive letter nothing is mounted on, found on this machine rather than
+    /// named in the source. Its path fails at <see cref="RecycleFailureStage.PathValidation"/> rather than at
+    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/>, because the path is not there either and that
+    /// is settled before any volume is asked about.</item>
+    /// <item>The case needs a volume that recycles, and says so rather than running on one that does not:
+    /// there, both halves are refused by the same gate and the contrast this case is about never
+    /// appears.</item>
+    /// </list>
     /// </remarks>
     private static async Task OneBadVolumeDoesNotSinkTheBatch(TestContext context)
     {
@@ -668,20 +655,17 @@ internal static class FacadeSuite
     /// <remarks>
     /// The invariant rather than either outcome: a path cannot be both, so a caller cannot be told the file
     /// went to the Recycle Bin and was also destroyed.
-    /// <para>
-    /// A batch of two rather than one path, because a single path makes the two lists indistinguishable
-    /// from one — a bug that reported a permanently deleted path as recycled would also report the reverse
-    /// as true. Two paths on the run's own volume, both of which the option removes, is what the batch can
-    /// honestly be here: a call carries one <see cref="RecycleOptions.NoRecycleBinAction"/> and the
-    /// volume it runs on answers for every path in it, so a batch that reached one branch and another has
-    /// to span two volumes of different kinds, and this run names one volume. What the assertions still
-    /// catch is the recording rather than the mixture: a path in both lists, and a path recorded in one
-    /// list twice.
-    /// </para>
-    /// <para>
-    /// Compared without regard to case, because the two lists are written by different code and a caller
-    /// comparing them should not have to know that.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>A batch of two rather than one path, because a single path makes the two lists indistinguishable
+    /// from one — a bug that reported a permanently deleted path as recycled would also report the reverse as
+    /// true.</item>
+    /// <item>A call carries one <see cref="RecycleOptions.NoRecycleBinAction"/> and the volume it runs on
+    /// answers for every path in it, so this batch spans one volume of one kind. What the assertions still
+    /// catch is the recording rather than the mixture: a path in both lists, and a path recorded in one list
+    /// twice.</item>
+    /// <item>Compared without regard to case, because the two lists are written by different code and a caller
+    /// comparing them should not have to know that.</item>
+    /// </list>
     /// </remarks>
     private static async Task APathIsNeverBothRecycledAndPermanentlyDeleted(TestContext context)
     {

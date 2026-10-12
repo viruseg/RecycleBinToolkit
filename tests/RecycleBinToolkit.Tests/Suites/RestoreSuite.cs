@@ -134,17 +134,12 @@ internal static class RestoreSuite
     /// The volumes are asked of the machine rather than written down, for the reason
     /// <see cref="VolumePresence"/> gives: which volumes share a physical disk is a fact about the machine,
     /// and a letter written into this case would assert one machine's partition layout rather than the rule.
-    /// <para>
-    /// The question is asked of three volumes rather than of two named ones, because the claim that matters
-    /// is the asymmetry: the key is not a per-volume identity, or the two volumes on one disk would answer
-    /// differently for a reason that has nothing to do with where the bytes are.
-    /// </para>
-    /// <para>
-    /// Nothing here is created, recycled, moved or deleted. The roots are data, and the answer comes from
-    /// the driver through each volume's own device — so a volume whose driver declines leaves nothing to
-    /// assert about it here, and the guards skip rather than fail when the machine cannot supply a second
-    /// volume or a second disk.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>Three volumes rather than two named ones, because the claim that matters is the asymmetry: the
+    /// key is not a per-volume identity.</item>
+    /// <item>Nothing is created, recycled, moved or deleted. The roots are data, and the answer comes from
+    /// the driver, so the guards skip rather than fail when the machine cannot supply the volumes.</item>
+    /// </list>
     /// </remarks>
     private static Task VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot(TestContext context)
     {
@@ -177,25 +172,20 @@ internal static class RestoreSuite
     /// are two groups rather than three of their own or two of a fixed size.
     /// </summary>
     /// <remarks>
-    /// The claim is the grouping and not the keys themselves — <see cref="VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot"/>
-    /// is what reads the keys off this machine, and which disk a letter sits on is a fact about the machine
-    /// rather than something this case can arrange. What is pinned here is that two volumes naming one disk
-    /// land in one group, that a third on another lands in a second, and that the groups carry the volumes
-    /// rather than a count of them.
-    /// <para>
-    /// The volumes come from <see cref="VolumePresence"/> for the reason its own remarks give, and skip
-    /// rather than fail when the machine has nothing to pair or nothing to separate.
-    /// </para>
-    /// <para>
-    /// Nothing here is created, recycled, moved or deleted. The roots are data — the grouping asks each one
-    /// which disk it is a partition of and touches nothing else — so a case about what the engine would do
-    /// with the groups costs nothing on any of them.
-    /// </para>
-    /// <para>
-    /// The two shares are the conservative side of a volume nothing could name a disk for, and they are
-    /// asserted as one group rather than as two: a volume that would not say which disk it is on may be
-    /// sharing one with the other, so moving the two together is the answer that cannot be wrong.
-    /// </para>
+    /// The claim is the grouping and not the keys themselves —
+    /// <see cref="VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot"/> reads the keys off this machine, and
+    /// which disk a letter sits on is a fact about the machine rather than something this case can arrange.
+    /// What is pinned here is that two volumes naming one disk land in one group, that a third on another
+    /// lands in a second, and that the groups carry the volumes rather than a count of them.
+    /// <list type="bullet">
+    /// <item>The volumes come from <see cref="VolumePresence"/> and skip rather than fail when the machine
+    /// has nothing to pair or nothing to separate.</item>
+    /// <item>Nothing is created, recycled, moved or deleted: the grouping asks each root which disk it is a
+    /// partition of and touches nothing else.</item>
+    /// <item>The two shares are asserted as one group rather than two: a volume that would not say which disk
+    /// it is on may be sharing one with the other, so moving them together is the answer that cannot be
+    /// wrong.</item>
+    /// </list>
     /// </remarks>
     private static Task VolumesAreGroupedByPhysicalDiskAndNotByCount(TestContext context)
     {
@@ -318,23 +308,17 @@ internal static class RestoreSuite
     /// pass over the list is what reports it.
     /// </summary>
     /// <remarks>
-    /// The claim is "once each", so a single call that must yield exactly one report per entry is
-    /// stronger than a count. The list is also the only thing that pins which entry each report is
-    /// about: an implementation that reported the same entry three times, or three entries in the
-    /// wrong order, would answer both counts correctly.
-    /// <para>
-    /// The bin is whatever this machine has put in it, so the entries this case recycled are told
-    /// from the rest by taking the listing before and after rather than by assuming an empty volume.
-    /// Filtering on the original path is not available: reading it is what warms an entry, so asking
-    /// which entries are this case's would make them all preloaded and leave the first half with
-    /// nothing to read.
-    /// </para>
-    /// <para>
-    /// The unreadable entry is built rather than made, for the reason
-    /// <c>NativeBinSuite</c> gives for building its own: taking a record away from a real bin leaves
-    /// a payload in the user's Recycle Bin with nothing that will ever collect it. Nothing is
-    /// written and nothing is deleted here at all.
-    /// </para>
+    /// The claim is "once each", so a single call that must yield exactly one report per entry is stronger
+    /// than a count. The list also pins which entry each report is about: an implementation that reported the
+    /// same entry three times, or three entries in the wrong order, would answer both counts correctly.
+    /// <list type="bullet">
+    /// <item>The entries this case recycled are told from the rest by taking the listing before and after,
+    /// rather than by assuming an empty volume. Filtering on the original path is not available: reading it
+    /// is what warms an entry, so asking which entries are this case's would leave the first half with
+    /// nothing to read.</item>
+    /// <item>The unreadable entry is built rather than made, for the reason <c>NativeBinSuite</c> gives.
+    /// Nothing is written and nothing is deleted here at all.</item>
+    /// </list>
     /// </remarks>
     private static async Task EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode(TestContext context)
     {
@@ -554,19 +538,16 @@ internal static class RestoreSuite
     /// <remarks>
     /// A destination holding the other kind is a conflict like any other, so both cross-kind cases are here:
     /// a file arriving where a directory is, and the reverse. Asserting them is what stops the planner from
-    /// answering <see cref="RestoreAction.Move"/> to a path that is occupied by something.
-    /// <para>
-    /// The three merge modes answer <see cref="RestoreAction.Move"/> rather than a fourth action. A directory
-    /// is never replaced whole and never silently kept away from what it is restoring into, so what a merge
-    /// needs is permission to put the tree at that path — which is what moving there means — and
-    /// <see cref="RestorePathPlanner.DecideMerged"/> then decides what happens to each file inside it.
-    /// </para>
-    /// <para>
-    /// <see cref="RestoreDirectoryConflict.Error"/> and <see cref="RestoreFileConflict.Error"/> answer
+    /// answering <see cref="RestoreAction.Move"/> to an occupied path.
+    /// <list type="bullet">
+    /// <item>The three merge modes answer <see cref="RestoreAction.Move"/> rather than a fourth action. A
+    /// directory is never replaced whole, so what a merge needs is permission to put the tree at that path
+    /// and <see cref="RestorePathPlanner.DecideMerged"/> decides what happens to each file inside it.</item>
+    /// <item><see cref="RestoreDirectoryConflict.Error"/> and <see cref="RestoreFileConflict.Error"/> answer
     /// <see cref="RestoreAction.Skip"/>: whether the item also lands in the failures is the caller's answer
     /// from the options, and an action is not a place to put it. An enum value outside either policy reaches
-    /// the same arm, which is the one that touches nothing.
-    /// </para>
+    /// the same arm.</item>
+    /// </list>
     /// </remarks>
     private static Task ThePlannerSaysWhatIsInTheWayAndWhatToDoAboutIt(TestContext context)
     {
@@ -816,17 +797,13 @@ internal static class RestoreSuite
     /// The free name is worked out before the restore rather than read back out of the answer, because the
     /// first call is the one that is free: once the payload is lying there, the same call counts on to the
     /// next number.
-    /// <para>
-    /// Both halves of "the squatter was not the thing that was renamed" are asserted. Its content still
-    /// reads "mine" is that it was left alone, and the original's bytes are at the free name is that the
-    /// entry is what came back. Reading the bytes back rather than the length is the difference between a
-    /// payload that arrived and one that arrived intact.
-    /// </para>
-    /// <para>
-    /// The conflict's path is the one the entry landed at rather than the one it collided with, which is what
-    /// <see cref="RecycleRestoreConflictAction.RestoredRenamed"/> reports and the reason a caller reading
-    /// <see cref="RecycleBinRestoreResult.RestoredPaths"/> finds the same path in both lists.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>Both halves of "the squatter was not the thing that was renamed" are asserted: its content still
+    /// reads "mine", and the original's bytes are at the free name. Reading the bytes back rather than the
+    /// length is the difference between a payload that arrived and one that arrived intact.</item>
+    /// <item>The conflict's path is the one the entry landed at rather than the one it collided with, which
+    /// is why <see cref="RecycleBinRestoreResult.RestoredPaths"/> finds the same path in both lists.</item>
+    /// </list>
     /// </remarks>
     private static async Task ATakenFilePathIsRestoredUnderAFreeName(TestContext context)
     {
@@ -937,22 +914,19 @@ internal static class RestoreSuite
     /// gone from the bin.
     /// </summary>
     /// <remarks>
-    /// The tree is three levels deep because a whole-directory move and a walk that drops the deepest
-    /// level are the same code at one level, and only the file at the bottom tells them apart. The files
-    /// hold random bytes rather than a word the case could compare by name, because a payload that
-    /// arrived empty, truncated, or holding a neighbour's content is a payload that arrived and not a
-    /// tree that came back.
-    /// <para>
-    /// The empty directory is asserted as well, and it is the only assertion that is about the directories
-    /// rather than the files in them: "whole" is the claim, and a tree that came back without it lost a
-    /// directory that was in it.
-    /// </para>
-    /// <para>
-    /// The entry leaving the bin is the other half of "came back", and it is counted against a baseline
-    /// for the reason <see cref="BaselineCount"/> gives. <see cref="RecycleBinRestoreResult.Succeeded"/>
-    /// and <see cref="RecycleBinRestoreResult.ItemsRestored"/> are read as well, so an implementation that
-    /// reported the move and left the record behind would fail this rather than pass two of its assertions.
-    /// </para>
+    /// The tree is three levels deep because a whole-directory move and a walk that drops the deepest level
+    /// are the same code at one level, and only the file at the bottom tells them apart.
+    /// <list type="bullet">
+    /// <item>The files hold random bytes rather than a word the case could compare by name: a payload that
+    /// arrived empty, truncated, or holding a neighbour's content is a payload that arrived and not a tree
+    /// that came back.</item>
+    /// <item>The empty directory is asserted as well, and it is the only assertion about the directories
+    /// rather than the files in them.</item>
+    /// <item>The entry leaving the bin is the other half of "came back", counted against a baseline for the
+    /// reason <see cref="BaselineCount"/> gives. <see cref="RecycleBinRestoreResult.Succeeded"/> and
+    /// <see cref="RecycleBinRestoreResult.ItemsRestored"/> are read as well, so an implementation that
+    /// reported the move and left the record behind fails here.</item>
+    /// </list>
     /// </remarks>
     private static async Task ADirectoryComesBackWithItsTree(TestContext context)
     {
@@ -1404,17 +1378,15 @@ internal static class RestoreSuite
     /// The same kind in the way is the shape this policy is about, and the merge cases are the only other
     /// coverage of it — they are about a value that <em>does</em> settle the collision, so nothing they say
     /// says what leaving it alone looks like.
-    /// <para>
-    /// Both of the squatter's files are read back rather than one, and at two depths: a directory untouched
-    /// at its root is a directory whose contents were walked over. The tree's own leaf is then checked for
-    /// absence, because that is the one path a merge would have put it back at — the same subdirectory, the
-    /// same name.
-    /// <para>
-    /// The entry is found again by that recorded path rather than counted, for the reason
+    /// <list type="bullet">
+    /// <item>Both of the squatter's files are read back rather than one, and at two depths: a directory
+    /// untouched at its root is a directory whose contents were walked over. The tree's own leaf is then
+    /// checked for absence, because that is the one path a merge would have put it back at.</item>
+    /// <item>The entry is found again by that recorded path rather than counted, for the reason
     /// <see cref="AMergedTreeLeavesWhatWasThereAndPutsTheRestBack"/> gives: being in the bin and being in
     /// the bin saying where it came from are different claims, and only the second makes it restorable. Its
-    /// payload is read too, which is the other half — an entry left in the bin whose tree had been taken
-    /// from it would satisfy every count.
+    /// payload is read too, which is the other half.</item>
+    /// </list>
     /// </remarks>
     private static async Task ATakenDirectoryPathIsSkippedAndTheEntryStaysInTheBin(TestContext context)
     {
@@ -1468,11 +1440,12 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// Both lists carry it because they answer different questions — what was in the way, and what did not
-    /// happen — and a caller reading only <see cref="RecycleBinRestoreResult.Conflicts"/> could not tell
-    /// this from a skip, which is the one thing the two policies are apart.
+    /// happen — and a caller reading only <see cref="RecycleBinRestoreResult.Conflicts"/> could not tell this
+    /// from a skip, which is the one thing the two policies are apart.
     /// <para>
-    /// The code and the round count are zero because nothing was attempted: the refusal is settled before
-    /// any move, which is what <see cref="RecycleFailure.Attempts"/> reports as zero everywhere else too.
+    /// The code and the round count are zero because nothing was attempted: the refusal is settled before any
+    /// move.
+    /// </para>
     /// </remarks>
     private static async Task ATakenDirectoryPathIsRefusedAsBothAConflictAndAFailure(TestContext context)
     {
@@ -1532,16 +1505,15 @@ internal static class RestoreSuite
     /// The free name is taken before the restore rather than read back out of the answer, for the reason
     /// <see cref="ATakenFilePathIsRestoredUnderAFreeName"/> gives: once the payload is lying there, the same
     /// call counts on to the next number.
-    /// <para>
-    /// The squatter is read back the way the skip case reads it, and its files are checked for presence
+    /// <list type="bullet">
+    /// <item>The squatter is read back the way the skip case reads it, and its files are checked for presence
     /// while the tree's own leaf is checked for absence at its old name — so a merge, which would have put
-    /// that leaf back under the same subdirectory and left the squatter's own files where they were, cannot
-    /// answer this.
-    /// <para>
-    /// <see cref="RecycleRestoreConflict.OccupiedByDirectory"/> reads <see langword="true"/> here and
-    /// <see langword="false"/> in <see cref="ADirectoryRestoringOntoAFileIsAConflict"/>. One policy over the
-    /// two kinds of occupant is the whole of the flag, and a runner reporting the arriving kind would answer
-    /// both cases alike.
+    /// that leaf back under the same subdirectory, cannot answer this.</item>
+    /// <item><see cref="RecycleRestoreConflict.OccupiedByDirectory"/> reads <see langword="true"/> here and
+    /// <see langword="false"/> in <see cref="ADirectoryRestoringOntoAFileIsAConflict"/>. One policy over the two
+    /// kinds of occupant is the whole of the flag, and a runner reporting the arriving kind would answer both
+    /// cases alike.</item>
+    /// </list>
     /// </remarks>
     private static async Task ATakenDirectoryPathIsSetDownUnderAFreeName(TestContext context)
     {
@@ -1680,22 +1652,16 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// The put-back is the half of this that has no other case. A file the policy would not move is still
-    /// inside the payload <c>$R</c>, and removing that payload afterwards takes the file with it — so it goes
-    /// back into the bin with a record of its own, under the path it wanted, where a later
-    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/>
-    /// can bring it back once the squatter has moved on.
-    /// <para>
-    /// The entry is found again by that recorded path rather than counted, because "it is in the bin" and
-    /// "it is in the bin saying where it came from" are different claims and only the second one makes the
-    /// entry restorable: a record naming a path inside <c>$RECYCLE.BIN</c> would restore into the bin
-    /// itself. The bytes are read back out of the new payload, which is the only way to tell this entry
-    /// from any other the machine holds.
-    /// </para>
-    /// <para>
-    /// The conflict is asserted as one record naming the directory rather than two naming files, because
-    /// that is what <see cref="RecycleRestoreConflictAction.MergedSkipped"/> is documented to be: nothing
-    /// about the two files was resolved — each is an ordinary entry in the next listing.
-    /// </para>
+    /// inside the payload, and removing that payload afterwards takes the file with it — so it goes back into
+    /// the bin with a record of its own, under the path it wanted.
+    /// <list type="bullet">
+    /// <item>The entry is found again by that recorded path rather than counted, because "it is in the bin"
+    /// and "it is in the bin saying where it came from" are different claims and only the second makes the
+    /// entry restorable. The bytes are read back out of the new payload, which is the only way to tell this
+    /// entry from any other the machine holds.</item>
+    /// <item>The conflict is asserted as one record naming the directory rather than two naming files,
+    /// because that is what <see cref="RecycleRestoreConflictAction.MergedSkipped"/> is documented to be.</item>
+    /// </list>
     /// </remarks>
     private static async Task AMergedTreeLeavesWhatWasThereAndPutsTheRestBack(TestContext context)
     {
@@ -2075,22 +2041,17 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// This is the case the merge documentation turns on, and it runs under the default
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> — the policy a caller who reads nothing is
-    /// running. All three merge values answer <see cref="RestoreAction.Move"/> for an occupied path
-    /// whatever occupies it, and <c>ADirectoryRestoringOntoAFileIsAConflict</c> — which runs under
-    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/> — was the only thing pinning what happens
-    /// next, under a policy that takes a free name rather than merging. So before this, every sentence
-    /// saying a merge settles an occupied path was true only of the other kind of occupant.
-    /// <para>
-    /// The other two merge values are deliberately not run here. <c>Merges</c> turns on the occupant's kind
-    /// before the policy is read, so all three fail here identically; what this case pins is that, and not
-    /// anything that separates one merge value from another.
-    /// </para>
-    /// <para>
-    /// The second restore is the recovery the failure promises and the cleanup that makes it: the entry never
-    /// moved, so trying again under a policy that takes a free name works, which is why a directory refused
-    /// here is worth a second attempt rather than lost.
-    /// </para>
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/> — the policy a caller who reads nothing is running.
+    /// <c>ADirectoryRestoringOntoAFileIsAConflict</c> ran under <see cref="RestoreDirectoryConflict.RenameDirectory"/>,
+    /// which takes a free name rather than merging, so nothing pinned what a merge does here.
+    /// <list type="bullet">
+    /// <item>The other two merge values are deliberately not run here. The occupant's kind is read before the
+    /// policy, so all three fail identically; what this case pins is that, and not anything separating one
+    /// merge value from another.</item>
+    /// <item>The second restore is the recovery the failure promises and the cleanup that makes it: the entry
+    /// never moved, so trying again under a policy that takes a free name works, which is why a directory
+    /// refused here is worth a second attempt rather than lost.</item>
+    /// </list>
     /// </remarks>
     private static async Task ADirectoryOntoAFileFailsUnderAMergePolicyAsWell(TestContext context)
     {
@@ -2320,17 +2281,14 @@ internal static class RestoreSuite
     /// refusal is reported; nothing in them would notice a runner that reported it by ending the call, because
     /// the call had nothing left to report. Two entries in one call, the first of which cannot be moved, is
     /// what says the refusal cost the second entry nothing.
-    /// <para>
-    /// The entry that fails is handed in first on purpose. A runner that gave up at the first refusal has
-    /// nothing to answer for the second entry at all, while one that carried on names the path the second
-    /// came back to — and only the presence of that path tells the two apart.
-    /// </para>
-    /// <para>
-    /// The entry that could not be moved is shown to be left in the bin by its record still being there
+    /// <list type="bullet">
+    /// <item>The entry that fails is handed in first on purpose: a runner that gave up at the first refusal has
+    /// nothing to answer for the second entry at all, and only the presence of the second's path tells the
+    /// two apart.</item>
+    /// <item>The entry that could not be moved is shown to be left in the bin by its record still being there
     /// rather than by a count, because <see cref="RecycleBinProbe"/> counts an entry only when both of its
-    /// halves are present: one payload is gone because this case deleted it and the other is gone because it
-    /// was restored, so the count is back at its baseline either way and says nothing about what was left.
-    /// </para>
+    /// halves are present, and the count is back at its baseline either way.</item>
+    /// </list>
     /// </remarks>
     private static async Task OneEntryFailingDoesNotCostTheOthersTheirAnswers(TestContext context)
     {
@@ -2378,20 +2336,17 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// The record is held open with nothing shared, which is what makes deleting it fail here. The handle is
-    /// read-only and asks for no delete access, so the record is not touched, and it is released before the
-    /// case ends whichever way the assertions went.
-    /// <para>
-    /// This is the failure the chosen order is for, and it is the reason the order is not the other way round:
-    /// the file is already where the caller asked for it, the entry is still in the Recycle Bin, and a caller
-    /// reading the result can tell that apart from an entry that never moved. A restore that reported this as
-    /// a success would leave the file back and the bin still claiming it, with nothing to say so.
-    /// </para>
-    /// <para>
-    /// The record is checked for still being there rather than counted in the bin, because
-    /// <see cref="RecycleBinProbe"/> skips a record whose payload has gone — which is exactly the state this
-    /// case produces. The record is then removed, so the case leaves nothing in the owner's Recycle Bin; that
-    /// is cleanup of material this case itself put there, not a second operation on the bin.
-    /// </para>
+    /// read-only and asks for no delete access, and it is released before the case ends whichever way the
+    /// assertions went.
+    /// <list type="bullet">
+    /// <item>This is the failure the chosen order is for: the file is already where the caller asked for it,
+    /// the entry is still in the bin, and a caller reading the result can tell that apart from an entry that
+    /// never moved. A restore that reported this as a success would leave the bin still claiming the file
+    /// with nothing to say so.</item>
+    /// <item>The record is checked for still being there rather than counted, because
+    /// <see cref="RecycleBinProbe"/> skips a record whose payload has gone — exactly the state this case
+    /// produces. It is then removed, so the case leaves nothing in the owner's Recycle Bin.</item>
+    /// </list>
     /// </remarks>
     private static async Task APayloadThatMovedAndARecordThatWouldNotGoIsAFailure(TestContext context)
     {
@@ -2444,22 +2399,18 @@ internal static class RestoreSuite
     /// The refusal is manufactured rather than waited for, because a case that waits for a virus scanner to
     /// let go of a file is a case that skips. A handle opened on the destination sharing nothing denies the
     /// delete an overwriting move needs, so the same call raises the same code every time — which is what a
-    /// retry loop needs to be measured against, and is why the budget rather than the clock decides the count.
-    /// <para>
-    /// The failure count and the attempt count answer different questions and either alone would pass a runner
-    /// reporting one failure per attempt: three attempts is one entry that could not be put back, and it is
-    /// reported once.
-    /// </para>
-    /// <para>
-    /// <b>The handle is released before the assertions rather than at the end of the case.</b> It shares
-    /// nothing, so it would refuse the very read that checks the file it holds is untouched, and the scratch
-    /// tree could not be taken away under it either.
-    /// </para>
-    /// <para>
-    /// That the entry is still restorable is read from its payload still being in the bin and from the count
-    /// against the baseline, not from <see cref="RecycleBinItem.IsDetailsLoaded"/>: the record was read to find
-    /// the entry, so that property answers the same whether or not it left the bin.
-    /// </para>
+    /// retry loop needs to be measured against, and is why the budget rather than the clock decides the
+    /// count.
+    /// <list type="bullet">
+    /// <item>The failure count and the attempt count answer different questions, and either alone would pass a
+    /// runner reporting one failure per attempt: three attempts is one entry that could not be put back, and it
+    /// is reported once.</item>
+    /// <item><b>The handle is released before the assertions rather than at the end of the case.</b> It shares
+    /// nothing, so it would refuse the very read that checks the file it holds is untouched.</item>
+    /// <item>That the entry is still restorable is read from its payload still being in the bin and from the
+    /// count against the baseline, not from <see cref="RecycleBinItem.IsDetailsLoaded"/>: the record was read
+    /// to find the entry, so that property answers the same whether or not it left the bin.</item>
+    /// </list>
     /// </remarks>
     private static async Task AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts(TestContext context)
     {
@@ -2635,16 +2586,14 @@ internal static class RestoreSuite
     /// <param name="content">What that file holds.</param>
     /// <param name="after">How long to leave the file held for.</param>
     /// <remarks>
-    /// Three acts in the order they have to be in, and it is a task rather than a sleep in the case body
-    /// because the whole of it has to happen while the restore is between its own two attempts — which no
-    /// code outside the call can synchronise, so the case pins the ordering by the backoff it waited for
-    /// instead.
-    /// <para>
-    /// <b>The wait takes no cancellation token, and that is deliberate.</b> The case awaits this task in a
-    /// <c>finally</c>, so a wait that could be cancelled would either throw out of the teardown on its own or
-    /// leave the swap half done and the scratch tree to be taken away underneath it. A hundred milliseconds is
-    /// short enough that letting it finish is cheaper than reasoning about either.
-    /// </para>
+    /// Three acts in the order they have to be in, and a task rather than a sleep in the case body because
+    /// the whole of it has to happen while the restore is between its own two attempts — which no code
+    /// outside the call can synchronise, so the case pins the ordering by the backoff it waited for.
+    /// <list type="bullet">
+    /// <item><b>The wait takes no cancellation token, and that is deliberate.</b> The case awaits this task in
+    /// a <c>finally</c>, so a wait that could be cancelled would either throw out of the teardown on its own or
+    /// leave the swap half done and the scratch tree to be taken away underneath it.</item>
+    /// </list>
     /// </remarks>
     private static async Task LetGoAndSwapAsync(
         FileStream hold,
@@ -2671,19 +2620,15 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// The same held destination as the case above, so the only thing that differs is the budget.
-    /// <para>
-    /// <b>What this pins is that a spent budget does not stop the call before it begins, and that the
+    /// <list type="bullet">
+    /// <item><b>What this pins is that a spent budget does not stop the call before it begins, and that the
     /// loop ends there.</b> Six attempts were allowed and one was made, so the first attempt is not optional
-    /// and the budget is what is left of the answer — a runner that gave up at the first refusal answers the
-    /// same way, which is why <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/> sits
-    /// beside it.
-    /// </para>
-    /// <para>
-    /// <b>What it does not pin is which part of the guard ended the loop.</b> The delay before a second
-    /// attempt cannot fit in a budget of no time, and a budget of no time is the same statement said the other
-    /// way round: the wait never runs, and there is nothing to tell the two conditions apart from outside. No
-    /// case can separate them, and the guard carries one comparison rather than two for the same reason.
-    /// </para>
+    /// and the budget is what is left of the answer — which is why
+    /// <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/> sits beside it.</item>
+    /// <item><b>What it does not pin is which part of the guard ended the loop.</b> The delay before a second
+    /// attempt cannot fit in a budget of no time, and a budget of no time says the same thing the other way
+    /// round: the wait never runs, and there is nothing to tell the two apart from outside.</item>
+    /// </list>
     /// </remarks>
     private static async Task ABudgetThatIsSpentStopsTheRetrying(TestContext context)
     {
@@ -2729,26 +2674,20 @@ internal static class RestoreSuite
     /// own and turn a one-second restore into a run that waits a dozen times as long.
     /// </summary>
     /// <remarks>
-    /// Eight locked destinations, one per entry, is the shape that shows it: a budget restarted per entry
-    /// would be spent eight times over, and one taken for the call is spent once — by the first entry, after
-    /// which every entry is attempted exactly once.
-    /// <para>
-    /// <b>The attempt count is asserted on both sides, and the lower bound is what gives the case its teeth
-    /// against a restore that simply gives up.</b> More than the eight attempts the entries would account for
-    /// says something was retried at all; no more than two apiece says the budget was not restarted, where a
-    /// fresh one would allow all six each.
-    /// </para>
-    /// <para>
-    /// The figures are chosen so the jitter cannot move the answer. Delays double from 200 ms against a
-    /// second of budget, so the first entry makes two attempts and the seven after it one each: the third
-    /// delay is 800 ms at its lowest against at most 720 ms spent, so it never fits. A budget restarted per
-    /// entry lets every one of them make three, and one restarted at every wait lets it make four — 24 and 32
-    /// attempts, both past the bound this case sets.
-    /// </para>
-    /// <para>
-    /// Nothing here asserts how long the call took. What it asserts is how much retrying was paid for, which
-    /// is the claim that does not move when the machine is busy.
-    /// </para>
+    /// Eight locked destinations, one per entry, is the shape that shows it: a budget restarted per entry would
+    /// be spent eight times over, and one taken for the call is spent once — by the first entry, after which
+    /// every entry is attempted exactly once.
+    /// <list type="bullet">
+    /// <item><b>The attempt count is asserted on both sides, and the lower bound is what gives the case its
+    /// teeth against a restore that simply gives up.</b> More than the eight attempts the entries would account
+    /// for says something was retried at all; no more than two apiece says the budget was not restarted.</item>
+    /// <item>The figures are chosen so the jitter cannot move the answer: delays double from 200 ms against a
+    /// second of budget, so the first entry makes two attempts and the seven after it one each. A budget
+    /// restarted per entry lets every one of them make three, and one restarted at every wait makes four —
+    /// 24 and 32 attempts, both past the bound this case sets.</item>
+    /// <item>Nothing here asserts how long the call took. What it asserts is how much retrying was paid for,
+    /// which does not move when the machine is busy.</item>
+    /// </list>
     /// </remarks>
     private static async Task AShortOverallTimeoutAcrossManyItemsDoesNotFreezeTheRest(TestContext context)
     {
@@ -2814,20 +2753,17 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// The groups are built here rather than handed straight from a listing, and the reason is the machine
-    /// rather than the API: a bin on a working desktop holds everything else its owner has deleted, and
-    /// restoring that group whole would put all of it back. Taking the listing and keeping the two entries
-    /// this case recycled is what holds a whole-group restore to this case's own material.
-    /// <para>
-    /// The second group is empty and its root is a drive this machine may not have, which is the shape a
+    /// rather than the API: a bin on a working desktop holds everything else its owner has deleted. Taking the
+    /// listing and keeping the two entries this case recycled is what holds a whole-group restore to this
+    /// case's own material.
+    /// <list type="bullet">
+    /// <item>The second group is empty and its root is a drive this machine may not have, which is the shape a
     /// listing over several volumes hands back for one that held nothing. It contributes nothing and is not
-    /// refused: a caller cannot tell an empty bin from a volume that was never reached by way of the
-    /// result, so the groups it passes on are what it has to work with.
-    /// </para>
-    /// <para>
-    /// The order of the answer is asserted rather than its count, because the count is what a restore that
-    /// ignored the groups would also answer: two entries restored and no conflicts is right whichever order
-    /// they were restored in, and only the paths say the groups were flattened rather than one of them chosen.
-    /// </para>
+    /// refused.</item>
+    /// <item>The order of the answer is asserted rather than its count, because the count is what a restore
+    /// that ignored the groups would also answer: only the paths say the groups were flattened rather than one
+    /// of them chosen.</item>
+    /// </list>
     /// </remarks>
     private static async Task TheVolumeOverloadRestoresEveryVolumeItWasGiven(TestContext context)
     {
@@ -3129,24 +3065,14 @@ internal static class RestoreSuite
     /// <b>The reported path and the path on disk are two readings of one name, and only one of them is
     /// something a caller can hand to <see cref="File.Exists(string)"/>.</b> The payload is moved to the
     /// trimmed spelling, because a move is given the name rather than the separator; the answer carries the
-    /// record's, because every other path this library reports is the caller's own spelling kept verbatim
-    /// and a record is the caller's own bytes. So <c>File.Exists</c> is false of a reported directory path
-    /// whose record carries a separator, and <see cref="Directory.Exists(string)"/> is the check that answers
-    /// for it.
-    /// <para>
-    /// A renamed entry is the other reading of the same rule and is not what this case is about: it is
-    /// reported under the free name it landed at rather than under what its record said.
-    /// </para>
-    /// <para>
-    /// This case is what keeps that written down rather than remembered: the README states it, and a
-    /// restore that started trimming the reported path instead would leave the documentation describing a
-    /// behaviour nothing does.
-    /// </para>
-    /// <para>
-    /// The record is written by recycling the very path with the separator on it, which is the only way a
-    /// real bin gets one: <see cref="RecycleBatch"/> writes the normalised path it validated, and
-    /// <see cref="Path.GetFullPath(string)"/> keeps the separator a caller spelled.
-    /// </para>
+    /// record's, because every other path this library reports is the caller's own spelling kept verbatim.
+    /// <list type="bullet">
+    /// <item>A renamed entry is the other reading of the same rule and is not what this case is about: it is
+    /// reported under the free name it landed at.</item>
+    /// <item>The record is written by recycling the very path with the separator on it, which is the only way
+    /// a real bin gets one: <see cref="RecycleBatch"/> writes the normalised path it validated, and
+    /// <see cref="Path.GetFullPath(string)"/> keeps the separator a caller spelled.</item>
+    /// </list>
     /// </remarks>
     private static async Task ARestoredPathIsTheOneItsRecordNamed(TestContext context)
     {
@@ -3197,26 +3123,19 @@ internal static class RestoreSuite
     /// moved: every entry is still in the Recycle Bin with its payload, and every file is still off the disk.
     /// </summary>
     /// <remarks>
-    /// The half answer the name is for is the one a caller would get from a result rather than an
-    /// exception. Nothing restored, nothing conflicted and nothing failed is what a restore of nothing at
-    /// all answers, so an empty result could not be both "no partial result" and a result.
-    /// <para>
-    /// The entries handed in are this case's own rather than the volume's whole bin, for the reason
-    /// <see cref="TheVolumeOverloadRestoresEveryVolumeItWasGiven"/> gives: a call that did not raise would
-    /// put the owner's own deleted files back, which is the one thing no restore case here may be able to do.
-    /// </para>
-    /// <para>
-    /// The token on the exception is asserted as well as its type, because it is what tells a caller
+    /// The half answer the name is for is the one a caller would get from a result rather than an exception.
+    /// Nothing restored, nothing conflicted and nothing failed is what a restore of nothing at all answers, so
+    /// an empty result could not be both "no partial result" and a result.
+    /// <list type="bullet">
+    /// <item>The entries handed in are this case's own rather than the volume's whole bin, for the reason
+    /// <see cref="TheVolumeOverloadRestoresEveryVolumeItWasGiven"/> gives.</item>
+    /// <item>The token on the exception is asserted as well as its type, because it is what tells a caller
     /// filtering <c>catch (OperationCanceledException) when (ex.CancellationToken == mine)</c> that this is
-    /// their own cancellation rather than something else carrying the same base type.
-    /// </para>
-    /// <para>
-    /// <b>The cancellation is up front, and that is the only kind this suite witnesses.</b> Nothing here
-    /// stops between entries — that is a race against the machine's speed, or a hook in the engine, and the
-    /// second is a change to the library rather than to what is known about it. This is the only place that
-    /// limitation is written down: the library's own documentation makes no claim about where a cancelled
-    /// restore stops, so a reader of the documentation is never misled about it.
-    /// </para>
+    /// their own cancellation.</item>
+    /// <item><b>The cancellation is up front, and that is the only kind this suite witnesses.</b> Nothing here
+    /// stops between entries — that is a race against the machine's speed or a hook in the engine, and the
+    /// library's documentation makes no claim about where a cancelled restore stops.</item>
+    /// </list>
     /// </remarks>
     private static async Task ACancelledRestoreRaisesAndLeavesNoHalfAnswer(TestContext context)
     {
@@ -3274,19 +3193,15 @@ internal static class RestoreSuite
     /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/>
     /// answers an already-cancelled token from its own prologue and never reaches the engine, so this is the
     /// case that pins what the engine does with one.
-    /// <para>
-    /// The answer a runner that reported it as data would produce is specific rather than general. A slot
-    /// nothing has been decided for belongs to no list the result is built from, so every entry would land in
-    /// none of them and the call would report nothing restored, nothing conflicted and nothing failed, and say
-    /// it had done what it was asked. The batch never ran.
-    /// </para>
-    /// <para>
-    /// <b>A cancellation part way through a batch is not what this case shows.</b> Timing one is a race
-    /// against the machine's speed, and the way to ask the engine a question at a chosen entry would be a
-    /// hook in it, which is a change to the library rather than to what is known about it. What is asked
-    /// here is that the engine reads the token at all and answers with an exception, and the checks it
-    /// carries between entries are the same one.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>The answer a runner that reported it as data would produce is specific: a slot nothing has been
+    /// decided for belongs to no list the result is built from, so every entry would land in none of them and
+    /// the call would report nothing restored, nothing conflicted and nothing failed, and say it had done what
+    /// it was asked.</item>
+    /// <item><b>A cancellation part way through a batch is not what this case shows.</b> Timing one is a race
+    /// against the machine's speed, and asking the engine at a chosen entry would need a hook in it. What is
+    /// asked here is that the engine reads the token at all and answers with an exception.</item>
+    /// </list>
     /// </remarks>
     private static async Task ACancelledEngineRaisesRatherThanAnswering(TestContext context)
     {
