@@ -47,11 +47,10 @@ internal static class ReadmeExamples
     internal static async Task ServiceNeverThrows()
     {
         IReadOnlyList<string?> paths = [];
-        var options = new RecycleOptions { ThrowOnError = false };
 
         // An empty list is a valid call: it succeeds and does nothing. Entries may also be null or
         // missing, each reported as a failure without aborting the batch.
-        var result = await RecycleBin.RecycleAsync(paths, options);
+        var result = await RecycleBin.RecycleAsync(paths);
 
         if (!result.Succeeded)
         {
@@ -75,7 +74,8 @@ internal static class ReadmeExamples
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
         };
 
-        // ThrowOnError is the global switch: with it off a refusal arrives in Failures instead of raising.
+        // ThrowOnError is the single-path switch: with it off a refusal comes back as false rather than
+        // raising. A batch reports its per-item failures either way.
         Console.WriteLine(options.OverallTimeout);
     }
 
@@ -355,17 +355,25 @@ internal static class ReadmeExamples
     internal static async Task RefuseABatchOnAVolumeWithoutARecycleBin()
     {
         IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];
-        var options = new RecycleOptions { ThrowOnError = false };
 
-        // The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the path is refused
-        // before anything is attempted. With ThrowOnError off the refusal comes back as data instead of
-        // an exception.
-        var result = await RecycleBin.RecycleAsync(paths, options);
+        // The default NoRecycleBinAction is Throw, so on a volume with no Recycle Bin the path is refused
+        // before anything is attempted — and because a batch reports every per-item failure rather than
+        // raising, the refusal arrives in Failures.
+        var result = await RecycleBin.RecycleAsync(paths);
 
         foreach (var failure in result.Failures)
         {
             Console.Error.WriteLine($"{failure.Path} was not recycled: {failure.Stage} 0x{failure.HResult:X8}");
         }
+    }
+
+    internal static async Task SinglePathWithoutThrowing()
+    {
+        // ThrowOnError is the single-path switch: with it off a refusal comes back as false
+        // instead of raising, and the file is left where it was.
+        var options = new RecycleOptions { ThrowOnError = false };
+
+        bool gone = await RecycleBin.RecycleAsync(@"W:\Reports\quarterly.xlsx", options);
     }
 
     // The one documented exception to "README.md is a verbatim copy" is the assertion helper, and it is

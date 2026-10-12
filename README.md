@@ -119,11 +119,10 @@ Never throwing, for a background service:
 
 ```csharp
 IReadOnlyList<string?> paths = [];
-var options = new RecycleOptions { ThrowOnError = false };
 
 // An empty list is a valid call: it succeeds and does nothing. Entries may also be null or
 // missing, each reported as a failure without aborting the batch.
-var result = await RecycleBin.RecycleAsync(paths, options);
+var result = await RecycleBin.RecycleAsync(paths);
 
 if (!result.Succeeded)
 {
@@ -356,7 +355,8 @@ var options = new RecycleOptions
     NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
 };
 
-// ThrowOnError is the global switch: with it off a refusal arrives in Failures instead of raising.
+// ThrowOnError is the single-path switch: with it off a refusal comes back as false rather than
+// raising. A batch reports its per-item failures either way.
 Console.WriteLine(options.OverallTimeout);
 ```
 
@@ -490,8 +490,9 @@ What to do with a path on a volume that cannot recycle it.
 | `AllowIndeterminate` | The path is recycled even though the volume's answer was not `Enabled` — the answer was `Indeterminate` or `NoRecycleBinOnVolume`. A Recycle Bin is created for that volume and the file lands in it, so the volume gains one it did not have. |
 | `DeletePermanently` | The file is removed for good by the library itself and listed in `PermanentlyDeletedPaths`, never in `RecycledPaths`. A file system that refuses reports `PermanentDeleteFailed` and leaves the file in place. |
 
-The values run from safest to most destructive, and `ThrowOnError` is still the global switch: with it
-off, a refusal arrives in `Failures` instead of an exception.
+The values run from safest to most destructive, and `ThrowOnError` decides how a refusal surfaces —
+but only on the single-path overload, where with it off the call returns `false` rather than raising.
+A batch reports the refusal in `Failures` however it is set.
 
 Every distinct volume root in a batch is inspected once, so a batch of twenty thousand files on one
 volume does not ask twenty thousand times.
@@ -1022,17 +1023,26 @@ await RecycleBin.RecycleAsync(paths, cancellationToken: cts.Token);
 
 ```csharp
 IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];
-var options = new RecycleOptions { ThrowOnError = false };
 
-// The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the path is refused
-// before anything is attempted. With ThrowOnError off the refusal comes back as data instead of
-// an exception.
-var result = await RecycleBin.RecycleAsync(paths, options);
+// The default NoRecycleBinAction is Throw, so on a volume with no Recycle Bin the path is refused
+// before anything is attempted — and because a batch reports every per-item failure rather than
+// raising, the refusal arrives in Failures.
+var result = await RecycleBin.RecycleAsync(paths);
 
 foreach (var failure in result.Failures)
 {
     Console.Error.WriteLine($"{failure.Path} was not recycled: {failure.Stage} 0x{failure.HResult:X8}");
 }
+```
+
+### Recycle one path without throwing
+
+```csharp
+// ThrowOnError is the single-path switch: with it off a refusal comes back as false
+// instead of raising, and the file is left where it was.
+var options = new RecycleOptions { ThrowOnError = false };
+
+bool gone = await RecycleBin.RecycleAsync(@"W:\Reports\quarterly.xlsx", options);
 ```
 
 ### Assert in a test
