@@ -6,23 +6,40 @@
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <LangVersion>default</LangVersion>
-        <!-- The library documents its public surface in prose, and without this none of it is checked:
-             a malformed comment, a param for a parameter that does not exist and an unresolvable cref
-             are all silent. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
-
-        <!-- A warning nobody has to read is a warning nobody reads. The whole surface is
-             source-generated COM and interop, so the analyzers that know about those have something to
-             say here, and the compiler's own suggestions are part of what is being checked. -->
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <AnalysisLevel>latest-recommended</AnalysisLevel>
         <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
-
-        <!-- The AOT analyzer is on, the trim analyser is not: this library is COM from top to bottom and
-             the trimming analyser's verdict on it ("correctness of COM interop cannot be guaranteed")
-             is a property of COM rather than something a consumer's publish settings can fix. -->
         <EnableAotAnalyzer>true</EnableAotAnalyzer>
     </PropertyGroup>
+
+    <PropertyGroup>
+        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <PackageId>RecycleBinToolkit</PackageId>
+        <Title>RecycleBinToolkit</Title>
+        <Copyright>Copyright (c) 2026 Denis Tulupov</Copyright>
+        <Authors>Denis Tulupov</Authors>
+        <PackageProjectUrl>https://github.com/viruseg/RecycleBinToolkit</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/viruseg/RecycleBinToolkit</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageTags>recycle-bin trash delete restore empty windows filesystem</PackageTags>
+        <Description>A high-performance .NET library for the Windows Recycle Bin: move files and directories into it, list what is in it, restore entries, empty it, and report the outcome of every item. It reads and writes the Recycle Bin's own files — no SHFileOperation, no IFileOperation, no COM.</Description>
+        <PackageReleaseNotes>
+            1.0.0: First release
+        </PackageReleaseNotes>
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0</AssemblyVersion>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageLicenseFile>LICENSE</PackageLicenseFile>
+        <IncludeContentInPack>true</IncludeContentInPack>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="../../../LICENSE" Pack="true" Visible="true" PackagePath="" />
+        <None Include="../../../README.md" Pack="true" Visible="true" PackagePath="" />
+    </ItemGroup>
 
     <ItemGroup>
         <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.346">
