@@ -567,10 +567,8 @@ something that no longer builds.
   block gets the comment with it. Keep them to what the method names cannot say.
 - The file compiles but is never run, so an example may hard-code paths and never touch the disk.
   Give each one a name that says what it demonstrates.
-- The one sanctioned difference is spelled in **both** files rather than kept between them: the assertion
-  example reads `Check.*` in `README.md` and in `ReadmeExamples.cs`, and both carry the note that in a
-  project with xunit the same three lines read `Assert.True`, `Assert.Equal` and `Assert.False`. Never
-  "fix" one file to `Assert.*` to match a rule that says the README spells it that way — it does not.
+- Nothing else may differ between a block and its method. An example that needs a helper this
+  repository happens to have does not belong in the README — the reader does not have it.
 
 When a signature changes, both files change — the tables in README.md, the example in the README, and
 the method in `ReadmeExamples.cs`. A README claim that no longer matches the code is a defect the same
