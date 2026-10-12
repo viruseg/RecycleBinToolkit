@@ -60,6 +60,9 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts), NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyOfAVolumeWithNothingInItReportsNothing), NativeEmptyOfAVolumeWithNothingInItReportsNothing),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyOfNoVolumesIsAnEmptyResult), NativeEmptyOfNoVolumesIsAnEmptyResult),
+        new TestCase("NativeBinSuite." + nameof(AnEmptyAcrossTwoDisksAnswersInTheOrderTheyWereAskedFor), AnEmptyAcrossTwoDisksAnswersInTheOrderTheyWereAskedFor),
+        new TestCase("NativeBinSuite." + nameof(AnEmptyOfTheSameVolumeTwiceDoesNotCountItTwice), AnEmptyOfTheSameVolumeTwiceDoesNotCountItTwice),
+        new TestCase("NativeBinSuite." + nameof(AnEmptyCancelledBeforeItStartsRaisesAndDoesNotAggregate), AnEmptyCancelledBeforeItStartsRaisesAndDoesNotAggregate),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyKeepsTheBinDirectoriesThemselves), NativeEmptyKeepsTheBinDirectoriesThemselves),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyHonoursCancellationBetweenEntries), NativeEmptyHonoursCancellationBetweenEntries),
         new TestCase("NativeBinSuite." + nameof(ARecycledItemRestoresFromItsRecordedPath), ARecycledItemRestoresFromItsRecordedPath),
@@ -1003,6 +1006,127 @@ internal static class NativeBinSuite
         Check.Equal(4, groups[2].Positions[1], "and its own");
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Two volumes on two disks are emptied at the same time, and the answer still names them in the order
+    /// they were asked for rather than in the order the threads finished.
+    /// </summary>
+    /// <remarks>
+    /// This is the only thing a caller can observe about the order, and it is the reason each volume writes
+    /// a slot of its own: <c>VolumesEmptied</c> is read as "which volumes are empty now", and a list built
+    /// by appending would answer in the order the devices happened to be free.
+    /// <para>
+    /// <b>Two disks, not two volumes.</b> Invented roots all land in the unnamed group — a root inside the
+    /// working directory is not a volume, so the driver declines to name a disk for it — and four of them
+    /// make one group, where the parallel loop never runs and the case proves nothing. The guard asks the
+    /// machine for a volume on a disk the run's volume is not on, and skips rather than falling back.
+    /// </para>
+    /// <para>
+    /// The order is asserted by position in the list rather than by an index into the argument: the two are
+    /// the same thing only while the list is right, which is the point.
+    /// </para>
+    /// </remarks>
+    private static async Task AnEmptyAcrossTwoDisksAnswersInTheOrderTheyWereAskedFor(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a Recycle Bin to empty across two disks");
+
+        VolumePresence.RequireADifferentDisk(out var second, "two disks emptied at once to answer in an order");
+
+        // The second volume deliberately comes first, so an answer built by appending cannot match the
+        // argument by accident even when both volumes finish immediately.
+        var secondRoot = AbsentVolume.RootOf(second);
+        var firstRoot = ScratchWorkspace.VolumeRoot;
+
+        await RecycleBin.EmptyAsync(secondRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
+        await RecycleBin.EmptyAsync(firstRoot, RecycleBinOptions.Default, context.CancellationToken).ConfigureAwait(false);
+
+        var emptied = NativeBinEmptier.Empty([secondRoot, firstRoot], context.CancellationToken);
+
+        Check.Equal(2, emptied.VolumesEmptied.Count, $"both volumes are reported empty (got {string.Join(", ", emptied.VolumesEmptied)})");
+        Check.Equal(secondRoot, emptied.VolumesEmptied[0], "the one named first is reported first");
+        Check.Equal(firstRoot, emptied.VolumesEmptied[1], "and the one named second is reported second, whichever disk was free first");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Naming the same volume twice empties it once, and counts what it removed once.
+    /// </summary>
+    /// <remarks>
+    /// The public API cannot produce this — <see cref="RecycleBin.EmptyAsync"/> resolves either one volume or
+    /// every mounted one, and neither can name the same root twice — so what is held here is the internal
+    /// engine's own answer, and what a caller would be harmed by is the counters rather than the list: an
+    /// entry that was removed would otherwise be added to <see cref="RecycleBinEmptyResult.ItemsRemoved"/>
+    /// and <see cref="RecycleBinEmptyResult.BytesFreed"/> twice.
+    /// </remarks>
+    private static async Task AnEmptyOfTheSameVolumeTwiceDoesNotCountItTwice(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("entries to be counted once rather than twice");
+
+        const int fileSize = 4096;
+        var files = workspace.CreateRandomFiles(3, fileSize);
+
+        await RecycleBin.RecycleAsync(files, RecycleBinOptions.Default, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+
+        var emptied = NativeBinEmptier.Empty([ScratchWorkspace.VolumeRoot, ScratchWorkspace.VolumeRoot], context.CancellationToken);
+
+        Check.Equal(0, emptied.Failures.Count, $"nothing failed ({string.Join("; ", emptied.Failures.Select(f => f.Path))})");
+        Check.Equal(3, emptied.ItemsRemoved, "the three entries are counted once, by the pass that removed them");
+        Check.Equal(3L * fileSize, emptied.BytesFreed, "and so are their bytes");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An empty cancelled before it starts raises <see cref="OperationCanceledException"/>, and not an
+    /// <see cref="AggregateException"/>.
+    /// </summary>
+    /// <remarks>
+    /// The aggregation is the one thing here that is new. Volumes now run on threads the caller's token
+    /// also rides on, and an exception out of a loop over threads is what arrives as an
+    /// <see cref="AggregateException"/>. It does not, and the reason is worth pinning: the loop throws
+    /// through an <see cref="OperationCanceledException"/> carrying the token from its
+    /// <see cref="ParallelOptions"/>, and a cancellation carrying <em>any other</em> token is aggregated.
+    /// Checked on .NET 10 rather than taken on trust, since the two share an exception type and differ only
+    /// in which token it carries.
+    /// <para>
+    /// This calls the engine rather than <see cref="RecycleBin.EmptyAsync"/>, and on purpose. The public
+    /// method checks its own token before it resolves any volume, so a cancelled token never reaches the
+    /// loop at all — which is the right behaviour and leaves this path for
+    /// <see cref="NativeEmptyHonoursCancellationBetweenEntries"/> to hold. What is untested without a direct
+    /// call is the only thing that is new.
+    /// </para>
+    /// <para>
+    /// Two disks, because one disk takes the branch that runs inline and never enters a loop at all. Cancelling
+    /// before the call is the only form a case can make deterministic: stopping a sweep part-way would have to
+    /// be timed, and a timed assertion on how far a parallel loop got is a flaky assertion about the machine's
+    /// load. What this holds is the shape of the raise, not the point of the stop.
+    /// </para>
+    /// </remarks>
+    private static async Task AnEmptyCancelledBeforeItStartsRaisesAndDoesNotAggregate(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        VolumePresence.RequireADifferentDisk(out var second, "two disks for the parallel loop to refuse work on");
+
+        using var cancelling = new CancellationTokenSource();
+        await cancelling.CancelAsync().ConfigureAwait(false);
+
+        var thrown = Check.Throws<OperationCanceledException>(
+            () => NativeBinEmptier.Empty([AbsentVolume.RootOf(second), ScratchWorkspace.VolumeRoot], cancelling.Token),
+            "an empty whose token is already cancelled raises rather than spreading the loop's exception over an aggregate");
+
+        Check.Equal(cancelling.Token, thrown.CancellationToken, "carrying the token the caller cancelled, unwrapped");
+
+        workspace.Dispose();
     }
 
     /// <summary>
