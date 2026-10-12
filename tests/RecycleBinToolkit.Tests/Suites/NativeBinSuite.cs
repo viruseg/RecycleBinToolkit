@@ -59,6 +59,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(VolumesAreGroupedByTheDiskTheyArePartitionsOf), VolumesAreGroupedByTheDiskTheyArePartitionsOf),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts), NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyOfAVolumeWithNothingInItReportsNothing), NativeEmptyOfAVolumeWithNothingInItReportsNothing),
+        new TestCase("NativeBinSuite." + nameof(NativeEmptyOfNoVolumesIsAnEmptyResult), NativeEmptyOfNoVolumesIsAnEmptyResult),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyKeepsTheBinDirectoriesThemselves), NativeEmptyKeepsTheBinDirectoriesThemselves),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyHonoursCancellationBetweenEntries), NativeEmptyHonoursCancellationBetweenEntries),
         new TestCase("NativeBinSuite." + nameof(ARecycledItemRestoresFromItsRecordedPath), ARecycledItemRestoresFromItsRecordedPath),
@@ -1071,6 +1072,27 @@ internal static class NativeBinSuite
         Check.Equal(0, second.Failures.Count, "with nothing to report, because nothing went wrong");
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A call with no volumes named is a call that did nothing, and it must reach that answer rather than
+    /// tripping over the absence of a slot to write into.
+    /// </summary>
+    /// <remarks>
+    /// The grouping is what makes this reachable at all: zero volumes name zero disks, so the caller's own
+    /// guard — "one disk runs inline, several run together" — has no branch that fits, and both of the ones
+    /// that exist must be skipped rather than entered with index zero of nothing.
+    /// </remarks>
+    private static Task NativeEmptyOfNoVolumesIsAnEmptyResult(TestContext context)
+    {
+        var emptied = NativeBinEmptier.Empty([], context.CancellationToken);
+
+        Check.Equal(0, emptied.ItemsRemoved, "nothing was removed, because nothing was named");
+        Check.Equal(0, emptied.BytesFreed, "and nothing was freed");
+        Check.Equal(0, emptied.VolumesEmptied.Count, "no volume is reported as emptied");
+        Check.Equal(0, emptied.Failures.Count, "and none failed, because there was no work to fail at");
+
+        return Task.CompletedTask;
     }
 
     /// <summary>

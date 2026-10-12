@@ -8,6 +8,16 @@ namespace RecycleBinToolkit;
 /// <remarks>
 /// The counts come from the walk itself: it says what each entry is and how large its payload is, so an
 /// empty of ninety thousand entries measures them without reading a record.
+/// <para>
+/// Volumes are split by the physical disk behind them and emptied disk by disk: volumes on different
+/// devices run together, because a Recycle Bin is one directory per volume and nothing about one device
+/// holds up another. The volumes of one disk run one after another, because they are two directories
+/// sharing one head.
+/// </para>
+/// <para>
+/// The reported volumes and failures follow the order the roots were passed in, not the order the threads
+/// finished: each volume writes a slot taken by its position in the argument.
+/// </para>
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class NativeBinEmptier
@@ -30,27 +40,95 @@ internal static class NativeBinEmptier
     {
         ArgumentNullException.ThrowIfNull(volumeRoots);
 
-        var failures = new List<RecycleFailure>();
-        var emptied = new List<string>(volumeRoots.Count);
-        long itemsRemoved = 0;
-        long bytesFreed = 0;
+        // One slot per root, in the caller's order. A slot still carrying its opening values is a volume
+        // nothing has been decided for; a volume enters the work once and leaves it once, so no two
+        // threads ever write the same one.
+        var outcomes = new VolumeOutcome[volumeRoots.Count];
 
-        foreach (var root in volumeRoots)
+        var disks = VolumeDiskGroups.Group(volumeRoots);
+
+        // One disk has nothing to be parallel with: the caller has already asked for a thread of its own to
+        // run this on, and a Parallel.For over a single index would nest another one inside it for no work.
+        if (disks.Count == 1)
+        {
+            RunDisk(disks[0], volumeRoots, outcomes, cancellationToken);
+        }
+        else if (disks.Count > 1)
+        {
+            Parallel.For(
+                0,
+                disks.Count,
+                new ParallelOptions
+                {
+                    // Each disk is a chain of walks and deletions against one device, so a disk past the
+                    // first adds nothing but a wait. The degree that matters is how many there are.
+                    MaxDegreeOfParallelism = disks.Count,
+                    CancellationToken = cancellationToken
+                },
+                index => RunDisk(disks[index], volumeRoots, outcomes, cancellationToken));
+        }
+
+        return Flatten(volumeRoots, outcomes);
+    }
+
+    /// <summary>
+    /// Empties one disk's volumes, and returns before the next one starts.
+    /// </summary>
+    /// <remarks>
+    /// A loop rather than a number, and deliberately: these volumes are partitions of one device, so they
+    /// are two directories sharing one head, and no figure inside here could widen the gap. Which volumes
+    /// land together is <see cref="VolumeDiskGroups"/>'s decision; running them one after another is this
+    /// one's.
+    /// </remarks>
+    private static void RunDisk(
+        VolumeDiskGroup disk,
+        IReadOnlyList<string> volumeRoots,
+        VolumeOutcome[] outcomes,
+        CancellationToken cancellationToken)
+    {
+        foreach (var position in disk.Positions)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var (removed, freed) = EmptyVolume(root, emptied, failures, cancellationToken);
-            itemsRemoved += removed;
-            bytesFreed += freed;
+            outcomes[position] = EmptyVolume(volumeRoots[position], cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Flattens the per-volume slots into one answer, in the order the roots were passed.
+    /// </summary>
+    /// <remarks>
+    /// Reading the slots rather than whatever the threads appended is the whole of why the answer does not
+    /// follow the work: two volumes emptied at once report in the order the caller named them, whichever
+    /// finished first. Nothing here locks, because every slot was written once before this runs.
+    /// </remarks>
+    private static RecycleBinEmptyResult Flatten(IReadOnlyList<string> volumeRoots, VolumeOutcome[] outcomes)
+    {
+        var failures = new List<RecycleFailure>();
+        var emptied = new List<string>(outcomes.Length);
+        long itemsRemoved = 0;
+        long bytesFreed = 0;
+
+        for (var position = 0; position < outcomes.Length; position++)
+        {
+            var outcome = outcomes[position];
+
+            itemsRemoved += outcome.Removed;
+            bytesFreed += outcome.Freed;
+
+            if (outcome.Emptied)
+            {
+                emptied.Add(volumeRoots[position]);
+            }
+
+            failures.AddRange(outcome.Failures);
         }
 
         return new RecycleBinEmptyResult(emptied, itemsRemoved, bytesFreed, failures, TimeSpan.Zero);
     }
 
-    private static (long Removed, long Freed) EmptyVolume(
+    private static VolumeOutcome EmptyVolume(
         string volumeRoot,
-        List<string> emptied,
-        List<RecycleFailure> failures,
         CancellationToken cancellationToken)
     {
         var binDirectory = NativeBinLayout.BinDirectory(volumeRoot);
@@ -63,21 +141,21 @@ internal static class NativeBinEmptier
         {
             if (!Directory.Exists(volumeRoot))
             {
-                failures.Add(new RecycleFailure(volumeRoot, RecycleBinVolumeState.UnreadableVolume, 1, RecycleFailureStage.Enumeration));
-                return (0, 0);
+                return new VolumeOutcome(
+                    false,
+                    0,
+                    0,
+                    [new RecycleFailure(volumeRoot, RecycleBinVolumeState.UnreadableVolume, 1, RecycleFailureStage.Enumeration)]);
             }
 
-            emptied.Add(volumeRoot);
-            return (0, 0);
+            return new VolumeOutcome(true, 0, 0, []);
         }
 
-        var failuresBefore = failures.Count;
         var records = CollectRecords(binDirectory, cancellationToken);
 
         if (records.Count == 0)
         {
-            emptied.Add(volumeRoot);
-            return (0, 0);
+            return new VolumeOutcome(true, 0, 0, []);
         }
 
         // Measured before anything is deleted, out of bytes that are about to stop existing. A whole pair
@@ -108,19 +186,15 @@ internal static class NativeBinEmptier
         // and read every entry before noticing would take as long as the empty it was meant to abandon.
         Parallel.ForEach(needy, options, index => sizes[index] = SizeOfRecord(records[index].IndexPath!));
 
+        var failures = new List<RecycleFailure>();
         Remove(records, sizes, failures, cancellationToken);
 
         // A volume is named as emptied only when nothing on it was left behind: a caller reading
         // VolumesEmptied is asking whether that volume is empty now, and a bin that kept a locked entry
         // is not. The failures themselves name the entries, so nothing is lost by leaving the volume off
         // the list.
-        if (failures.Count == failuresBefore)
-        {
-            emptied.Add(volumeRoot);
-        }
-
-        var removed = 0L;
-        var freed = 0L;
+        long removed = 0;
+        long freed = 0;
 
         foreach (var size in sizes)
         {
@@ -131,7 +205,7 @@ internal static class NativeBinEmptier
             }
         }
 
-        return (removed, freed);
+        return new VolumeOutcome(failures.Count == 0, removed, freed, failures);
     }
 
     /// <summary>
@@ -254,3 +328,27 @@ internal static class NativeBinEmptier
         return records;
     }
 }
+
+/// <summary>
+/// What one volume's bin contributed, held aside until every other volume's is done.
+/// </summary>
+/// <param name="Emptied">
+/// Whether nothing was left behind on that volume. False when an entry would not delete, which is what
+/// keeps a volume off the caller's <see cref="RecycleBinEmptyResult.VolumesEmptied"/>.
+/// </param>
+/// <param name="Removed">Entries that left the Recycle Bin on this volume.</param>
+/// <param name="Freed">The bytes those entries occupied.</param>
+/// <param name="Failures">
+/// Entries on this volume that would not go, and volumes that could not be reached at all.
+/// </param>
+/// <remarks>
+/// One volume's answer rather than appends to lists shared by the call, and that is what makes the disks
+/// safe to run together: a shared list would interleave two volumes' failures and leave no way to say which
+/// volume kept an entry. The values are summed and the lists concatenated only once every disk is done, and
+/// in the caller's order.
+/// </remarks>
+internal readonly record struct VolumeOutcome(
+    bool Emptied,
+    long Removed,
+    long Freed,
+    List<RecycleFailure> Failures);
