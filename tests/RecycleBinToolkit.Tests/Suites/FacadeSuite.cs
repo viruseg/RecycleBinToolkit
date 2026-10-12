@@ -281,39 +281,28 @@ internal static class FacadeSuite
     /// confirmed refusals.
     /// </summary>
     /// <remarks>
-    /// This is the only case here that watches a file leave the disk, and deliberately so: the option
-    /// says the caller accepts being wrong about the bin, so the path is recycled anyway and the outcome
-    /// is reported as recycled. What the case proves is that the option reaches the pipeline at all — a
-    /// gate that refused regardless of the setting would fail it — and that a passing path is reported as
-    /// recycled.
-    /// <para>
-    /// The option only changes the outcome on a volume with no Recycle Bin, so the file is written on the
-    /// volume <c>--scratch</c> named and the case is a skip on a volume that recycles, where the option
-    /// would be a no-op and would prove nothing.
-    /// </para>
-    /// <para>
-    /// The gate is written out rather than delegated to <see cref="ScratchWorkspace.RequireNonRecycling"/>,
-    /// because that guard admits one reason too many for this claim.
+    /// The only case here that watches a file leave the disk, and deliberately so: the option says the
+    /// caller accepts being wrong about the bin, so the path is recycled anyway and reported as recycled.
+    /// What it proves is that the option reaches the pipeline and that a passing path reads as recycled.
+    /// <list type="bullet">
+    /// <item>The option only changes anything on a volume with no Recycle Bin, so this is a skip on a volume
+    /// that recycles.</item>
+    /// <item>The gate is written out rather than delegated to <see cref="ScratchWorkspace.RequireNonRecycling"/>,
+    /// because that guard admits one reason too many.
     /// <see cref="RecycleBinVolumePolicy.RefusesRecycle"/> refuses
     /// <see cref="RecycleBinAvailabilityReason.UnsupportedVolumeType"/>,
     /// <see cref="RecycleBinAvailabilityReason.DisabledByPolicy"/> and
     /// <see cref="RecycleBinAvailabilityReason.DisabledByUserPreference"/> under every action but
-    /// <see cref="NoRecycleBinAction.DeletePermanently"/> — the option buys no reach there, because those
-    /// three are the library's own decision that there is no bin to hand a file to, not a doubt about one.
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/>: those three are the library's own decision that
+    /// there is no bin, not a doubt about one.
     /// <see cref="RecycleBinAvailabilityReason.UnsupportedVolumeType"/> is what a share reads as, and a
-    /// share is a <c>--scratch</c> root both documents accept, so under the coarser guard this case would
-    /// go red on exactly the volumes the harness promises it can be run against, over an assertion about a
-    /// handover that policy had already refused.
-    /// <see cref="ContractSuite.EveryReasonAndActionPairIsPinned"/> already pins that refusal on every
-    /// machine without one, which is what makes narrowing the honest choice rather than a quiet loss: what
-    /// would have been asserted here is asserted there, and what remains here is the claim in this case's
-    /// name.
-    /// </para>
-    /// <para>
-    /// The guard itself is unchanged: nine other cases mean "not Enabled" by
-    /// <see cref="ScratchWorkspace.RequireNonRecycling"/> and assert a refused path, which is the correct
-    /// reading on all three confirmed reasons; narrowing it would have taken their coverage with it.
-    /// </para>
+    /// share is a <c>--scratch</c> root the harness accepts, so the coarser guard would go red on exactly the
+    /// volumes this can be run against. <see cref="ContractSuite.EveryReasonAndActionPairIsPinned"/> already
+    /// pins that refusal everywhere, so nothing is lost by narrowing it here.</item>
+    /// <item>The guard itself is unchanged: nine other cases mean "not Enabled" by
+    /// <see cref="ScratchWorkspace.RequireNonRecycling"/>, which is the correct reading on all three
+    /// confirmed reasons.</item>
+    /// </list>
     /// </remarks>
     private static async Task NoRecycleBinOptionDecidesWhetherThePathIsRecycled(TestContext context)
     {
@@ -714,7 +703,7 @@ internal static class FacadeSuite
             .ConfigureAwait(false);
 
         Check.True(result.Succeeded, $"both paths were handled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
-        Check.Equal(2, result.PermanentlyDeletedPaths.Count, "both paths were removed for good, as the caller asked");
+        Check.Equal(2, result.PermanentlyDeletedPaths.Count, "both paths were deleted permanently, as the caller asked");
         Check.Equal(0, result.RecycledPaths.Count, "and neither was reported as recycled, so neither is in both lists");
 
         var both = result.RecycledPaths
@@ -990,7 +979,7 @@ internal static class FacadeSuite
 
         Check.True(result.Succeeded, $"a long path is recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
         Check.Equal(1, result.RecycledPaths.Count, "and is named as recycled");
-        Check.Equal(0, result.PermanentlyDeletedPaths.Count, "and never removed for good on the way");
+        Check.Equal(0, result.PermanentlyDeletedPaths.Count, "and never deleted permanently on the way");
         Check.False(File.Exists(file), "so the file is in the Recycle Bin rather than left where it was");
 
         var contents = await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken);

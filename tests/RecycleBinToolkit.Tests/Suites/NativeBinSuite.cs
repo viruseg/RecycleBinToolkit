@@ -156,7 +156,7 @@ internal static class NativeBinSuite
         var result = await RecycleBin.RecycleAsync([path], RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
 
         Check.True(result.Succeeded, $"a path of {path.Length} characters recycles (first failure: {Describe(result.FirstFailure)})");
-        Check.Equal(0, result.PermanentlyDeletedPaths.Count, "and is not removed for good on the way");
+        Check.Equal(0, result.PermanentlyDeletedPaths.Count, "and is not deleted permanently on the way");
         Check.False(File.Exists(path), "and is gone from disk");
 
         var record = ReadNewestRecord(Content.Length, path);
@@ -581,37 +581,22 @@ internal static class NativeBinSuite
     /// one instead.
     /// </summary>
     /// <remarks>
-    /// <b>The one case that reads <see cref="NameCollision.IsTaken"/>, for both of the paths that call
-    /// it.</b> They shared it after each had a copy of its own, and two cases asserting one judgment's answers
-    /// would be the same duplication one layer up. Every refusal below is raised by the filesystem on this
-    /// machine rather than written down by the case, and what it stages is: a <c>CREATE_NEW</c> over a record
-    /// that is already there, a move onto a payload that is already there, a file somebody is holding, a
-    /// source that is not there at all, and an overwriting move onto a destination that will not open.
-    /// <para>
-    /// <b>The last of those is taken as whatever it is, because its code is not the filesystem's.</b> It
-    /// arrives as an <see cref="UnauthorizedAccessException"/> on this machine and would be pinned here
-    /// against <c>0x80070005</c> if that were an observation — but that type has no constructor taking an
-    /// errno, so its <see cref="Exception.HResult"/> is the type's own constant and would read the same
-    /// whatever the disk had said. What is asserted is the judgment's answer, which holds either way, and it
-    /// would go red if this shape ever arrived carrying a name code.
-    /// </para>
-    /// <para>
-    /// It cannot reach the restore path's branch either: <c>Place</c> overwrites only under
+    /// The one case that reads <see cref="NameCollision.IsTaken"/>, for both of the paths that call it. They
+    /// shared it after each had a copy of its own, and two cases asserting one judgment's answers would be the
+    /// same duplication one layer up. Every refusal below is raised by the filesystem rather than written
+    /// down by the case.
+    /// <list type="bullet">
+    /// <item><b>An overwriting move onto a destination that will not open is taken as whatever it is.</b> It
+    /// arrives as an <see cref="UnauthorizedAccessException"/>, whose <see cref="Exception.HResult"/> is the
+    /// type's own constant rather than a code, so it would read the same whatever the disk had said.</item>
+    /// <item>It cannot reach the restore path's branch: <c>Place</c> overwrites only under
     /// <see cref="RestoreAction.Replace"/> and the filter beside it asks only under
-    /// <see cref="RestoreAction.Rename"/>. And nothing in the suite pins the narrowing itself, because the
-    /// only exception types these two call sites raise that are not an <see cref="IOException"/> carry their
-    /// own constants rather than a code — <c>0x80070005</c> and <c>0x80070057</c>, neither of which is 80 or
-    /// 183 — so removing the narrowing would change no answer.
-    /// </para>
-    /// <para>
-    /// <b>The loop this feeds is not what is witnessed.</b> <see cref="BinStemSequencer"/> starts above
-    /// every name in the bin and hands out the next one, so making the runner itself collide would take
-    /// another process writing to the same bin at that instant — and <see cref="NativeBinLayout.NextStem"/>,
-    /// which the sequencer falls back on, draws six characters out of thirty-six and takes no argument
-    /// either. What is reached is the decision its two catch filters make, which could not tell a
-    /// collision from a locked file for as long as it compared the whole HRESULT rather than the code
-    /// inside it.
-    /// </para>
+    /// <see cref="RestoreAction.Rename"/>.</item>
+    /// <item><b>The loop this feeds is not what is witnessed.</b> <see cref="BinStemSequencer"/> starts above
+    /// every name in the bin and hands out the next one, so making the runner collide would take another
+    /// process writing to the same bin at that instant. What is reached is the decision its two catch filters
+    /// make.</item>
+    /// </list>
     /// </remarks>
     private static Task ATakenNameIsRecognisedByItsCodeAndALockedFileIsNot(TestContext context)
     {

@@ -238,29 +238,20 @@ internal static class RestoreSuite
     /// the shape rather than of a number somebody could raise.
     /// </summary>
     /// <remarks>
-    /// The split itself is <c>VolumesAreGroupedByPhysicalDiskAndNotByCount</c>'s claim and is not repeated
-    /// here. What this case reaches past is the seam between the grouping and the pipeline: grouping says
-    /// which volumes share a disk, and nothing in that answer stops a second stage handing them one pool of
+    /// What this case reaches past is the seam between the grouping and the pipeline: grouping says which
+    /// volumes share a disk, and nothing in that answer stops a second stage handing them one pool of
     /// movers, which would put two volumes on one head back in play while the grouping still looked right.
-    /// <para>
-    /// <b>Asserted as structure, not as timing.</b> Watching two volumes really restore at once would need
-    /// a second volume this run may not arrange, and a stopwatch; a stopwatch on a property of the machine
-    /// is a test that fails when the machine is busy. What can be said without either is what each pipeline
-    /// <em>is</em>: one per volume, carrying that volume, holding a channel of its own, and sized by that
-    /// volume's own figure.
-    /// </para>
-    /// <para>
-    /// The volumes come from <see cref="VolumePresence"/>, for the reason its own remarks give, and skip
-    /// rather than fail when the machine has nothing to pair or nothing to separate. Nothing is created,
-    /// recycled, moved or deleted here — a pipeline is opened and never fed, and opening one asks the
-    /// driver which disk a volume is on and allocates a queue.
-    /// </para>
-    /// <para>
-    /// The two channels and the two answered sets are compared by reference rather than by equality,
-    /// because the claim is that they are different objects and not merely objects that answer alike. Every
-    /// other field of a pipeline is a value, and a value comparison would pass on a pipeline that shared
-    /// its whole state with another.
-    /// </para>
+    /// <list type="bullet">
+    /// <item><b>Asserted as structure, not as timing.</b> Watching two volumes really restore at once would
+    /// need a second volume this run may not arrange and a stopwatch, and a stopwatch on a property of the
+    /// machine is a test that fails when the machine is busy. What can be said without either is what each
+    /// pipeline <em>is</em>.</item>
+    /// <item>The volumes come from <see cref="VolumePresence"/>, and skip rather than fail when the machine
+    /// has nothing to pair or nothing to separate. Nothing is created, recycled, moved or deleted here: a
+    /// pipeline is opened and never fed.</item>
+    /// <item>The channels and the answered sets are compared by reference rather than by equality, because
+    /// the claim is that they are different objects and not merely objects that answer alike.</item>
+    /// </list>
     /// </remarks>
     private static Task EveryVolumeGetsItsOwnMoversAndNoDiskSharesOne(TestContext context)
     {
@@ -429,38 +420,20 @@ internal static class RestoreSuite
     /// somebody is using becomes the same name with the next number nobody is using.
     /// </summary>
     /// <remarks>
-    /// The convention is what the public options promise — <see cref="RestoreFileConflict.Rename"/> writes it
-    /// out in prose, and this is the only code behind it — so what is pinned here is the spelling, not the
-    /// arithmetic: where the number goes, where a double extension splits, and that the counting starts at one.
-    /// <para>
-    /// The number is never read back out of the name it produced. <c>report (5).txt</c> is a name, not a
-    /// statement about how many reports there are, so it becomes <c>report (5) (1).txt</c> when taken — a
-    /// parser that looked for the bracketed digits would answer <c>report (5) (6).txt</c> instead, and would
-    /// pick a name that is already gone. What is asserted about an already-numbered name is that it is not
-    /// re-parsed.
-    /// </para>
-    /// <para>
-    /// A name that is nothing but an extension — <c>.gitignore</c> — is the one case where there is no stem
-    /// to put the number in front of, and the number goes after the whole name rather than in front of an
-    /// empty one.
-    /// </para>
-    /// <para>
-    /// A name is free when nothing at all is using it. Each of the three shapes below is a name whose occupancy
-    /// is of the kind its own name does not suggest: a directory whose name carries a dot, a file whose
-    /// numbered name is held by a directory, and an extension-less name whose numbered name is held by a
-    /// file. A probe that asked only whether there was a file — or only whether there was a directory —
-    /// would hand back the occupied name in every one of them, and the move that follows would throw on a
-    /// name this library picked itself.
-    /// </para>
-    /// <para>
-    /// The last shape is the one the buffer itself decides: a candidate is assembled on the stack for an
-    /// ordinary path and on the heap for one too long for that, and the two arms have to answer identically.
-    /// A single flat component cannot reach the heap arm from this root — 255 characters is the most one
-    /// component may be, and what the scratch root itself uses leaves less room than that — so the deep
-    /// path is built from nested components, which is what a deep tree on a long-path volume produces
-    /// anyway. Its length is asserted rather than assumed, so the case cannot quietly stop covering the arm
-    /// it is written for.
-    /// </para>
+    /// <see cref="RestoreFileConflict.Rename"/> writes this convention out in prose and this is the only
+    /// code behind it, so what is pinned here is the spelling rather than the arithmetic.
+    /// <list type="bullet">
+    /// <item>The number is never read back out of the name it produced, so <c>report (5).txt</c> becomes
+    /// <c>report (5) (1).txt</c> rather than <c>report (5) (6).txt</c>.</item>
+    /// <item>A name that is nothing but an extension — <c>.gitignore</c> — has no stem to put the number in
+    /// front of, so it goes after the whole name.</item>
+    /// <item>A name is free when nothing at all is using it. Each shape below is a name whose occupancy is of
+    /// the kind its own name does not suggest, and a probe asking only whether there were a file, or only
+    /// whether there were a directory, would hand back the occupied name in every one of them.</item>
+    /// <item>The long-path arm is built from nested components, because a single flat component cannot reach
+    /// it: 255 characters is the most one component may be, and the scratch root leaves less room than
+    /// that. Its length is asserted rather than assumed.</item>
+    /// </list>
     /// </remarks>
     private static Task RenamingTakesTheFirstFreeNumberBeforeTheExtension(TestContext context)
     {
@@ -1085,21 +1058,16 @@ internal static class RestoreSuite
     /// whose folder has since been emptied by hand lands under a parent this call creates.
     /// </summary>
     /// <remarks>
-    /// A file is the shape that needs this case of its own. A directory case cannot stand in for one:
-    /// both go through the same private method, and moving that call inside a branch that only a
-    /// directory takes would leave every case written about directories green while files quietly went
-    /// back to needing a folder someone else makes. The one ordinary file case in the suite restores
-    /// into the scratch root, which is always there, so nothing else in the file held it up either.
-    /// <para>
-    /// The folder is deleted with <see cref="Directory.Delete(string, bool)"/> rather than recursively,
-    /// because by then the file is in the bin and what is left in the folder is nothing — a recursive
-    /// delete would be the same call done more carefully than it needs to be. The assertion right after
-    /// it is what keeps the case from passing for the wrong reason: without it, a folder that was never
-    /// created would be restored into without a parent ever being asked for.
-    /// </para>
-    /// <para>
-    /// The bytes and the count are the two halves of "came back", for the reason the cases above give.
-    /// </para>
+    /// A file is the shape that needs this case of its own. A directory case cannot stand in for one: both go
+    /// through the same private method, and moving that call inside a branch only a directory takes would
+    /// leave every case written about directories green while files went back to needing a folder.
+    /// <list type="bullet">
+    /// <item>The folder is deleted with <see cref="Directory.Delete(string, bool)"/> rather than recursively,
+    /// because by then the file is in the bin and what is left in the folder is nothing. The assertion right
+    /// after it keeps the case from passing for the wrong reason: without it, a folder that was never created
+    /// would be restored into without a parent ever being asked for.</item>
+    /// <item>The bytes and the count are the two halves of "came back".</item>
+    /// </list>
     /// </remarks>
     private static async Task AFileComesBackUnderAParentThatIsGone(TestContext context)
     {
@@ -1144,25 +1112,18 @@ internal static class RestoreSuite
     /// <remarks>
     /// The payload is deleted with <see cref="File.Delete(string)"/> rather than by emptying the volume,
     /// which is the only way to make a listing stale without touching anything else in the owner's bin.
-    /// <para>
-    /// The entry is shown to be untouched by its own record still being there rather than by a count against
-    /// the baseline: <see cref="RecycleBinProbe"/> counts a record and its payload as one entry and skips
-    /// whichever of the two is missing, so once this case has deleted the payload its count is already one
-    /// below the baseline and would not move whatever the restore did.
-    /// </para>
-    /// <para>
-    /// The code on the failure is asserted to carry the severity bit rather than to be a particular value:
-    /// that the code is the filesystem's own, and not a zero standing in for one, is the claim, and which
-    /// refusal Windows raises for a missing source is not.
-    /// </para>
-    /// <para>
-    /// One attempt, for the reason <c>AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin</c> gives: a
-    /// payload that has been deleted is not going to come back, and the default budget would spend a second
-    /// and a half of this run asking for it. How often a refusal that will not change is asked again is
-    /// <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's — and
-    /// what this case asked for by setting it is why it says nothing about
-    /// <see cref="RecycleFailure.Attempts"/>: one allowed and one reported is what any budget answers.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>The entry is shown to be untouched by its own record still being there rather than by a count
+    /// against the baseline: <see cref="RecycleBinProbe"/> counts a record and its payload as one entry and
+    /// skips whichever is missing, so its count is already one below the baseline and would not move whatever
+    /// the restore did.</item>
+    /// <item>The code on the failure is asserted for the severity bit rather than against a particular value:
+    /// that it is the filesystem's own, and not a zero standing in for one, is the claim.</item>
+    /// <item>One attempt, for the reason <c>AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin</c> gives.
+    /// How often a refusal that will not change is asked again is
+    /// <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's, and that
+    /// is why the case says nothing about <see cref="RecycleFailure.Attempts"/>.</item>
+    /// </list>
     /// </remarks>
     private static async Task AnEntryWhosePayloadIsGoneIsAFailureAndNothingElse(TestContext context)
     {
@@ -1215,17 +1176,13 @@ internal static class RestoreSuite
     /// The failure rather than a conflict is the whole of the claim. An implementation that looked at the
     /// destination each time would find the path occupied — by what this same call had just put back — and
     /// report a skip, which is a different answer about an entry that never had anything in its way.
-    /// <para>
-    /// Two references to one entry are what a caller gets from filtering a listing twice or from handing the
-    /// same variable in twice; identity is <see cref="RecycleBinItem"/>'s own, the <c>$I</c> path, and no
-    /// record is read to decide it.
-    /// </para>
-    /// <para>
-    /// The restored list and the failure are asserted apart from one another, and both are needed: a runner
-    /// that reported the repeat without restoring anything would pass the failure assertions, and one that
-    /// restored the entry twice would pass the restored-path ones. The second restore has no second path to
-    /// land on, so neither list can stand in for the other.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>Two references to one entry are what a caller gets from filtering a listing twice; identity is
+    /// <see cref="RecycleBinItem"/>'s own and no record is read to decide it.</item>
+    /// <item>The restored list and the failure are asserted apart, and both are needed: a runner that
+    /// reported the repeat without restoring anything would pass the failure assertions, and one that
+    /// restored the entry twice would pass the restored-path ones.</item>
+    /// </list>
     /// </remarks>
     private static async Task TheSameEntryTwiceIsRestoredOnce(TestContext context)
     {
@@ -1274,20 +1231,16 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// The entry is built rather than made, for the reason
-    /// <see cref="EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode"/> gives: taking a record away from a
-    /// real bin leaves a payload in the owner's Recycle Bin with nothing that will ever collect it. Both paths
-    /// here sit under the scratch root so that the entry is grouped under the volume the run is on and read
-    /// there, exactly as an entry out of a listing is, and neither of them is ever created.
-    /// <para>
-    /// What is being asked is that the entry's own documented behaviour — raising
-    /// <see cref="IOException"/> when a caller asks for <see cref="RecycleBinItem.OriginalPath"/> of a
-    /// record that cannot be read — stops at the boundary of a batch. A caller restoring ninety entries must
-    /// not lose the eighty-nine answers because the ninetieth was purged by something else in the meantime.
-    /// </para>
-    /// <para>
-    /// No volume requirement is declared: nothing here is written to or read from the Recycle Bin. The record
-    /// is looked for, is not there, and that is the whole of the case.
-    /// </para>
+    /// <see cref="EveryItemIsSignalledOnceAndPreloadedOnesCarryNoCode"/> gives: taking a record away from a real
+    /// bin leaves a payload in the owner's Recycle Bin with nothing that will ever collect it. Both paths sit
+    /// under the scratch root so the entry is grouped and read exactly as one out of a listing is.
+    /// <list type="bullet">
+    /// <item>What is being asked is that the entry's own documented behaviour — raising
+    /// <see cref="IOException"/> for an unreadable record — stops at the boundary of a batch. A caller
+    /// restoring ninety entries must not lose the eighty-nine answers because the ninetieth was purged.</item>
+    /// <item>Nothing here is written to or read from the Recycle Bin. The record is looked for, is not there,
+    /// and that is the whole of the case.</item>
+    /// </list>
     /// </remarks>
     private static async Task AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow(TestContext context)
     {
@@ -1323,32 +1276,22 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// <see cref="RecycleBinItem.VolumeRoot"/> is <see cref="Path.GetPathRoot(string)"/> over the entry's own
-    /// record path, and it is empty for a relative one. Two groupings key on it and they used to disagree:
-    /// the engine's took the empty root as a volume of its own, while
-    /// <see cref="ItemDetailLoader.GroupByVolume"/> skips it, so an entry in that shape reached the loader
-    /// and came back having never been signalled. Nothing was ever written into its slot, and a slot with
-    /// nothing in it belongs to none of the three lists — so the entry was reported as nothing at all.
-    /// <para>
-    /// <b>Before the pipeline it was restored.</b> The old engine called the loader for the side effect and
-    /// then moved every entry of the list it already had, so an entry the loader had skipped was moved
-    /// anyway. The feed now hands such an entry over itself, with the position it already carries, and the
-    /// engine reaches the same answer — which for a record that is not there is the failure
-    /// <c>AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow</c> already pins.
-    /// </para>
-    /// <para>
-    /// The entry is built rather than made, for the reason <c>NativeBinSuite</c> gives for building its own:
-    /// every <c>$I</c> path a listing produces is absolute, so nothing on a real disk has this shape.
-    /// <b>Nothing is created, moved or deleted here, and nothing outside the scratch root is named.</b> The
-    /// one filesystem act is a read of a relative name that is not there, resolved against the working
-    /// directory the runner was started in — which is why the name is one no run could have produced, and
-    /// why this case goes through the engine rather than through a facade that would refuse the argument
-    /// first.
-    /// </para>
-    /// <para>
-    /// That the entry is reported at all is the claim; the stage and the code are the ones
-    /// <c>AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow</c> reads in full, and only the path and the
-    /// counts are re-asserted here — enough to tell an answered entry from a missing one.
-    /// </para>
+    /// record path, and it is empty for a relative one. Two groupings key on it and they used to disagree: the
+    /// engine's took the empty root as a volume of its own, while <see cref="ItemDetailLoader.GroupByVolume"/>
+    /// skips it, so such an entry reached the loader and came back having never been signalled. Nothing was
+    /// written into its slot, and a slot with nothing in it belongs to none of the three lists.
+    /// <list type="bullet">
+    /// <item>The feed now hands such an entry over itself, with the position it already carries, so the
+    /// engine reaches the answer <c>AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow</c> already pins.</item>
+    /// <item>The entry is built rather than made, for the reason <c>NativeBinSuite</c> gives: every
+    /// <c>$I</c> path a listing produces is absolute.</item>
+    /// <item>Nothing is created, moved or deleted here, and nothing outside the scratch root is named. The one
+    /// filesystem act is a read of a relative name that is not there — which is why the case goes through the
+    /// engine rather than a facade that would refuse the argument first.</item>
+    /// <item>What tells the two ways of answering apart is the code: the engine asked the filesystem for the
+    /// record, so the code is the filesystem's. An entry handed to the loader and never signalled is reported
+    /// as undecided — same path, no code.</item>
+    /// </list>
     /// </remarks>
     private static async Task AnEntryWhoseRootCannotBeNamedIsStillAnswered(TestContext context)
     {
@@ -2019,34 +1962,25 @@ internal static class RestoreSuite
     /// library would lose a caller's file if it got the order wrong.
     /// </summary>
     /// <remarks>
-    /// The file is made unmovable by holding it open: a handle opened for reading and shared only for reading
-    /// refuses a rename, which is what the walk's move, the put-back's recycle and the removal of the payload
-    /// each need. Nothing here forges a refusal — the filesystem raises one three times, and the case is what
-    /// the library does with them.
-    /// <para>
-    /// The held file is the one whose destination is <em>free</em>, which is the only file a merge actually
-    /// tries to move. A file whose name is taken is settled by the policy and never moved at all, so holding
-    /// one of those would refuse nothing: <see cref="RestoreDirectoryConflict.MergeReplace"/> is used here so
-    /// that the two clashing files are overwritten and the case is not also a put-back of its own.
-    /// </para>
-    /// <para>
-    /// Three records come back, with three paths: the refused move and the refused put-back under the file's
-    /// own destination, and the directory's own failure for withholding the removal of the payload. Collapsing
-    /// the first two would hide the one that stopped the deletion.
-    /// </para>
-    /// <para>
-    /// What the case really pins is the four things that have to be true at once afterwards: the entry is
-    /// whole — <c>$I</c> and <c>$R</c> both still there — the file is still inside that payload, the files
-    /// that did fit are already on disk, and nothing at all was written into the bin. The second of those is
-    /// what makes the state recoverable rather than lost: the directory is in the bin with everything in it,
-    /// exactly as it was before the restore.
-    /// </para>
-    /// <para>
-    /// The entry is then removed by hand. Both halves are this case's own material, which is the reason
-    /// <see cref="APayloadThatMovedAndARecordThatWouldNotGoIsAFailure"/> gives for deleting its record: a case
-    /// that leaves an entry behind leaves it in the owner's Recycle Bin, and the handle has to be released
-    /// before either half will go.
-    /// </para>
+    /// The file is made unmovable by holding it open: a handle shared only for reading refuses a rename, which
+    /// is what the walk's move, the put-back's recycle and the removal of the payload each need. Nothing here
+    /// forges a refusal — the filesystem raises one three times.
+    /// <list type="bullet">
+    /// <item>The held file is the one whose destination is <em>free</em>, which is the only file a merge
+    /// actually tries to move. A file whose name is taken is settled by the policy and never moved, so
+    /// holding one of those would refuse nothing. <see cref="RestoreDirectoryConflict.MergeReplace"/> is used
+    /// here so the two clashing files are overwritten and the case is not also a put-back of its own.</item>
+    /// <item>Three records come back with three paths: the refused move and the refused put-back under the
+    /// file's own destination, and the directory's own failure for withholding the removal. Collapsing the
+    /// first two would hide the one that stopped the deletion.</item>
+    /// <item>What has to be true at once afterwards: the entry is whole, the file is still inside that
+    /// payload, the files that did fit are already on disk, and nothing was written into the bin. The
+    /// directory is in the bin with everything in it, exactly as it was.</item>
+    /// <item>The entry is then removed by hand, for the reason
+    /// <see cref="APayloadThatMovedAndARecordThatWouldNotGoIsAFailure"/> gives: a case that leaves an entry
+    /// behind leaves it in the owner's Recycle Bin, and the handle has to be released before either half
+    /// will go.</item>
+    /// </list>
     /// </remarks>
     private static async Task AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin(TestContext context)
     {
@@ -2313,29 +2247,20 @@ internal static class RestoreSuite
     /// <remarks>
     /// What <see cref="File.Move(string, string, bool)"/> does when its destination is a directory was measured
     /// here rather than assumed, and on this machine it is not an overwrite: it raises
-    /// <see cref="UnauthorizedAccessException"/> with <c>0x80070005</c> — the same refusal for an empty
-    /// directory as for a full one — and leaves the source, the destination and everything inside it untouched.
-    /// The case asserts a reported failure and an untouched disk because that is what the call did here, and
-    /// the code is checked for its severity bit rather than against that constant: the constant is what this
-    /// machine raised on the day, and what the library owes is that whatever the filesystem raises is reported.
-    /// A Windows that raised something else would raise it from the same place.
-    /// <para>
-    /// <see cref="UnauthorizedAccessException"/> is not an <see cref="IOException"/>, which is the reason the
+    /// <see cref="UnauthorizedAccessException"/> and leaves the source, the destination and everything inside
+    /// it untouched. The code is checked for its severity bit rather than against a constant, because what the
+    /// library owes is that whatever the filesystem raises is reported.
+    /// <list type="bullet">
+    /// <item><see cref="UnauthorizedAccessException"/> is not an <see cref="IOException"/>, which is why the
     /// catch around a move lists it separately: a filter naming <see cref="IOException"/> alone would let this
-    /// case escape the batch entirely.
-    /// </para>
-    /// <para>
-    /// The payload is checked for still being in the Recycle Bin, which is the other half of the claim — a
-    /// move that raised is a move that did not happen, so nothing was lost and the entry is still restorable.
-    /// </para>
-    /// <para>
-    /// One attempt, for the reason <c>AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin</c> gives: a
-    /// directory standing where the file wanted is not going to move by itself, and the default budget would
-    /// spend a second and a half of this run asking it to. How often a refusal that will not change is asked
-    /// again is <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's
-    /// — and what this case asked for by setting it is why it says nothing about
-    /// <see cref="RecycleFailure.Attempts"/>: one allowed and one reported is what any budget answers.
-    /// </para>
+    /// escape the batch.</item>
+    /// <item>The payload is checked for still being in the Recycle Bin: a move that raised is a move that did
+    /// not happen, so nothing was lost and the entry is still restorable.</item>
+    /// <item>One attempt, for the reason <c>AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin</c> gives.
+    /// How often a refusal that will not change is asked again is
+    /// <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's, and that
+    /// is why the case says nothing about <see cref="RecycleFailure.Attempts"/>.</item>
+    /// </list>
     /// </remarks>
     private static async Task AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing(TestContext context)
     {
@@ -2597,32 +2522,22 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// <b>The destination changes kind between the two attempts, and that is what makes the case bite.</b> A
-    /// file is standing where the tree was deleted from, held so the first move is refused however fast the
-    /// machine is; while the backoff is running it is let go of and a directory takes its place. A restore
-    /// that asked the planner once would be holding a decision to move a directory onto a path that is now
-    /// occupied by a directory, and would go on being refused for the rest of its budget and report a
-    /// failure. Asking again answers <see cref="RestoreDirectoryConflict.MergeReplace"/> with a merge, and
-    /// the tree arrives.
-    /// <para>
-    /// <b>A file released half way through would not be a witness, and the reason is worth writing down.</b>
-    /// The same test with a file entry would pass whether or not the conflict is decided again: the wanted
-    /// path is the same path, an overwrite onto a path nothing occupies is the same move as a plain one, and
-    /// both reach the same file on disk. What a re-decision changes is the <em>action</em>, and the only way
-    /// to change that under one policy is to change what is occupying the path.
-    /// </para>
-    /// <para>
-    /// <b>The elapsed time is the assertion that the change landed between two attempts</b> rather than
-    /// before the first, which is the only way a timed case can be empty of the thing it is about: a restore
-    /// that merged on its first attempt would answer every other line here, and the one line it could not is
-    /// the backoff it would have had to wait. The lower bound is the library's own floor rather than the
-    /// machine's speed — the delay is 500 ms jittered by no more than a fifth, so a second attempt cannot
-    /// begin before about 400 ms have passed.
-    /// </para>
-    /// <para>
-    /// The hold is released by the task that swaps the occupant rather than by the case, and the case awaits
-    /// that task in a <c>finally</c> before disposing the handle again, so a restore that raised cannot leave
-    /// the swap unobserved and racing the taking away of the scratch tree.
-    /// </para>
+    /// file stands where the tree was deleted from, held so the first move is refused; while the backoff runs
+    /// it is let go of and a directory takes its place. A restore that asked the planner once would hold a
+    /// decision to move a directory onto an occupied path and go on being refused for the rest of its budget.
+    /// <list type="bullet">
+    /// <item>A file released half way through would not be a witness. The wanted path is the same path and an
+    /// overwrite onto a free path is the same move as a plain one, so the test would pass either way. What a
+    /// re-decision changes is the <em>action</em>, and the only way to change that under one policy is to
+    /// change what is occupying the path.</item>
+    /// <item>The elapsed time is the assertion that the change landed between two attempts rather than before
+    /// the first, which is the only way a timed case can be empty of the thing it is about. The lower bound is
+    /// the library's own floor: the delay is 500 ms jittered by no more than a fifth, so a second attempt
+    /// cannot begin before about 400 ms.</item>
+    /// <item>The hold is released by the task that swaps the occupant, and the case awaits that task in a
+    /// <c>finally</c>, so a restore that raised cannot leave the swap unobserved and racing the removal of the
+    /// scratch tree.</item>
+    /// </list>
     /// </remarks>
     private static async Task ADestinationThatChangesUnderTheCallIsAskedAboutAgain(TestContext context)
     {
@@ -2965,40 +2880,21 @@ internal static class RestoreSuite
     /// <b>This is the case that reaches the part nothing else can.</b> Every other case here restores from
     /// one volume, so a pipeline that served a whole disk instead of a volume would answer all of them
     /// correctly — the two volumes never meet.
-    /// <para>
-    /// The two entries are built rather than made, and their records are paths that are not there, so the
-    /// answer for each is a failure carrying the filesystem's own code. <b>Nothing is created, moved or
-    /// deleted, and the one filesystem act is a read of a name that is not there</b> — under the scratch
-    /// root for the first entry, and under <c>X:\</c> for the second, because a run may only work on the one
-    /// volume <c>--scratch</c> named and a second volume's root is the only other thing it can name. That is
-    /// the same act <c>AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow</c> performs.
-    /// </para>
-    /// <para>
-    /// <b>The code is the assertion with teeth.</b> Both entries land in the failures list either way, so
-    /// the counts alone cannot tell this from a pipeline whose second volume wrote into a channel that had
-    /// already been completed — which reports its entries as undecided, under the same path and with no
-    /// code. An engine that never asked about an entry says nothing about it; one that asked and was told no
-    /// carries the code the filesystem gave.
-    /// </para>
-    /// <para>
-    /// The order is asserted as well, because a group holding two volumes is the first place the caller's
-    /// order spans more than one of them: the failures come back in the order the entries were passed in,
-    /// whichever volume was run first.
-    /// </para>
-    /// <para>
-    /// <b>Neither letter is written into this file.</b> The first is the volume <c>--scratch</c> named and
-    /// the second is a letter on the same physical disk, asked of the machine by
-    /// <see cref="VolumePresence.RequireASameDisk(out char, string)"/>. A case that named two drive letters
-    /// of its own would go red on any other volume — a removable drive and a share are named in
-    /// <c>AGENTS.md</c> as first-class choices for <c>--scratch</c>, and a run on either is a run that must
-    /// be green or skipped and never red for want of the right kind of disk.
-    /// </para>
-    /// <para>
-    /// That the two are one disk here is a fact about this machine rather than something the run
-    /// arranges, so the grouping is checked first: a machine whose volumes are all on disks of their own
-    /// would still restore both entries correctly, but it would not be the machine this case is about, and
-    /// the helper skips rather than pretending.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>The entries are built rather than made, and their records are paths that are not there, so the
+    /// answer for each is a failure carrying the filesystem's own code. Nothing is created, moved or
+    /// deleted, and the one filesystem act is a read of a name that is not there.</item>
+    /// <item>The code is the assertion with teeth. Both entries land in the failures list either way, so the
+    /// counts alone cannot tell this from a pipeline whose second volume wrote into a completed channel —
+    /// which reports its entries as undecided, under the same path and with no code.</item>
+    /// <item>The order is asserted as well, because a group holding two volumes is the first place the
+    /// caller's order spans more than one of them.</item>
+    /// <item>Neither letter is written into this file. The second is asked of the machine by
+    /// <see cref="VolumePresence.RequireASameDisk(out char, string)"/>, and a case that named two drive
+    /// letters of its own would go red on any other volume.</item>
+    /// <item>That the two are one disk is a fact about this machine rather than something the run arranges,
+    /// so the grouping is checked first and the helper skips rather than pretending.</item>
+    /// </list>
     /// </remarks>
     private static async Task TwoVolumesOnOneDiskAreBothAnswered(TestContext context)
     {
@@ -3065,31 +2961,19 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// The restore runs each disk's records through its own pipeline, so an entry becomes ready to move when
-    /// its record is read rather than when everything before it is done — and nothing about the answer may
-    /// be taken from the order the slots are filled in. Whether the work finishes in the caller's order is
-    /// the machine's business: one volume on one disk with one mover answers that way today, and the answer
-    /// must not depend on it.
-    /// <para>
-    /// <b>The list is reversed before it is handed in</b>, so that the caller's order and the order a walk
-    /// produced are not the same shape and a restore that reported in walk order would answer differently from
-    /// one that reported in the order it was given. Six entries is enough for the two orders to differ, and the
-    /// entries are this case's own: the bin holds whatever else this machine has put in it, and restoring an
-    /// entry nobody recycled is not a thing this suite may do.
-    /// </para>
-    /// <para>
-    /// <b>One of the six is read here and the other five are not.</b> A restore takes an entry that has
-    /// already been read out of memory and reads one that has not off the disk, and it reaches them by two
-    /// different passes — so a list of nothing but cold entries would leave one of those passes with nothing
-    /// to do. Finding an entry by the path it was deleted from would not give a mix: reading a record is what
-    /// makes an entry warm, so that search reads every entry in the group and leaves none of them cold, which
-    /// is exactly what the cases that use it to find their subject rely on.
-    /// </para>
-    /// <para>
-    /// The files are checked on disk as well as in the answer, because a pipeline that reported the paths in
-    /// the right order without having restored them would pass the join. Their bytes are not compared: that is
-    /// <c>ARecycledFileComesBackToThePathItCameFrom</c>'s claim, and repeating it here would only slow the case
-    /// down.
-    /// </para>
+    /// its record is read rather than when everything before it is done — and nothing about the answer may be
+    /// taken from the order the slots are filled in.
+    /// <list type="bullet">
+    /// <item><b>The list is reversed before it is handed in</b>, so that the caller's order and the order a
+    /// walk produced are not the same shape. Six entries is enough for the two orders to differ.</item>
+    /// <item><b>One of the six is read here and the other five are not.</b> A list of nothing but cold
+    /// entries would leave one of the restore's two passes with nothing to do. Finding an entry by the path it
+    /// was deleted from would not give a mix: reading a record is what makes an entry warm, so that search
+    /// leaves none of them cold, which is what the cases using it to find their subject rely on.</item>
+    /// <item>The files are checked on disk as well as in the answer, because a pipeline that reported the
+    /// paths in the right order without having restored them would pass the join. Their bytes are not
+    /// compared: that is <c>ARecycledFileComesBackToThePathItCameFrom</c>'s claim.</item>
+    /// </list>
     /// </remarks>
     private static async Task TheResultFollowsTheOrderTheCallerPassed(TestContext context)
     {
@@ -3151,19 +3035,14 @@ internal static class RestoreSuite
     /// </summary>
     /// <remarks>
     /// A failure entry would be the alternative, and it is the wrong shape: <see cref="RecycleFailure.Path"/>
-    /// is a path, and there is not one here to name — the group is absent rather than empty, and the two are
-    /// different facts.
-    /// <para>
-    /// Which is why the group beside the null carries an entry that exists: a real file, recycled by this
-    /// case and found in a listing, so a runner that flattened first and validated after would have moved
-    /// its payload back to disk and then raised. Both halves of that are asserted rather than one of them —
-    /// the payload still in the bin and byte for byte what it was, and the record still beside it — so an
-    /// implementation that gets halfway is caught as readily as one that gets all the way.
-    /// </para>
-    /// <para>
-    /// The parameter name is asserted because it is the only thing that says <em>which</em> argument was
-    /// refused, and the message that says "volumes" is what sends a caller looking in the right place.
-    /// </para>
+    /// is a path, and there is not one here to name — the group is absent rather than empty.
+    /// <list type="bullet">
+    /// <item>The group beside the null carries an entry that exists, so a runner that flattened first and
+    /// validated after would have moved its payload back to disk and then raised. Both halves are asserted,
+    /// so an implementation that gets halfway is caught as readily as one that gets all the way.</item>
+    /// <item>The parameter name is asserted because it is the only thing that says <em>which</em> argument was
+    /// refused.</item>
+    /// </list>
     /// </remarks>
     private static async Task ANullVolumeIsRefusedRatherThanRestoredAround(TestContext context)
     {
@@ -3191,7 +3070,7 @@ internal static class RestoreSuite
         var thrown = await Check
             .ThrowsAsync<ArgumentException>(
                 () => RecycleBin.RestoreAsync(volumes, cancellationToken: context.CancellationToken),
-                "a null group raises rather than being reported as an entry that did not come back")
+                "a null group raises rather than being reported as an entry that was not restored")
             .ConfigureAwait(false);
 
         Check.Equal("volumes", thrown.ParamName, "and the exception names the argument that was refused");
