@@ -6,8 +6,8 @@ namespace RecycleBinToolkit;
 /// What one volume's Recycle Bin holds, as <see cref="RecycleBinContents.Items"/> answers it.
 /// </summary>
 /// <remarks>
-/// A Recycle Bin is one directory per volume, so a listing that covers several volumes has to say which of
-/// them each entry came from. That is what this type is: the volume's root, and the entries read from it.
+/// A listing that covers several volumes has to say which of them each entry came from. That is what this type
+/// is: the volume's root, and the entries read from it.
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 public sealed class RecycleBinVolumeContents

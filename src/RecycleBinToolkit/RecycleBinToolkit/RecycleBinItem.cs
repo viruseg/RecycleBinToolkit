@@ -4,10 +4,9 @@ namespace RecycleBinToolkit;
 /// One item currently sitting in the Windows Recycle Bin.
 /// </summary>
 /// <remarks>
-/// <see cref="Size"/> and <see cref="IsDirectory"/> are known the moment the entry is enumerated.
-/// <see cref="OriginalPath"/> and <see cref="DeletedAt"/> are not: they live in the
-/// entry's <c>$I</c> record, and reading every one of those is the whole cost of a listing. The first
-/// access to either field reads that record once and answers both.
+/// <see cref="Size"/> and <see cref="IsDirectory"/> are answered from the listing.
+/// <see cref="OriginalPath"/> and <see cref="DeletedAt"/> are read from the item's own record on first access
+/// to either, which answers both at once and can raise <see cref="IOException"/>.
 /// </remarks>
 public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
 {
@@ -110,20 +109,16 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// </remarks>
     internal string IndexPath => _indexPath;
 
-    /// <summary>
-    /// Full path the item was deleted from.
-    /// </summary>
+    /// <summary>Full path the item was deleted from.</summary>
     /// <exception cref="IOException">
-    /// The item's <c>$I</c> record could not be read — it was removed or locked between the listing and this
-    /// access. The same exception is raised by every later access, because the attempt is not repeated.
+    /// The item's record could not be read — it was removed or locked between the listing and this access.
+    /// The same exception is raised by every later access, because the attempt is not repeated.
     /// </exception>
     public string OriginalPath => Details.OriginalPath;
 
-    /// <summary>
-    /// When the item was deleted, in the local offset.
-    /// </summary>
+    /// <summary>When the item was deleted, in the local offset.</summary>
     /// <exception cref="IOException">
-    /// The item's <c>$I</c> record could not be read. See <see cref="OriginalPath"/>.
+    /// The item's record could not be read. See <see cref="OriginalPath"/>.
     /// </exception>
     public DateTimeOffset DeletedAt => Details.DeletedAt;
 

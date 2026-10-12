@@ -41,14 +41,9 @@ public sealed class RecycleBinContents
     /// empty is one of the groups, holding nothing.
     /// </summary>
     /// <remarks>
-    /// Volumes are read in parallel, and the grouping is what keeps a caller able to tell which disk an entry
-    /// came from: the order does not depend on which volume's walk finished first.
-    /// <para>
-    /// A volume read with nothing in it keeps its place rather than dropping out, because a caller that
-    /// asked about <c>X:\</c> and found no group for it could not tell an empty bin from a volume that was
-    /// never reached — the same reason a root naming no volume is answered as a failure rather than as an
-    /// empty result.
-    /// </para>
+    /// A volume read with nothing in it keeps its place rather than dropping out, because a caller that asked
+    /// about <c>X:\</c> and found no group for it could not tell an empty bin from a volume that was never
+    /// reached.
     /// </remarks>
     public IReadOnlyList<RecycleBinVolumeContents> Items { get; }
 
@@ -67,27 +62,23 @@ public sealed class RecycleBinContents
     /// </summary>
     /// <param name="cancellationToken">Cancels the work between records and between volumes.</param>
     /// <remarks>
-    /// A listing reads no records at all — that is what makes one walk
-    /// of the bin enough, however many entries there are — and each item reads its own on first use. This is for
-    /// a caller about to read all of them: it moves that cost into one batch, in parallel, instead of leaving it
-    /// spread through a loop that also has to do something else.
+    /// A listing reads no records at all, and each item reads its own on first use. This is for a caller about
+    /// to read all of them: it moves that cost into one batch instead of leaving it spread through a loop that
+    /// also has to do something else.
     /// <para>
-    /// The items already read are skipped, which is every item of a listing
-    /// taken with <see cref="RecycleBinOptions.PreloadItemDetails"/>. Nothing is read twice, and a listing
-    /// with nothing pending does no work at all beyond one pass over its items.
+    /// The items already read are skipped, which is every item of a listing taken with
+    /// <see cref="RecycleBinOptions.PreloadItemDetails"/>. Nothing is read twice, and a listing with nothing
+    /// pending does no work beyond one pass over its items.
     /// </para>
     /// <para>
     /// An item whose record cannot be read is left exactly as it was: it still raises <see cref="IOException"/>
-    /// when a caller asks for its details, with the filesystem's own code. Nothing here throws for one, and
+    /// when a caller asks for its details, with the file system's own code. Nothing here throws for one, and
     /// <see cref="Failures"/> does not change — it describes what the listing could not do, not what a later
     /// call could not.
     /// </para>
     /// <para>
-    /// Every volume's groups are flattened into one list first, and the volumes are then read one after
-    /// another, and each on as many threads as its own hardware answers for: one for a
-    /// mechanical disk, more for a solid-state one, one for a share. Reading the listing itself does not
-    /// work that way — it reads the volumes together — but this warms what the listing left cold, and
-    /// warming measures each disk on its own figure.
+    /// <b>This one blocks the calling thread</b>, where every other entry point is awaited. Do not call it on
+    /// a UI thread.
     /// </para>
     /// </remarks>
     /// <exception cref="OperationCanceledException">

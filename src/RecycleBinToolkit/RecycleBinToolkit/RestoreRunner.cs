@@ -820,10 +820,8 @@ internal static class RestoreRunner
     /// <para>
     /// The names are counted against <see cref="NameCollision.NameAttempts"/> so that a name taken on every
     /// attempt cannot loop here for ever, and bounded at that because the probability of one is about two in
-    /// a billion. <b>No case in this repository witnesses the loop</b>: taking a free name away between the
-    /// query and the move is a hook inside this class rather than a thing a run can arrange. What
-    /// <see cref="NameCollision.IsTaken"/> is compared against was measured rather than assumed, and the
-    /// measurement is written down there.
+    /// a billion. What <see cref="NameCollision.IsTaken"/> is compared against was measured rather than
+    /// assumed, and the measurement is written down there.
     /// </para>
     /// <para>
     /// A directory is one <see cref="Directory.Move(string, string)"/> rather than a walk of what is inside
@@ -1716,10 +1714,9 @@ internal static class RestoreRunner
     /// having read it, and which is what a record that could not be read is named under as well.
     /// </para>
     /// <para>
-    /// <b>No case in this repository witnesses that arm.</b> Producing one needs a defect in the pipeline —
-    /// an entry written to a channel that drops it — and the way to arrange it would be a hook inside the
-    /// engine. What is witnessed is every path that does write, and that this arm exists for the ones that
-    /// might not.
+    /// This arm exists for the paths that might not write. Producing one needs a defect in the pipeline —
+    /// an entry written to a channel that drops it — and the way to arrange that would be a hook inside
+    /// the engine rather than a thing a run can arrange from outside.
     /// </para>
     /// </remarks>
     private static RecycleBinRestoreResult Flatten(RestoreOutcome[] slots, IReadOnlyList<RecycleBinItem> items)

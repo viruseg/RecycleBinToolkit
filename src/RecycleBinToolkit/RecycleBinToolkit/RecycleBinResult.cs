@@ -4,11 +4,9 @@ namespace RecycleBinToolkit;
 /// Point in the recycle pipeline at which an item failed.
 /// </summary>
 /// <remarks>
-/// The members are numbered explicitly because this is a public enum and the numbers are part of its
-/// contract: an implicit value renumbers every member declared after an insertion, which compiles
-/// everywhere and silently breaks every caller that persisted one. Adding a stage is therefore a matter
-/// of picking the next number, and of nothing else. The gaps — 1, 2, 4, 5 — are stages the removed Shell
-/// path reported; they are never reused.
+/// Members are numbered explicitly and the numbers are part of the contract: an implicit value renumbers every
+/// member declared after an insertion, which compiles everywhere and silently breaks every caller that
+/// persisted one. The gaps — 1, 2, 4, 5 — are stages the removed Shell path reported and are never reused.
 /// </remarks>
 public enum RecycleFailureStage
 {
@@ -19,106 +17,78 @@ public enum RecycleFailureStage
     Performing = 3,
 
     /// <summary>
-    /// The volume holding the path has no Recycle Bin and the caller asked for one, so the path was
-    /// refused before anything was attempted and the file is where the caller left it.
+    /// The volume holding the path has no Recycle Bin and the caller asked for one, so the path was refused
+    /// before anything was attempted and the file is where the caller left it.
+    /// <see cref="RecycleFailure.Attempts"/> is <c>0</c>.
     /// </summary>
     /// <remarks>
-    /// The refusal covers every reason the volume cannot recycle — a policy, a volume set to delete
-    /// outright, a volume type that never had a bin, an answer that could not be established — and every
-    /// one of them arrives here rather than later, because nothing is handed over.
-    /// Nothing was attempted, which is what <see cref="RecycleFailure.Attempts"/> reports as zero.
+    /// The refusal covers every reason a volume cannot recycle — a policy, a volume set to delete outright, a
+    /// volume type that never had a bin, an answer that could not be established — and each arrives here rather
+    /// than later, because nothing is handed over.
     /// </remarks>
     NoRecycleBinOnVolume = 8,
 
     /// <summary>
-    /// An entry in the Recycle Bin could not be read or removed. Only reachable while reading
-    /// or emptying the Recycle Bin rather than writing to it.
+    /// An entry in the Recycle Bin could not be read or removed. Only reachable while reading or emptying the
+    /// Recycle Bin rather than writing to it.
     /// </summary>
     Enumeration = 6,
 
     /// <summary>
     /// The caller asked for a path to be removed for good — because its volume cannot recycle it and
     /// <see cref="RecycleBinOptions.NoRecycleBinAction"/> was
-    /// <see cref="NoRecycleBinAction.DeletePermanently"/> — but the file system refused.
+    /// <see cref="NoRecycleBinAction.DeletePermanently"/> — but the file system refused. The file is exactly
+    /// as the caller left it.
     /// </summary>
-    /// <remarks>
-    /// The file is exactly as the caller left it, and the caller is the one who asked for the removal to
-    /// happen at all.
-    /// </remarks>
     PermanentDeleteFailed = 7,
 
     /// <summary>
-    /// The path names its volume by GUID, and nothing above this library can read such a path: the volume
-    /// has no drive letter to be measured, emptied or reported against. It was refused before anything
-    /// was asked.
+    /// The path names its volume by GUID, and nothing above this library can read such a path: the volume has
+    /// no drive letter to be measured, emptied or reported against. It was refused before anything was asked
+    /// and <see cref="RecycleFailure.Attempts"/> is <c>0</c>.
     /// </summary>
     /// <remarks>
-    /// Distinct from <see cref="NoRecycleBinOnVolume"/> because that one is a statement about a volume
-    /// this library can name — a policy, a per-volume setting, a volume type that never had a bin. Here
-    /// there is no such statement to make, and reporting one would send an integrator after a volume that
-    /// very likely recycles perfectly well under the spelling they did not use.
-    /// <para>
-    /// Nothing was attempted, which is what <see cref="RecycleFailure.Attempts"/> reports as zero.
-    /// </para>
+    /// Distinct from <see cref="NoRecycleBinOnVolume"/>, which is a statement about a volume this library can
+    /// name. Here there is no such statement to make, and reporting one would send an integrator after a
+    /// volume that very likely recycles perfectly well under the spelling they did not use.
     /// </remarks>
     VolumeGuidPathNotAddressable = 9,
 
     /// <summary>
-    /// An item in the Recycle Bin could not be restored: its payload would not move, its record would not
-    /// go, or the record could not be read to say where it belonged. Only reachable while restoring.
+    /// An item in the Recycle Bin could not be restored: its payload would not move, its record would not go,
+    /// or the record could not be read to say where it belonged. Only reachable while restoring. The item is
+    /// still in the Recycle Bin, which is what makes a second attempt worth making — the one exception being a
+    /// payload that had already moved and only its record was left, where the next attempt meets a conflict.
     /// </summary>
     /// <remarks>
+    /// One file can account for two records under the same path: a refused move is refused again when the
+    /// put-back cannot move it either, and each refusal is its own event with its own code. A caller that means
+    /// one failure per file has to group by path rather than count.
+    /// <para>
     /// While a directory is being merged, a file of its tree that could not be dealt with reaches this stage
     /// under that file's own path; the directory itself reaches it only when the merge could not finish.
-    /// <para>
-    /// <b>Once for the file, and once more for the directory, is not the whole count.</b> A file whose move
-    /// was refused can be refused a second time — the put-back that would have taken it out of the payload
-    /// cannot move it either — and each refusal is its own event with its own code, so one file can account
-    /// for two records under the same path. A caller that means one failure per file has to group by path
-    /// rather than count.
-    /// </para>
-    /// <para>
-    /// The item is still in the Recycle Bin, which is what makes a second attempt worth making. The one
-    /// exception is a payload that had already moved and only its record was left: the file is on disk
-    /// then, and the next attempt meets a conflict rather than this.
     /// </para>
     /// </remarks>
     RestoreFailed = 10,
 
     /// <summary>
-    /// The path a restore wanted was already occupied and the caller asked for that to be an error rather
-    /// than a conflict to resolve.
+    /// The path a restore wanted was already occupied and the caller set
+    /// <see cref="RestoreFileConflict.Error"/> or <see cref="RestoreDirectoryConflict.Error"/> rather than a
+    /// policy that resolves it. Nothing on disk was touched, the item stays in the Recycle Bin, and this is the
+    /// only stage a conflict produces in <see cref="RecycleBinRestoreResult.Failures"/>.
     /// </summary>
     /// <remarks>
-    /// What was in the way was not touched, and the item stays in the Recycle Bin. Every other policy that
-    /// answers an occupied path settles it and reports what it did in
-    /// <see cref="RecycleBinRestoreResult.Conflicts"/>, and nothing else does —
-    /// <see cref="RestoreFileConflict.Skip"/> and <see cref="RestoreDirectoryConflict.Skip"/>, the two
-    /// renames <see cref="RestoreFileConflict.Rename"/> and
-    /// <see cref="RestoreDirectoryConflict.RenameDirectory"/>, and the three <c>Merge*</c> values, whose
-    /// reporting granularity is on <see cref="RecycleBinRestoreResult.Conflicts"/>. Where
-    /// it holds a file they have no tree to merge into and fail at <see cref="RestoreFailed"/> instead, like
-    /// any other move the filesystem would not make; and a tree that collides with nothing is settled
-    /// without a record there, as it would be under any other policy. So this stage is what a caller
-    /// opting into <c>Error</c> gets instead.
+    /// Every other policy settles an occupied path and reports what it did in
+    /// <see cref="RecycleBinRestoreResult.Conflicts"/>. Two reach no conflict at all:
+    /// <see cref="RestoreFileConflict.Replace"/> takes the occupant's place, so a destination holding a file has
+    /// nothing left to report about — though one holding a directory has nothing to overwrite and fails at
+    /// <see cref="RestoreFailed"/> — and a <c>Merge*</c> value against a destination holding a file fails
+    /// rather than settling anything.
     /// <para>
-    /// What a conflict is worth is the whole of the difference, and it is worth saying precisely: none of
-    /// those policies puts an entry in <see cref="RecycleBinRestoreResult.Failures"/>
-    /// <em>because of</em> the conflict, and
-    /// <see cref="RecycleBinRestoreResult.Succeeded"/> is decided by that list alone. It does not follow
-    /// that such a restore always reads <see langword="true"/>: what the restore does about everything
-    /// <em>else</em> can still fail one — a record that could not be read to say where an entry came from, a
-    /// payload that moved and a record that would not go, a merge whose put-back or whose payload removal
-    /// was refused. A merge is the plain case of it, having reported what it settled and then failing to
-    /// deal with one file; the conflicts are unchanged by that failure, and both lists carry it.
-    /// </para>
-    /// <para>
-    /// Two policies reach no conflict at all. <see cref="RestoreFileConflict.Replace"/> takes the occupant's
-    /// place, so where the occupant is a file there is nothing left to report about — though a destination
-    /// holding a <em>directory</em> has nothing to overwrite and that one fails at
-    /// <see cref="RestoreFailed"/> too. And a <c>Merge*</c> value on a destination holding a file fails
-    /// rather than settling anything, so it reaches
-    /// <see cref="RecycleBinRestoreResult.Failures"/> and not this one.
+    /// That this is the only such entry in <see cref="RecycleBinRestoreResult.Failures"/> does not make such a
+    /// restore read <see cref="RecycleBinRestoreResult.Succeeded"/>: what the restore does about everything else
+    /// can still fail one, and a merge that reported what it settled and then could not deal with one file is
+    /// the plain case of it. The conflicts are unchanged by that failure, and both lists carry it.
     /// </para>
     /// </remarks>
     RestoreConflictRefused = 11
@@ -149,26 +119,22 @@ public sealed class RecycleFailure
     /// <summary>The path exactly as the caller supplied it.</summary>
     public string Path { get; }
 
-    /// <summary>
-    /// The file system's own code for this item, or 0 when nothing was attempted. Carried through exactly
-    /// as reported.
-    /// </summary>
+    /// <summary>The file system's own code for this item, or 0 when nothing was attempted.</summary>
     /// <remarks>
-    /// Check <c>(HResult &amp; 0x80000000) != 0</c> to tell a refusal from a success code. That works
-    /// because nothing here normalises the code.
+    /// Check <c>(HResult &amp; 0x80000000) != 0</c> to tell a refusal from a success code, which works because
+    /// nothing here normalises the code.
     /// </remarks>
     public int HResult { get; }
 
     /// <summary>
-    /// Rounds this path went through before it was given up on, which is
-    /// <see cref="RecycleBinOptions.MaxAttempts"/> at most.
+    /// Rounds this path went through before it was given up on, at most
+    /// <see cref="RecycleBinOptions.MaxAttempts"/>.
     /// </summary>
     /// <remarks>
-    /// <c>0</c> means nothing was attempted for this path, which covers every stage that settles
-    /// before the rounds begin: a path that never validated, one whose volume cannot recycle it, one
-    /// naming its volume by GUID, and one this library removed for good on the caller's instruction — and,
-    /// while restoring, an entry whose record could not be read, and an entry the caller named twice, which
-    /// the first of them already answered.
+    /// <c>0</c> means nothing was attempted for this path, which covers every stage that settles before the
+    /// rounds begin: a path that never validated, one whose volume cannot recycle it, one naming its volume by
+    /// GUID, and one removed for good on the caller's instruction — and, while restoring, an entry whose record
+    /// could not be read, and an entry the caller named twice that the first had already answered.
     /// </remarks>
     public int Attempts { get; }
 
