@@ -56,6 +56,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeListingHidesAnIndexWhosePayloadIsGone), NativeListingHidesAnIndexWhosePayloadIsGone),
         new TestCase("NativeBinSuite." + nameof(NativeListingIsUndisturbedByARecordItCannotRead), NativeListingIsUndisturbedByARecordItCannotRead),
         new TestCase("NativeBinSuite." + nameof(ADriveIsClassifiedFromItsOwnSeekPenaltyAnswer), ADriveIsClassifiedFromItsOwnSeekPenaltyAnswer),
+        new TestCase("NativeBinSuite." + nameof(VolumesAreGroupedByTheDiskTheyArePartitionsOf), VolumesAreGroupedByTheDiskTheyArePartitionsOf),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts), NativeEmptyRemovesWhatWasRecycledAndReportsExactCounts),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyOfAVolumeWithNothingInItReportsNothing), NativeEmptyOfAVolumeWithNothingInItReportsNothing),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyKeepsTheBinDirectoriesThemselves), NativeEmptyKeepsTheBinDirectoriesThemselves),
@@ -952,6 +953,53 @@ internal static class NativeBinSuite
             @"\\server\share\$RECYCLE.BIN\" + NativeBinLayout.CurrentSid,
             NativeBinLayout.BinDirectory(@"\\server\share\"),
             "a share's bin is composed the same way a volume's is, under the share root");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Two volumes that are partitions of one disk share a group, because a group is a disk and work
+    /// inside a group contends for one head. A volume that named no disk goes into one group with every
+    /// other such volume rather than a group of its own.
+    /// </summary>
+    /// <remarks>
+    /// The partition number the driver answers with is left out of the key, which is the whole of why
+    /// <c>D:</c> and <c>E:</c> land together: a key carrying the partition would put every volume in a group
+    /// of its own, and the grouping would answer the same thing on a machine that has nothing to group.
+    /// <para>
+    /// The shares are the other half of the rule. Neither named a disk, so neither may be assumed to have
+    /// the machine to itself, and a group each would have them run together — the answer that looks faster
+    /// and is a guess in the direction of contention. The group that names no disk is last whatever order
+    /// the roots arrived in, so a caller comparing two runs sees the same shape.
+    /// </para>
+    /// <para>
+    /// Presence is required rather than assumed for the drive letters, for the reason
+    /// <see cref="VolumePresence.Require"/> gives. It is not enough for the letters to exist, either: this
+    /// machine's layout is what puts <c>D:</c> and <c>E:</c> on one disk and <c>C:</c> on another, and that
+    /// is a fact to be asked about, not a fact to be written down.
+    /// </para>
+    /// </remarks>
+    private static Task VolumesAreGroupedByTheDiskTheyArePartitionsOf(TestContext context)
+    {
+        VolumePresence.Require('D', 'E', 'C');
+
+        var groups = VolumeDiskGroups.Group([@"D:\", @"E:\", @"C:\", @"\\server\share\", @"\\other\share\"]);
+
+        Check.Equal(3, groups.Count, "two physical disks behind the drive letters, and one group for the shares");
+
+        Check.Equal(2, groups[0].Positions.Count, "D: and E: are partitions of one disk and share a group");
+        Check.Equal(0, groups[0].Positions[0], "a group keeps the order the roots arrived in");
+        Check.Equal(1, groups[0].Positions[1], "and the second root is second in it");
+        Check.True(groups[0].Disk is not null, "a group of volumes that named their disk names it");
+
+        Check.Equal(1, groups[1].Positions.Count, "C: is alone on the disk of its own");
+        Check.Equal(2, groups[1].Positions[0], "at the position it was passed at");
+        Check.True(groups[1].Disk is not null, "and its group names that disk");
+
+        Check.True(groups[2].Disk is null, "the shares share one group, and it names no disk");
+        Check.Equal(2, groups[2].Positions.Count, "because both of them are in it");
+        Check.Equal(3, groups[2].Positions[0], "each keeping the place it was passed at");
+        Check.Equal(4, groups[2].Positions[1], "and its own");
 
         return Task.CompletedTask;
     }

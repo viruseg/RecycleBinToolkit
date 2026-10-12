@@ -1462,7 +1462,7 @@ internal static class RestoreRunner
     }
 
     /// <summary>
-    /// Gathers the volumes by the physical disk they are partitions of.
+    /// Gathers the volumes by the physical disk they are partitions of, in the terms of a restore.
     /// </summary>
     /// <param name="byVolume">The volumes, in the order the caller's entries named them.</param>
     /// <returns>
@@ -1470,56 +1470,27 @@ internal static class RestoreRunner
     /// volume named none — one further group holding every such volume.
     /// </returns>
     /// <remarks>
-    /// The partition number the driver answers with is left out, and the key is the disk's device type and
-    /// number rather than the volume itself: two partitions of one disk are the case this exists for, and a
-    /// key carrying the partition would put every volume in a group of its own.
-    /// <para>
-    /// <b>Volumes that named no disk are one group, not one group each.</b> A share and a volume whose driver
-    /// declines are both a volume that could not say where its bytes are, and either may be sharing a head with
-    /// the other — so the grouping answers the conservative thing, which is that they move one after another.
-    /// The alternative looks faster and is not measured, and it would be a guess in the direction of
-    /// contention.
-    /// </para>
-    /// <para>
-    /// That group names no disk, and is the one place the answer to "which head" is <see langword="null"/>
-    /// rather than a key. It is also where a spanning or striped volume can hide: the driver names the
-    /// storage a volume is a volume of, so two volumes can key alike while sharing more than one head, and
-    /// nothing here can see through the answer to the hardware behind it.
-    /// </para>
+    /// The rule itself is <see cref="VolumeDiskGroups"/>, which an empty shares: two operations deciding
+    /// which volumes contend for one head are the same question, and two copies of it are free to drift.
+    /// What this adds is only the language — a group of <see cref="RestoreVolumeWork"/> rather than of
+    /// positions into a list of roots the caller never had.
     /// </remarks>
     internal static List<RestoreDiskGroup> GroupByPhysicalDisk(IReadOnlyList<RestoreVolumeWork> byVolume)
     {
         ArgumentNullException.ThrowIfNull(byVolume);
 
-        var byDisk = new Dictionary<PhysicalDiskKey, List<RestoreVolumeWork>>();
-        var groups = new List<RestoreDiskGroup>();
-        List<RestoreVolumeWork>? unnamed = null;
+        var roots = new string[byVolume.Count];
 
-        foreach (var volume in byVolume)
+        for (var position = 0; position < byVolume.Count; position++)
         {
-            if (!PhysicalVolumeDisk.TryIdentify(volume.VolumeRoot, out var disk))
-            {
-                unnamed ??= [];
-                unnamed.Add(volume);
-                continue;
-            }
-
-            if (!byDisk.TryGetValue(disk, out var group))
-            {
-                group = [];
-                byDisk.Add(disk, group);
-                groups.Add(new RestoreDiskGroup(disk, group));
-            }
-
-            group.Add(volume);
+            roots[position] = byVolume[position].VolumeRoot;
         }
 
-        if (unnamed is not null)
-        {
-            groups.Add(new RestoreDiskGroup(null, unnamed));
-        }
-
-        return groups;
+        return
+        [
+            .. VolumeDiskGroups.Group(roots).Select(
+                group => new RestoreDiskGroup(group.Disk, [.. group.Positions.Select(position => byVolume[position])]))
+        ];
     }
 
     /// <summary>
