@@ -103,9 +103,8 @@ internal static class ReadmeExamples
 
     internal static async Task RecycleOneFile()
     {
-        // The library writes the Recycle Bin's own files under <volume>$RECYCLE.BIN\<SID>\ and reads them back
-        // with ordinary file calls. It needs Windows 10 version 1607 (build 14393) or later, because that is the
-        // first build that reads the index records it writes; below that the call raises
+        // RecycleAsync needs Windows 10 version 1607 (build 14393) or later, because that is the first build
+        // that reads the index records it writes; below that the call raises
         // PlatformNotSupportedException, and ThrowOnError does not suppress that.
         await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
 
@@ -143,7 +142,7 @@ internal static class ReadmeExamples
 
     internal static async Task ListTheRecycleBinAndReadEveryRecordUpFront()
     {
-        // A listing reads no $I records by default, which is what makes one walk of the bin directory
+        // A listing reads no entry records by default, which is what makes one walk of the bin directory
         // enough. A caller that is going to read every entry's path anyway can have the records read during
         // the listing instead of one at a time from its own loop — and an entry whose record cannot be read
         // is reported in Failures rather than raising later.

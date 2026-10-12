@@ -15,14 +15,14 @@ await RecycleBin.EmptyAsync(@"W:\");
 - **Targets** `net10.0`, Windows only. The library is `AnyCPU`; the test project is `x64`.
 - **Dependency**: `Microsoft.Windows.CsWin32` only, and it is a build-time source generator.
 - **One path to the Recycle Bin**: the bin's own files, written and read with ordinary file calls.
+  No shell, no COM, no `SHFileOperation`.
 
 ---
 
 ## What it is
 
-The Recycle Bin is a directory per volume — `<volume>$RECYCLE.BIN\<SID>\` — holding paired `$I`
-records and `$R` payloads. This library writes and reads those directly, with per-item diagnostics
-that tell you *why* an item failed:
+A Recycle Bin library for .NET that reports per item, and never destroys a file while claiming it
+did not:
 
 | Problem with a naive implementation | What this library does |
 | --- | --- |
@@ -56,11 +56,19 @@ The API is annotated `[SupportedOSPlatform("windows6.0.6000")]`, so calling it f
 cross-platform target produces an analyzer warning unless you guard with
 `OperatingSystem.IsWindows()`.
 
+**The version requirement is a refusal, not a warning.** Build 14393 is the first that reads a
+version 2 index record. An older build does not reject one — it reads it as something it cannot
+use, so the item appears in the bin and cannot be restored from it. `RecycleAsync` therefore throws
+`RecycleBinNativeBackendUnavailableException` (a `PlatformNotSupportedException`) before it touches
+anything, and `ThrowOnError` does **not** suppress it: nothing failed, so there is nothing to
+report as data. `GetItemsAsync`, `RestoreAsync` and `EmptyAsync` are not gated — reading version 1
+records is supported as well as writing version 2, and emptying parses nothing — so a machine too
+old to *write* can still *read* and *clear* at full speed.
+
 There is no stable version yet and no compatibility promise, so the public surface may still change
-between builds. Two things in it are worth knowing are not accidental: `RecycleBinContents.TotalSize` is
-derived when the listing is constructed rather than settable afterwards, and `RecycleBinEmptyResult.Elapsed`
-is the time the caller waited, including queueing behind other work. Both were chosen so a result cannot
-disagree with the measurements it came from.
+between builds. Two members are worth knowing up front: `RecycleBinContents.TotalSize` is derived when
+the listing is constructed rather than settable afterwards, and the `Elapsed` on every result is the
+time the caller waited, including queueing behind other work.
 
 ## Installation
 
@@ -209,13 +217,8 @@ Lists the Recycle Bin.
 | `options` | `RecycleBinOptions?` | `null` means `RecycleBinOptions.Default`. |
 | `cancellationToken` | `CancellationToken` | Cancels the wait. |
 
-**Returns** a `RecycleBinContents`.
-
-Each volume's bin is enumerated directly, so `volumeRoot` selects which directories to read. **Every volume is
-read at the same time**, each on its own thread: a Recycle Bin is one directory per volume, so two volumes are
-two directories on two devices and nothing about them contends — one disk waiting on its head does not hold up
-another. The answer's order is the order the volumes were asked about and does not depend on which one finished
-first.
+**Returns** a `RecycleBinContents`. The answer's order is the order the volumes were asked about and does
+not depend on which one finished first.
 
 A path inside a volume names no volume of its own, and it is refused rather than widened
 to the volume containing it — as `EmptyAsync` refuses it and `GetStatusAsync` answers it with
@@ -240,30 +243,25 @@ a machine too old to *write* a record as `GetItemsAsync` is. A merge that has to
 and it is this library's version 2 like any other — so on such a machine that entry is restorable through
 this library and not through Explorer's own Restore.
 
-The payload is moved back first and its `$I` record deleted second. That order is not
-interchangeable: the other one leaves a payload in `$RECYCLE.BIN` that nothing describes — no listing
-shows it, and no restore can put it back, because a restore needs a record to say where a payload came
-from. This order's failure is the opposite shape and is recoverable: the file is already back where it
-belongs, its entry is still in the bin, and the result says so.
+The payload is moved back first and its record deleted second. That order is not interchangeable: the
+other one leaves a file in the Recycle Bin that nothing describes — no listing shows it, and no
+restore can put it back. This order's failure is the opposite shape and is recoverable: the file is
+already back where it belongs, its entry is still in the bin, and the result says so.
 
-A destination whose parent folders are gone is made on the way for anything actually put down — a record
-names where a thing came from and says nothing about the folders on the way to it. An entry the policy leaves
-in the bin makes nothing.
+A destination whose parent folders are gone is made on the way for anything actually put down. An
+entry the policy leaves in the bin makes nothing.
 
 A move the file system refuses is **tried again**, up to `MaxAttempts` times, and what is in the way is
 asked about on each attempt rather than decided once before the first: a destination somebody lets go of half
 way through is restored, and one that stays held is reported carrying the number of attempts it was actually
 given in [`RecycleFailure.Attempts`](#recyclefailure). `OverallTimeout` bounds all of that, and it is **one
 budget for the whole call** — not one per entry and not one per volume — so a run of refused entries cannot
-each spend a budget of their own, and a slow disk cannot lengthen the one a fast disk is spending.
-
-That budget is spent in sleeping, and with the defaults one entry the file system keeps refusing waits a little
-over a second and a half before it is given up on — 50 ms, then 100, 200, 400 and 800, each jittered by up to a
-fifth. That waiting is inside the call and inside `Elapsed`, and it comes out of the one budget above rather than
-out of a budget per entry: with the default 30 seconds, somewhere between sixteen and twenty-four entries can
-wait that long, and every entry after them is attempted once and answered at once. **Set `MaxAttempts` to what a
-refusal is worth waiting for** — `MaxAttempts = 1` answers the first refusal without waiting at all, and
-`InitialRetryDelay` sets what each wait costs.
+each spend a budget of their own. That waiting is inside the call and inside `Elapsed`: with the defaults
+a single entry the file system keeps refusing waits a little over a second and a half before it is given
+up on, and with the default 30-second budget somewhere between sixteen and twenty-four entries can wait
+that long before every entry after them is attempted once and answered at once. **Set `MaxAttempts` to
+what a refusal is worth waiting for** — `MaxAttempts = 1` answers the first refusal without waiting at
+all.
 
 **Exceptions** `ArgumentNullException` when the list is null. `ArgumentException` when one of the
 volume groups is null: a group that is not there has no entries to restore and no volume root to name,
@@ -341,15 +339,15 @@ Immutable; set with object initialisers. Every property has a production default
 | `OverallTimeout` | `TimeSpan` | `30s` | Upper bound on wall-clock time spent retrying the batch. A backoff that does not fit the remaining budget ends the loop immediately rather than starting an over-budget round. |
 | `ThrowOnError` | `bool` | `true` | Whether a failure raises instead of being returned. |
 | `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. |
-| `PreloadItemDetails` | `bool` | `false` | Read every `$I` record during `GetItemsAsync` instead of leaving each entry to read its own on first access. Off by default, because a listing reads no records at all that way. See [Lazy fields](#lazy-fields). |
+| `PreloadItemDetails` | `bool` | `false` | Read every entry's record during `GetItemsAsync` instead of leaving each entry to read its own on first access. Off by default, because a listing reads no records at all that way. See [Lazy fields](#lazy-fields). |
 | `FileConflict` | `RestoreFileConflict` | `Skip` | What a restore does with a **file** whose path is already occupied. See [`RestoreFileConflict`](#restorefileconflict). |
 | `DirectoryConflict` | `RestoreDirectoryConflict` | `MergeSkip` | What a restore does with a **directory** whose path is already occupied. See [`RestoreDirectoryConflict`](#restoredirectoryconflict). |
 
-Two properties rather than one shared policy, because a directory can be **set down whole under a new
-name** and a file only ever under its own, and because merging a tree into what is already there is a
-question a file cannot be asked. Neither has anything to do with `ThrowOnError`: a restore is a
-batch, so a conflict is data — resolved ones in `Conflicts`, and the ones an `Error` policy refuses
-in `Failures` as well. No single entry of a restore raises.
+A directory can be **set down whole under a new name**; a file only ever under its own. Merging a tree
+into what is already there is a question a file cannot be asked, which is why these are two properties
+rather than one. Neither has anything to do with `ThrowOnError`: a restore is a batch, so a conflict is
+data — resolved ones in `Conflicts`, and the ones an `Error` policy refuses in `Failures` as well. No
+single entry of a restore raises.
 
 ```csharp
 // Every property has a production default, so RecycleBinOptions.Default — which is what a null
@@ -430,7 +428,7 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `PermanentDeleteFailed` | You asked for a path to be removed for good — because its volume cannot recycle it and `NoRecycleBinAction` was `NoRecycleBinAction.DeletePermanently` — but the file system refused: a handle is held, the attributes are read-only. The file is exactly as you left it. |
 | `Enumeration` | An entry in the Recycle Bin could not be read or removed, or a volume could not be read. Only reachable while reading or emptying the Recycle Bin. |
 | `VolumeGuidPathNotAddressable` | The path names its volume by GUID, as `\\?\Volume{GUID}\…`. The volume has no drive letter to be measured, emptied or reported against, so the path was refused before anything was asked: `Attempts` is `0` and `HResult` is `0`. Address the same location by drive letter or mount point instead. |
-| `RestoreFailed` | Only reachable while restoring. An entry's payload would not move, its record would not go, or its record could not be read to say where it belonged — in which case `Path` is the entry's own `$I` record inside the bin, the only path it carries without reading that record. A merge reports a refusal of a file of its tree under **that file's own path** rather than the directory's, under any of the three `Merge*` values and whichever way the merge was settling that file. **A file that refused both — the move, and then the put-back that would have taken it out of the payload — accounts for two records under the same path, and the directory accounts for a third under its own**, each a separate refusal with its own code; group by path rather than counting if you want one failure per file. `RenameDirectory` sets the tree down whole under a free name, and `Skip` and `Error` leave the entry in the bin; the `Merge*` values fail on the collision itself when the destination holds a **file** — see [`RestoreDirectoryConflict`](#restoredirectoryconflict). Whatever the policy, the entry can also reach this stage for reasons of its own — an unreadable record, a payload that will not move, a record left behind a payload that already moved — and it is still in the Recycle Bin when it does, so a second attempt is worth making. The exception is that last one, where the file is already on disk and the next attempt meets a conflict instead. |
+| `RestoreFailed` | Only reachable while restoring. An entry's payload would not move, its record would not go, or its record could not be read to say where it belonged — in which case `Path` is the entry's own record inside the bin, the only path it carries without reading that record. A merge reports a refusal of a file of its tree under **that file's own path** rather than the directory's, under any of the three `Merge*` values and whichever way the merge was settling that file. **A file that refused both — the move, and then the put-back that would have taken it out of the payload — accounts for two records under the same path, and the directory accounts for a third under its own**, each a separate refusal with its own code; group by path rather than counting if you want one failure per file. `RenameDirectory` sets the tree down whole under a free name, and `Skip` and `Error` leave the entry in the bin; the `Merge*` values fail on the collision itself when the destination holds a **file** — see [`RestoreDirectoryConflict`](#restoredirectoryconflict). Whatever the policy, the entry can also reach this stage for reasons of its own — an unreadable record, a payload that will not move, a record left behind a payload that already moved — and it is still in the Recycle Bin when it does, so a second attempt is worth making. The exception is that last one, where the file is already on disk and the next attempt meets a conflict instead. |
 | `RestoreConflictRefused` | Only reachable while restoring, and only under `FileConflict` or `DirectoryConflict` set to `Error`. The path was already occupied, nothing on disk was touched, and the entry stays in the bin. Every other policy that answers an occupied path settles it and reports what it did in `Conflicts`, and nothing else does — `Skip` under either policy, the two renames `Rename` and `RenameDirectory`, and the three `Merge*` values, whose [reporting granularity differs per policy](#recyclebinrestoreresult). Where it holds a **file** the merge values have no tree to merge into and fail at [`RestoreFailed`](#recyclefailurestage) instead, where `RenameDirectory` takes a free name. So this stage is what opting into `Error` gets instead. `Attempts` and `HResult` are both `0`: the refusal is settled before any move. **None of those policies puts an entry in `Failures` *because of* the conflict — that is the whole difference `Error` makes, and it does not follow that such a restore reads `Succeeded`: what it does about everything else can still fail one, a record that could not be read, a payload that moved and a record that would not go, a merge whose put-back or whose payload removal was refused. A merge is the plain case of it, having reported what it settled and then failing to deal with one file; its conflicts are unchanged by that failure and both lists carry it.** **Two kinds of policy reach no conflict at all: `FileConflict = Replace`, which takes the occupant's place — where the occupant is a file, so there is nothing left to report a conflict about, though a destination holding a *directory* has nothing to overwrite and that one fails at `RestoreFailed` instead — and a `Merge*` value whose destination holds a file, which fails rather than settling anything.** |
 
 `HResult` carries the file system's code where the file system refused, or `0` where nothing was
@@ -443,15 +441,14 @@ What to do with a path on a volume that cannot recycle it.
 | Value | Effect |
 | --- | --- |
 | `Throw` | Default. The path is refused, the file stays where it is, and nothing is attempted. Raises only when `ThrowOnError` is also on. |
-| `AllowIndeterminate` | The path is recycled even though the volume's answer was not `Enabled` — the answer was `Indeterminate` or `NoRecycleBinOnVolume`. The per-user directory under `$RECYCLE.BIN` is created and the file lands in it, so the volume gains a Recycle Bin it did not have. |
+| `AllowIndeterminate` | The path is recycled even though the volume's answer was not `Enabled` — the answer was `Indeterminate` or `NoRecycleBinOnVolume`. A Recycle Bin is created for that volume and the file lands in it, so the volume gains one it did not have. |
 | `DeletePermanently` | The file is removed for good by the library itself and listed in `PermanentlyDeletedPaths`, never in `RecycledPaths`. A file system that refuses reports `PermanentDeleteFailed` and leaves the file in place. |
 
 The values run from safest to most destructive, and `ThrowOnError` is still the global switch: with it
 off, a refusal arrives in `Failures` instead of an exception.
 
-Each batch is grouped by volume root and every distinct root is inspected once, so a batch of twenty
-thousand files on one volume pays for one check rather than twenty thousand. Nothing is remembered
-between calls: a volume mounted, or a policy applied, after one operation is seen by the next.
+Every distinct volume root in a batch is inspected once, so a batch of twenty thousand files on one
+volume does not ask twenty thousand times.
 
 ### `RecycleBinItem`
 
@@ -461,7 +458,7 @@ One entry in the Recycle Bin. Immutable.
 | --- | --- | --- |
 | `OriginalPath` | `string` | Full path the entry was deleted from. Read from the entry's record on first access — see [Lazy fields](#lazy-fields). |
 | `DeletedAt` | `DateTimeOffset` | When it was deleted, in the local offset. Read from the same record, on the same first access. |
-| `Size` | `long` | Size in bytes. `0` for a directory — see [Limitations](#limitations). |
+| `Size` | `long` | Size in bytes. `0` for a directory — its contents are not measured. |
 | `IsDirectory` | `bool` | Whether the entry is a directory. |
 
 There is no `Name`: it is the last component of `OriginalPath`.
@@ -472,13 +469,12 @@ there, which is what Explorer's own Restore does over the same records.
 
 #### Lazy fields
 
-`Size` and `IsDirectory` come from the bin directory itself, and the other two fields live in the
-entry's `$I` record. A listing of eighteen thousand entries is eighteen thousand record reads —
-about five seconds warm and thirty cold on a mechanical volume — so a listing reads **no records at
-all** and each entry reads its own on the first access to either `OriginalPath` or `DeletedAt`. The
-reading answers both, once, whichever was asked for first.
+`Size` and `IsDirectory` are answered by the listing. `OriginalPath` and `DeletedAt` each read the
+entry's own record, on the first access to either — one read answers both. So a listing of eighteen
+thousand entries costs no record reads at all, and a caller that touches every entry pays for the
+reads it actually asks for.
 
-That means accessing these fields is I/O, and it can fail:
+That means accessing these two fields is I/O, and it can fail:
 
 - An entry whose record was collected under it — an empty running against a caller holding a listing — raises
   `IOException`. The exception is cached, so a second access raises the same one rather than retrying.
@@ -486,31 +482,22 @@ That means accessing these fields is I/O, and it can fail:
   whose record cannot be read is then reported in `RecycleBinContents.Failures` and left out of that volume's
   group in `Items`, rather than being returned and raising later.
 
-#### Where each field comes from
-
-| Field | Source |
-| --- | --- |
-| `OriginalPath`, `DeletedAt` | The entry's own `$I` record, read on first access |
-| `Size`, `IsDirectory` | The `$R` payload's own directory entry, read during the listing |
-
 #### What a listing does not show
 
-An entry appears only when both halves of it are there: its `$R` payload and its `$I`
-record. An entry whose payload is gone has no file to report a size for, and an entry whose record is gone
-has no path to answer with — so neither is listed, and neither is a failure. Both are states a Recycle Bin is
-briefly in, and the next `EmptyAsync` collects what is left of them.
+An entry appears only when both halves of it are there. An entry whose payload is gone has no file to
+report a size for, and an entry whose record is gone has no path to answer with — so neither is
+listed, and neither is a failure. Both are states a Recycle Bin is briefly in, and the next
+`EmptyAsync` collects what is left of them.
 
-For the same reason the listing does not filter by original path when you name a volume: it walks
-`<volume>$RECYCLE.BIN\<SID>\` of exactly the volumes you asked for, so an entry it returns was deleted
-from one of them. Matching on `OriginalPath` instead would read every record the listing had just declined
-to read.
+The listing does not filter by original path when you name a volume: it covers exactly the volumes you
+asked for, so an entry it returns was deleted from one of them. Matching on `OriginalPath` instead
+would mean reading every record the listing had just declined to read.
 
 **Match this field against your own paths without regard to case.** `OriginalPath` is the path as it
 was recorded, and the drive letter is written in whichever case Windows likes: an entry deleted from a
 volume the caller reached for as `x:\` comes back as `X:\…`. The library does not rewrite it. Windows
 paths are case-insensitive, so a caller comparing this field with a path it holds compares it that
-way — which is what makes `--scratch 'x:\'` and `--scratch 'X:\'` behave identically, and an ordinal
-comparison of the same pair reports a correct listing as empty.
+way — and an ordinal comparison of the same pair reports a correct listing as empty.
 
 > One original path can appear more than once. Deleting the same file twice leaves two entries with two
 > deletion times, and both are listed.
@@ -536,9 +523,8 @@ What one volume's Recycle Bin holds.
 | `VolumeRoot` | `string` | Volume root the entries were read from, such as `"X:\\"`. |
 | `Items` | `IReadOnlyList<RecycleBinItem>` | The entries that volume's bin holds, in the order its directory gave them. Empty for a volume whose bin is empty. |
 
-The grouping is what keeps a caller able to tell which disk an entry came from, which matters because the
-volumes are read at the same time rather than one after another. The order is the order the volumes were asked
-about and does not depend on which volume's walk finished first.
+The grouping keeps a caller able to tell which volume an entry came from. The order is the order the
+volumes were asked about and does not depend on which volume's walk finished first.
 
 #### Loading every item's details
 
@@ -552,25 +538,16 @@ inside a loop that also has to do something else.
   `PreloadItemDetails`. A listing with nothing pending does one pass over its items and no
   file reads. An item whose record has already failed to read is not "already read": it is tried again, because
   the record may be back.
-- Volumes are read one after another, each on as many threads as its own hardware answers for: one per core
-  on a solid-state disk, two per core on a mechanical one, each capped at eight, and one for a share. The same
-  measure governs `PreloadItemDetails` and the empty, because it is the same answer to the same question about
-  the same disk. A mechanical volume is not held to one thread: that rule came from writing a bin, where every
-  record lands in one directory, and reading thirty thousand records is thirty thousand independent opens of
-  files nobody is writing to. Measured cold, which is what a first read does, it is the difference between
-  **50.7 s and 7.9 s** over 30,010 records on a mechanical volume, and **1.65 s and 0.49 s** warm.
-  `LoadItemDetails` is the one operation that still reads the volumes one at a time, and that is deliberate:
-  it has thirty thousand independent reads *per volume* and a degree of parallelism that has to answer to the
-  drive, so multiplying it across volumes would be answering a question no drive was asked. The listing itself
-  makes the opposite call — one directory walk per volume, whatever the volume is — and reads them together.
+- Volumes are read one after another rather than together, and each at whatever parallelism its own
+  disk answers for.
 - An item whose record cannot be read is **left cold**, and still raises `IOException` when a caller asks for
   its details. Nothing here throws for one, and `Failures` does not change — it describes what the listing could
   not do.
 - The items themselves are the same objects the listing returned, so `TotalSize` and any reference you already
   hold stay valid.
-- **It blocks the calling thread.** Every other entry point here hands its work to a pool thread; this one runs
-  the batch inline, because there is nothing to await. Do not call it on a UI thread — on a bin of eighteen
-  thousand records on a cold mechanical disk it is tens of seconds of frozen UI.
+- **It blocks the calling thread.** Every other entry point here is awaited; this one returns when it is
+  done. Do not call it on a UI thread — on a bin of eighteen thousand entries that is seconds of frozen
+  UI.
 
 Raising `OperationCanceledException` is the one thing it does throw, when the token is cancelled part way; items
 read before that point stay read.
@@ -646,9 +623,8 @@ one carries on with the entries after it.
 | `OccupiedByDirectory` | `bool` | Whether what stood in the way is a directory rather than a file. Always about the collided path, never about the free name the item was set down under. |
 | `Action` | `RecycleRestoreConflictAction` | What was done about it. |
 
-One enumerator rather than one per policy, because a caller reads this to answer a single question — what
-was in the way, and what was done about the item that wanted it. The policies differ on the answer, not
-on the question.
+One action rather than one per policy, because a caller reads this to answer a single question — what
+was in the way, and what was done about the item that wanted it.
 
 #### `RecycleRestoreConflictAction`
 
@@ -736,10 +712,11 @@ The outcome of a status check. Immutable.
 | `Indeterminate` | The volume exists but the answer could not be established. Deliberately not `Enabled`. |
 
 `Enabled` is the only value that asserts a fact, and this library does not assert what it could not
-read. The per-volume setting is keyed on the volume's GUID, and Windows writes that key only for
-volumes it has configured a bin for, so an absent key means "this volume was never configured", not
-"this volume recycles". Only a volume whose own key reads `NukeOnDelete=0` is answered `Enabled` from
-configuration; anything else answers `Indeterminate`.
+read. A volume Windows has never configured a bin for is answered `Indeterminate`, not `Enabled` —
+there is no setting for it either way, and saying "enabled" would be a guess.
+
+Nothing is cached between calls: a volume mounted, or a policy applied, after one status check is
+seen by the next.
 
 ---
 
@@ -754,9 +731,8 @@ against. They are in the order they appear in that file.
 ```csharp
 using RecycleBinToolkit;
 
-// The library writes the Recycle Bin's own files under <volume>$RECYCLE.BIN\<SID>\ and reads them back
-// with ordinary file calls. It needs Windows 10 version 1607 (build 14393) or later, because that is the
-// first build that reads the index records it writes; below that the call raises
+// RecycleAsync needs Windows 10 version 1607 (build 14393) or later, because that is the first build
+// that reads the index records it writes; below that the call raises
 // PlatformNotSupportedException, and ThrowOnError does not suppress that.
 await RecycleBin.RecycleAsync(@"W:\Users\me\Downloads\archive.zip");
 
@@ -796,7 +772,7 @@ Console.WriteLine($"{contents.TotalSize} byte(s) in total");
 ### List the Recycle Bin and read every record up front
 
 ```csharp
-// A listing reads no $I records by default, which is what makes one walk of the bin directory
+// A listing reads no entry records by default, which is what makes one walk of the bin directory
 // enough. A caller that is going to read every entry's path anyway can have the records read during
 // the listing instead of one at a time from its own loop — and an entry whose record cannot be read
 // is reported in Failures rather than raising later.
@@ -1035,260 +1011,14 @@ foreach (var path in result.RecycledPaths)
 
 ---
 
-## Throughput, and why reading and writing are not alike
-
-Recycling a batch of 3,000 files of 64 KiB runs at about 616 files/s on a mechanical volume and 625
-on a solid-state one — the cost is filesystem round trips, not bandwidth. Four-kilobyte files recycled
-at 583 and 662, within the run-to-run spread, so the file size is not part of the cost either. Every
-figure is the median of three runs.
-
-Reading scales, on either kind of disk: it changes nothing about the directory it reads. Reading 30,010
-records cold on a mechanical volume took 73.1 s on one thread and 7.7 s on eight; the same sweep on a
-solid-state volume over 36,009 records took 92.0 s and 16.1 s. Warm, the same two volumes took 1550 ms and
-351 ms against 1892 ms and 457 ms. Writing does not scale, and the reason is a directory — a Recycle Bin
-has exactly one per volume, and every record written and every payload moved lands in it. The same
-recycling measured 542 files/s on one thread and 189 on eight, on a solid-state volume, so paths move one
-at a time on purpose. Reading a bin in parallel is where the concurrency is; putting files into one is
-not. What makes a recycle fast is the number of round trips per file — three: one `FileInfo` query in
-validation, one create-and-write for the record, one move — not the number of threads, which is why that
-is what the code optimises.
-
-A warm read costs about 47 microseconds per record, and that figure is the same on a solid-state volume
-and on a mechanical one — the cache has the bytes, so what is being measured is what the filesystem
-charges per file rather than bandwidth. Turning the bytes into a path and a timestamp costs about a
-tenth of a microsecond, two parts in a thousand of it. That is why reading is one loop rather than a
-pipeline: there is nothing to overlap.
-
-An empty of several volumes runs the disks together rather than one after another, because two volumes on
-two devices share neither a head nor a directory and the wait one device puts in front of the other is
-removed. **That gain is reasoned, not measured** — there is no before-and-after figure for it here, and
-none of the tables above is a substitute. The sweep inside one volume is unchanged, and stays in sequence
-over one directory for the same reason writing a bin does.
-
-**The version requirement is a refusal, not a warning.** Windows 10 build 14393 is the first build
-that reads a version 2 index record. An older build does not reject one — it reads it as something it
-cannot use, so the item appears in the bin and cannot be restored from it. `RecycleAsync` therefore
-throws `RecycleBinNativeBackendUnavailableException` (a `PlatformNotSupportedException`) before it
-touches anything, and `ThrowOnError` does not suppress it: there is no path to report and no
-`RecycleFailureStage` that describes it, because nothing failed. `GetItemsAsync` and `EmptyAsync` are
-not gated — reading version 1 records is supported as well as writing version 2, and emptying parses
-nothing — so a machine too old to *write* can still *read* and *clear* at full speed.
-
----
-
-## How it works
-
-```
-RecycleBin            the entry point: moves items in, resolves volumes, reports
-   ├─ RecycleBatch           validates, de-duplicates, refuses what cannot be recycled, recycles on the pool
-   ├─ RecycleBinVolumeSet   which volumes an operation covers
-   ├─ RecycleBinVolumeState  volume table + registry facts
-   └─ RecycleBinVolumePolicy the decision, separated so it can be checked exhaustively
-
-the engine, over whatever the entry point resolved
-   ├─ NativeBinLayout         $RECYCLE.BIN\<SID>\ and the $I/$R name pair
-   ├─ NativeIndexFile         version 1 and 2 records, read and written
-   ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
-   ├─ NativeRecycleRunner     record first, then the move; retries are per path
-   ├─ NativeBinLister         pairs from the walk, every volume at once; records only under PreloadItemDetails
-   └─ NativeBinEmptier        payload first, then the record, counted from the walk; one group of volumes per disk
-
-the restore engine, over the entries a listing handed back
-   ├─ RestoreRunner           payload first, then the record; one answer per entry, in the caller's order; one mover pool per volume; a refused move asked again
-   └─ RestorePathPlanner      what is in the way of a path, and what to do about the item that wanted it
-
-RecycleBinContents.LoadItemDetails  warms a listing after the fact
-  └─ ItemDetailLoader        one volume at a time, at that volume's own degree of parallelism
-```
-
-**Record first, then the move.** A crash between the two leaves the caller's file exactly where it
-was and an index with no payload — litter the next empty collects. The other order leaves data that
-is gone and recorded nowhere, which is the one outcome a Recycle Bin exists to prevent.
-
-**Retries are per path, not per batch.** A move that fails is a property of one path, and retrying
-the others would repeat work that already succeeded. Only the items that failed are retried.
-
-**One thread to write, many to read.** Every record written and every payload moved lands in one
-directory per volume, and a directory is the one thing a file system cannot take concurrent writers
-on — so paths move one at a time on purpose. Reading changes nothing, so records are read in
-parallel at each volume's own degree of parallelism: one thread per core on a solid-state volume, two
-on a mechanical one, because each of those requests is a seek and a second one in flight covers the
-mechanism's dead time. That is thirty thousand independent reads, not thirty thousand writers.
-
-**A restore splits by the disk behind each volume, and stops one step short of that rule.** Volumes on
-different physical disks are restored together, because nothing about one device holds up another. The
-volumes of one disk run one after another, because they are two directories sharing one head — and that
-is a loop rather than a number, so no figure inside it can widen the gap. Within one volume, entries are
-moved on that volume's own movers, and each starts moving as its record is read rather than after the
-last one.
-
-**An empty splits the same way, and for the same reason.** Volumes on different physical disks are emptied
-together; the volumes of one disk run one after another. What it reports does not follow the threads:
-`VolumesEmptied` and `Failures` come back in the order the roots were passed, because each volume writes
-a slot of its own. Inside one volume the sweep is unchanged — payload first, then the record, in sequence
-over one directory.
-
-**The listing splits on the number of volumes instead, and that is a different question.** Reading changes
-nothing about the directory it reads, so two partitions of one disk are walked at once without contending
-for anything. Moving and deleting are the work that contends for a head, which is why the restore and the
-empty ask which disk is behind each volume and the listing does not.
-
-**The per-volume bin is the unit.** Each volume's `$RECYCLE.BIN\<SID>\` is walked directly, so naming
-a volume selects which directories to read and to empty — never a filter over an enumeration that
-already happened.
-
-**`GetStatusAsync` answers configuration, but not the future.** Where the registry records a volume's
-own setting, that setting is the whole answer. A volume nothing was recorded for answers
-`Indeterminate`: unproven, never enabled. That is what makes it trustworthy enough for
-`RecycleAsync` to refuse a path rather than destroy it. It still does not predict the next delete:
-a volume mounted after the call, or a policy applied after it, changes the answer without the call
-having been wrong. Nothing is cached, so each call asks the question again.
-
----
-
-## Limitations
-
-Stated plainly, because these are properties of Windows rather than choices.
-
-- **A path of any length recycles.** The destination inside the bin is short whatever the source was,
-  so there is no length limit, no staging, and no policy for long paths.
-- **Cancellation stops the batch, not the wait.** The token is checked between paths for a recycle and
-  between entries for a restore and an empty, so a cancelled batch stops part way and raises
-  `OperationCanceledException` carrying no result: what it got through is found by reading the bin. Which
-  entry of a batch it stops at is up to the machine and is not witnessed by a test — cancelling part way
-  needs a hook inside the engine, not just a token, so every case here cancels before the call and pins the
-  raise rather than the stopping point.
-- **Temporary locks are retried, not eliminated.** An indexer, preview handler or antivirus holding a
-  file open is transient; the retry policy absorbs it. A lock held for the whole run fails the item,
-  and only that item.
-- **This library is Windows-only.** There is no cross-platform fallback.
-- **A recycled directory reports `Size` as zero.** Its contents cannot be enumerated without
-  elevation, so there is no figure to give. `IsDirectory` is the honest signal that a size is not
-  available.
-- **A listing covers exactly the volumes named.** Each volume's bin is walked directly, so a caller
-  who wants only `W:\` pays only for `W:\` — and it cannot see a volume that is not mounted.
-- **`GetStatusAsync` answers configuration, but not the future.** Where the registry records a
-  volume's own setting, that setting is the whole answer. A volume nothing was recorded for answers
-  `Indeterminate`, never `Enabled`: the library does not assert what it could not read. It still does
-  not predict the next delete: a volume mounted after the call, or a policy applied after it, changes
-  the answer without the call having been wrong. Nothing is cached, so each call asks the question
-  again.
-- **A per-volume key that outlives its bin still reads `Enabled`.** Windows records a volume's Recycle
-  Bin setting when it configures one, and nothing removes that record when the bin later goes. A key
-  left behind on a volume with no `$RECYCLE.BIN` is therefore treated as evidence that the volume
-  recycles, because configuration is the evidence throughout.
-- **The per-volume Recycle Bin capacity is not treated as a switch.** A capacity of `0` is not
-  reported as disabled, because the Recycle Bin dialog offers no such setting and no measurement of its
-  behaviour is recorded here.
-- **Emptying a large Recycle Bin is slow, and that is file deletion.** Measured: emptying roughly
-  13,600 accumulated entries took 216 s. There is no progress callback to report from and no way to
-  make it incremental; a caller that needs responsiveness should empty one volume at a time. Volumes on
-  different physical disks are emptied together, which removes the wait one disk put in front of another,
-  but that is per disk and not per volume — the partitions of one disk still take their turn.
-
----
-
-## Testing
-
-```bash
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --all
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --all --exclude EmptySuite
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --filter NativeBinSuite
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --load
-```
-
-`--scratch <root>` is required and names the volume to test on. It has to be a volume root — `X:\` or
-`\\server\share\`, or `//server/share` where the command line cannot carry two leading backslashes. A
-directory inside a volume is refused, and so is a bare drive letter, because both resolve against something
-other than the volume they name. Without the flag nothing runs and the exit code is 2: the suite writes
-files and removes directories, so the volume is yours to pick and not the runner's to guess.
-
-Inside the root the run creates `X:\{guid}` and works in `scratch` and `long` beneath it, then removes the
-whole tree when it finishes. Nothing is derived from the repository, so no test writes inside the working
-copy, and no test acts on a path that did not come from `--scratch` — the volume comes from the flag and
-from there down. A drive letter or a share written into a case is data for a path predicate: it decides
-what a string means and touches nothing, so `NormalizeVolumeRoot(@"W:\")` and a share-root spelling are
-both ordinary assertions rather than something a case acts on.
-
-`--filter` matches any part of a case name, and every case is named `<Suite>.<Case>`. It exits
-non-zero when a case fails.
-
-`--exclude` (or `-x`) matches any part of a case name the same way and takes those cases back out of
-the run, which is how a run says it must not empty the Recycle Bin: `--all --exclude EmptySuite`. It
-narrows a run that `--all`, `--filter` or `--load` named, and on its own it is refused with exit code 2
-rather than quietly rewriting the default one. A flag where a substring belongs is refused here as it
-is under `--filter`, so `--exclude --load` is a mistake rather than a substring matching nothing. The
-run's opening lines name how many cases the substring left out, so a count lower than the one `--all`
-promises can be read as an exclusion rather than as something that skipped.
-
-`--scratch` accepts any volume. Some cases need one Windows records as recycling, which it writes under
-`HKCU\...\Explorer\BitBucket\Volume\{GUID}\NukeOnDelete=0` when "Don't move files to the Recycle Bin" is
-clear for that drive; a volume with no such key is answered `Indeterminate` — refused by the default
-`NoRecycleBinAction.Throw`. The run asks the library once which kind of volume it was given, and each
-case that needs the other kind skips rather than fails.
-
-The suite is a console application with no external packages: 216 cases covering batch and single-path
-recycling, per-item failure reporting, selective retry against a self-inflicted transient lock, long
-paths with no limit, concurrent callers, directories, 10 MB files, volumes with no Recycle Bin, and a
-ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing, emptying and status checking are
-covered by their own suites. The default run writes only inside the directory it claimed under
-`--scratch`. On a volume with no Recycle Bin the cases that recycle there skip rather than fail, and
-the cases that are about such a volume run instead of skipping.
-
-**Of the 216 cases, `--all` runs 212.** Four are load cases that run only on request: the ten-cycle stress
-run, and the three cases that each move the whole 94-file fixture set in one call.
-`--all` and `--filter` never run them — `--load` runs those four cases and nothing else. Nothing is
-covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
-and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
-The remainder is the volume's decision rather than a flag's: **202 pass and 10 skip** where there is a
-bin, with nothing failing, measured by one `--all` on such a volume and the same run on a second one. A
-volume **alone on its physical disk** is **197 pass and 15 skip**, also nothing failing — five cases ask
-the machine for a second volume on the same disk or for one on another, and a run on such a volume has
-neither, so each says it did not run. A volume with no
-Recycle Bin and a share are both unmeasured
-here — measure before quoting either. `--all` prints its own counts, so a figure that disagrees with them
-is the figure being wrong.
-
-**A share has to survive your command line.** `--scratch "\\server\share\"` is right in PowerShell and in
-`cmd.exe`, which treat backslashes literally. It is wrong in anything that treats `\\` as an escape —
-bash, or any tool that unescapes the command string before the shell ever sees it — because what arrives
-is `\server\share\`, whose root is the *current drive*; a directory created from it lands wherever the
-process happens to be. The runner refuses a root that is not a volume root rather than acting on whatever
-drive is current, so the mistake goes red and costs nothing — but it goes red. Write the share as
-`//server/share/` there. The forward-slash spelling names the same volume, no shell rewrites it, and the
-runner reads it as the backslash root Windows writes.
-
-**The Recycle Bin suites empty it.** `EmptySuite` removes what the earlier suites recycled, and it is
-the only way to assert that an entry really left. Everything else only ever adds to it.
-
-**One test keeps the deltas honest.** Every suite reads the Recycle Bin through `RecycleBinProbe`, which
-walks the bin directory for counts and sizes. The walk shares the record reader with the library's own
-listing, so what it proves is that the walk and the reader agree with the filesystem about counts and
-sizes — not an independent view of the bin. Deltas are what the suites assert: the same walk before and
-after one known delete.
-
-The harness must cope with the Windows indexer: it creates and recycles thousands of files in one
-directory, so handles appear and disappear underneath it. Cleanup retries for that reason.
-
-Two things about the harness are worth knowing before reading its timings. Reading a count walks the
-bin directory rather than reading records, because answering "did the count go up by one" does not need
-the entries. What the suites assert about the listing itself lives in `ListerSuite`, which pays for the
-reads deliberately.
-
-`EmptySuite` empties the volume it runs against. It is the one suite that changes machine state rather
-than only reading it, and on a Recycle Bin holding tens of thousands of entries it will take a long
-time, because emptying that many files is file deletion. A run that must not do that says so on the
-command line: `--all --exclude EmptySuite`.
-
 ## Contributing
 
 Every code block in this file also exists as a compiling method in
 `tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs`, and the two are edited together. A new example
 goes into both in the same change; the rule is spelled out in `AGENTS.md` at the repository root.
 
-The project has a specification at
-`docs/superpowers/specs/2026-10-06-recycle-bin-reliability-design.md` that records the measurements
-the design rests on. Behaviour claimed here should be traceable to a measurement there, and new
+This file answers what the library is, why you would reach for it, and what it will do. How it works
+and why it was built that way is `AGENTS.md`, and what the tests cover is in the test project. New
 behaviour should arrive with a test that was seen to fail first.
 
 ## License
