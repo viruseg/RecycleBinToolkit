@@ -138,7 +138,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// none to answer them from.
     /// </returns>
     /// <remarks>
-    /// This is what <see cref="RecycleBinOptions.PreloadItemDetails"/> uses, and it exists so that the two
+    /// This is what <see cref="GetItemsOptions.PreloadItemDetails"/> uses, and it exists so that the two
     /// ways an item gets its details read a record through one path and answer it the same way.
     /// </remarks>
     internal static RecycleBinItem? Warmed(

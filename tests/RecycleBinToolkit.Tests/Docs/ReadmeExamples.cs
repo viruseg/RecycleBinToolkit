@@ -47,7 +47,7 @@ internal static class ReadmeExamples
     internal static async Task ServiceNeverThrows()
     {
         IReadOnlyList<string?> paths = [];
-        var options = new RecycleBinOptions { ThrowOnError = false };
+        var options = new RecycleOptions { ThrowOnError = false };
 
         // An empty list is a valid call: it succeeds and does nothing. Entries may also be null or
         // missing, each reported as a failure without aborting the batch.
@@ -62,23 +62,46 @@ internal static class ReadmeExamples
         }
     }
 
-    internal static void FullOptions()
+    internal static void RecycleOptionsExample()
     {
-        // Every property has a production default, so RecycleBinOptions.Default — which is what a null
+        // Every property has a production default, so RecycleOptions.Default — which is what a null
         // options argument means — is always a valid argument.
-        var options = new RecycleBinOptions
+        var options = new RecycleOptions
         {
             MaxAttempts = 10,
             InitialRetryDelay = TimeSpan.FromMilliseconds(100),
             OverallTimeout = TimeSpan.FromSeconds(5),
             ThrowOnError = false,
-            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
-            FileConflict = RestoreFileConflict.Rename,
-            DirectoryConflict = RestoreDirectoryConflict.RenameDirectory
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
         };
 
         // ThrowOnError is the global switch: with it off a refusal arrives in Failures instead of raising.
         Console.WriteLine(options.OverallTimeout);
+    }
+
+    internal static void RestoreOptionsExample()
+    {
+        // Every property has a production default, so RestoreOptions.Default — which is what a null
+        // options argument means — is always a valid argument.
+        var options = new RestoreOptions
+        {
+            MaxAttempts = 10,
+            InitialRetryDelay = TimeSpan.FromMilliseconds(100),
+            OverallTimeout = TimeSpan.FromSeconds(5),
+            FileConflict = RestoreFileConflict.Rename,
+            DirectoryConflict = RestoreDirectoryConflict.RenameDirectory
+        };
+
+        Console.WriteLine(options.OverallTimeout);
+    }
+
+    internal static void GetItemsOptionsExample()
+    {
+        // Every property has a production default, so GetItemsOptions.Default — which is what a null
+        // options argument means — is always a valid argument.
+        var options = new GetItemsOptions { PreloadItemDetails = true };
+
+        Console.WriteLine(options.PreloadItemDetails);
     }
 
     internal static void ResultMembers()
@@ -146,7 +169,7 @@ internal static class ReadmeExamples
         // enough. A caller that is going to read every entry's path anyway can have the records read during
         // the listing instead of one at a time from its own loop — and an entry whose record cannot be read
         // is reported in Failures rather than raising later.
-        var eager = new RecycleBinOptions { PreloadItemDetails = true };
+        var eager = new GetItemsOptions { PreloadItemDetails = true };
 
         var contents = await RecycleBin.GetItemsAsync(@"W:\", eager);
 
@@ -214,7 +237,7 @@ internal static class ReadmeExamples
         // A path somebody took again while the entry sat in the bin is the ordinary collision. Rename sets
         // the entry down beside it under the first free name; Skip would leave it in the bin, and Error
         // would report it as a failure. A directory is its own question — see DirectoryConflict.
-        var options = new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename };
+        var options = new RestoreOptions { FileConflict = RestoreFileConflict.Rename };
 
         var result = await RecycleBin.RestoreAsync([entry], options);
 
@@ -305,7 +328,7 @@ internal static class ReadmeExamples
     internal static async Task OptOutOfARecycleBinRefusal()
     {
         IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];
-        var options = new RecycleBinOptions
+        var options = new RecycleOptions
         {
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
         };
@@ -332,7 +355,7 @@ internal static class ReadmeExamples
     internal static async Task RefuseABatchOnAVolumeWithoutARecycleBin()
     {
         IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];
-        var options = new RecycleBinOptions { ThrowOnError = false };
+        var options = new RecycleOptions { ThrowOnError = false };
 
         // The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the path is refused
         // before anything is attempted. With ThrowOnError off the refusal comes back as data instead of

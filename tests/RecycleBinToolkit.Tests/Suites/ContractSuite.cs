@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using RecycleBinToolkit.Tests.Host;
@@ -11,6 +12,7 @@ internal static class ContractSuite
     internal static IReadOnlyList<TestCase> Cases =>
     [
         new TestCase("ContractSuite." + nameof(OptionDefaultsMatchSpec), OptionDefaultsMatchSpec),
+        new TestCase("ContractSuite." + nameof(OptionsTypesExposeOnlyWhatTheirOperationReads), OptionsTypesExposeOnlyWhatTheirOperationReads),
         new TestCase("ContractSuite." + nameof(OptionsAreClampedByNormalize), OptionsAreClampedByNormalize),
         new TestCase("ContractSuite." + nameof(ResultSucceedsWhenNoFailures), ResultSucceedsWhenNoFailures),
         new TestCase("ContractSuite." + nameof(ResultFailsWhenAnyFailure), ResultFailsWhenAnyFailure),
@@ -464,7 +466,7 @@ internal static class ContractSuite
 
         var file = workspace.CreateRandomFile(4096);
 
-        var absurd = new RecycleBinOptions
+        var absurd = new RecycleOptions
         {
             // The budget that overflows when added to a non-zero elapsed time, and an attempt count large
             // enough that the doubled delay would exceed what a wait can express if the operation ever
@@ -493,7 +495,7 @@ internal static class ContractSuite
 
     private static Task OptionDefaultsMatchSpec(TestContext context)
     {
-        var options = RecycleBinOptions.Default;
+        var options = RecycleOptions.Default;
 
         Check.Equal(6, options.MaxAttempts, "MaxAttempts default");
         Check.Equal(TimeSpan.FromMilliseconds(50), options.InitialRetryDelay, "InitialRetryDelay default");
@@ -511,12 +513,71 @@ internal static class ContractSuite
             options.NoRecycleBinAction,
             "NoRecycleBinAction defaults to Throw, which refuses instead of destroying");
 
+        // The other two types carry their own Default, so their defaults are pins of their own rather than
+        // something the recycle type happens to also say.
+        Check.False(GetItemsOptions.Default.PreloadItemDetails, "PreloadItemDetails default");
+        Check.Equal(
+            RestoreDirectoryConflict.MergeSkip,
+            RestoreOptions.Default.DirectoryConflict,
+            "DirectoryConflict default on the restore type");
+        Check.Equal(RestoreFileConflict.Skip, RestoreOptions.Default.FileConflict, "FileConflict default on the restore type");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A knob an operation does not read is worse than no knob: a caller sets it, watches nothing happen and
+    /// has a debugging session instead of an answer. The type each value is passed as is what says which
+    /// knobs that operation honours, so the surface is pinned by reflection — which, unlike the friend
+    /// assembly's compile-time access, reports an internal property as absent.
+    /// </summary>
+    /// <remarks>
+    /// The second assertion compares names rather than counts, so a ninth knob added to the base and
+    /// forgotten on the forwarders is a failure rather than a pass with a longer list, and so is a rename
+    /// that leaves the count at eight.
+    /// </remarks>
+    private static Task OptionsTypesExposeOnlyWhatTheirOperationReads(TestContext context)
+    {
+        var expected = new Dictionary<Type, string>
+        {
+            [typeof(RecycleOptions)] = "InitialRetryDelay,MaxAttempts,NoRecycleBinAction,OverallTimeout,ThrowOnError",
+            [typeof(RestoreOptions)] = "DirectoryConflict,FileConflict,InitialRetryDelay,MaxAttempts,OverallTimeout",
+            [typeof(GetItemsOptions)] = "PreloadItemDetails",
+        };
+
+        var exposed = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var (type, names) in expected)
+        {
+            var actual = string.Join(
+                ",",
+                type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Select(property => property.Name)
+                    .OrderBy(name => name, StringComparer.Ordinal));
+
+            Check.Equal(names, actual, $"{type.Name} exposes only what its operation reads");
+            foreach (var name in names.Split(','))
+            {
+                exposed.Add(name);
+            }
+        }
+
+        var stored = typeof(RecycleBinOptions)
+            .GetProperties(BindingFlags.NonPublic | BindingFlags.Instance)
+            .Select(property => property.Name)
+            .OrderBy(name => name, StringComparer.Ordinal);
+
+        Check.Equal(
+            string.Join(",", stored),
+            string.Join(",", exposed.OrderBy(name => name, StringComparer.Ordinal)),
+            "every property the engine reads is exposed by an options type, and nothing else is stored");
+
         return Task.CompletedTask;
     }
 
     private static Task OptionsAreClampedByNormalize(TestContext context)
     {
-        var clamped = new RecycleBinOptions
+        var clamped = new RecycleOptions
         {
             MaxAttempts = 0,
             InitialRetryDelay = TimeSpan.FromMilliseconds(-5),
@@ -527,7 +588,7 @@ internal static class ContractSuite
         Check.Equal(TimeSpan.Zero, clamped.InitialRetryDelay, "negative InitialRetryDelay becomes zero");
         Check.Equal(TimeSpan.Zero, clamped.OverallTimeout, "negative OverallTimeout becomes zero");
 
-        var kept = new RecycleBinOptions
+        var kept = new RecycleOptions
         {
             MaxAttempts = 3,
             InitialRetryDelay = TimeSpan.FromMilliseconds(10),

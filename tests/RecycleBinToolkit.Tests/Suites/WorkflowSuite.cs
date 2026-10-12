@@ -80,7 +80,7 @@ internal static class WorkflowSuite
 
         var (before, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the baseline count");
 
-        var result = await RecycleBin.RecycleAsync(paths, RecycleBinOptions.Default, cancellationToken: context.CancellationToken);
+        var result = await RecycleBin.RecycleAsync(paths, RecycleOptions.Default, cancellationToken: context.CancellationToken);
         var (after, _) = RecycleBinProbe.MeasureOrFail(ScratchWorkspace.VolumeRoot, "the count after the workflow");
         var gained = after - before;
 

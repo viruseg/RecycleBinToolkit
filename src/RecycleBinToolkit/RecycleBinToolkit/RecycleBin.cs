@@ -16,30 +16,30 @@ public static class RecycleBin
     /// <summary>Recycles a single file or directory.</summary>
     /// <param name="filePath">Path of the file or directory to recycle.</param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>.
-    /// <see cref="RecycleBinOptions.ThrowOnError"/> decides whether a failure raises or comes back as
+    /// Settings. <see langword="null"/> means <see cref="RecycleOptions.Default"/>.
+    /// <see cref="RecycleOptions.ThrowOnError"/> decides whether a failure raises or comes back as
     /// <see langword="false"/>.
     /// </param>
     /// <param name="cancellationToken">Cancels the validation scan and the work between paths.</param>
     /// <returns><see langword="true"/> when the path was removed from disk.</returns>
     /// <exception cref="ArgumentException">
     /// <paramref name="filePath"/> is null, empty or whitespace and
-    /// <see cref="RecycleBinOptions.ThrowOnError"/> is on.
+    /// <see cref="RecycleOptions.ThrowOnError"/> is on.
     /// </exception>
     /// <exception cref="FileNotFoundException">
-    /// <paramref name="filePath"/> does not exist and <see cref="RecycleBinOptions.ThrowOnError"/> is
+    /// <paramref name="filePath"/> does not exist and <see cref="RecycleOptions.ThrowOnError"/> is
     /// on.
     /// </exception>
     /// <exception cref="IOException">
     /// The move failed, or the volume holding the path cannot recycle it and
-    /// <see cref="RecycleBinOptions.NoRecycleBinAction"/> is <see cref="NoRecycleBinAction.Throw"/>, or
+    /// <see cref="RecycleOptions.NoRecycleBinAction"/> is <see cref="NoRecycleBinAction.Throw"/>, or
     /// that action is <see cref="NoRecycleBinAction.DeletePermanently"/> and the file system refused
-    /// the removal — and <see cref="RecycleBinOptions.ThrowOnError"/> is on. The file is left in place
+    /// the removal — and <see cref="RecycleOptions.ThrowOnError"/> is on. The file is left in place
     /// in every one of those cases.
     /// </exception>
     /// <exception cref="NotSupportedException">
     /// The path names its volume by GUID, which this library cannot measure, and
-    /// <see cref="RecycleBinOptions.ThrowOnError"/> is on. Nothing was attempted; address the same
+    /// <see cref="RecycleOptions.ThrowOnError"/> is on. Nothing was attempted; address the same
     /// location by drive letter or mount point instead.
     /// </exception>
     /// <exception cref="OperationCanceledException">
@@ -50,7 +50,7 @@ public static class RecycleBin
         RecycleBinOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var effective = options ?? RecycleBinOptions.Default;
+        var effective = options ?? RecycleOptions.Default;
 
         if (effective.ThrowOnError)
         {
@@ -82,7 +82,7 @@ public static class RecycleBin
     /// recycled once.
     /// </param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>.
+    /// Settings. <see langword="null"/> means <see cref="RecycleOptions.Default"/>.
     /// </param>
     /// <param name="cancellationToken">
     /// Cancels the validation scan and the work between paths. A cancelled batch raises and returns no
@@ -111,7 +111,7 @@ public static class RecycleBin
             return await Task.FromCanceled<RecycleBinResult>(cancellationToken).ConfigureAwait(false);
         }
 
-        var effective = options ?? RecycleBinOptions.Default;
+        var effective = options ?? RecycleOptions.Default;
 
         // Before argument validation, before any filesystem question, and before the hop to the pool: the
         // machine either can be written to or cannot, and that does not depend on the paths, so a
@@ -166,7 +166,7 @@ public static class RecycleBin
     /// is empty.
     /// </param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>.
+    /// Settings. <see langword="null"/> means <see cref="GetItemsOptions.Default"/>.
     /// </param>
     /// <param name="cancellationToken">Cancels the wait.</param>
     /// <returns>
@@ -182,7 +182,7 @@ public static class RecycleBin
         RecycleBinOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var effective = options ?? RecycleBinOptions.Default;
+        var effective = options ?? GetItemsOptions.Default;
         var stopwatch = Stopwatch.StartNew();
 
         // A path that is not a volume root names no volume of its own. Widening it to the one containing it
@@ -212,7 +212,7 @@ public static class RecycleBin
     /// <see cref="RecycleBinEmptyResult.Failures"/> rather than emptied as that whole volume.
     /// </param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>.
+    /// Settings. <see langword="null"/> means the library's defaults.
     /// </param>
     /// <param name="cancellationToken">
     /// Cancels the sweep between entries. A cancellation part way through raises
@@ -268,8 +268,8 @@ public static class RecycleBin
     /// that cannot say where a payload came from has nothing to restore it to.
     /// </param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>.
-    /// <see cref="RecycleBinOptions.DirectoryConflict"/> and <see cref="RecycleBinOptions.FileConflict"/>
+    /// Settings. <see langword="null"/> means <see cref="RestoreOptions.Default"/>.
+    /// <see cref="RestoreOptions.DirectoryConflict"/> and <see cref="RestoreOptions.FileConflict"/>
     /// decide what a restore does about a path that is already occupied.
     /// </param>
     /// <param name="cancellationToken">
@@ -285,7 +285,7 @@ public static class RecycleBin
     /// asked with its entry still in the bin.
     /// <para>
     /// A move the file system refuses is asked again rather than given up on, up to
-    /// <see cref="RecycleBinOptions.MaxAttempts"/> times, under one <see cref="RecycleBinOptions.OverallTimeout"/>
+    /// <see cref="RestoreOptions.MaxAttempts"/> times, under one <see cref="RestoreOptions.OverallTimeout"/>
     /// budget for the whole call. What it is, and a destination somebody lets go of half way through, is
     /// restored; what stays held is reported carrying the attempts it was actually given in
     /// <see cref="RecycleFailure.Attempts"/>.
@@ -314,7 +314,7 @@ public static class RecycleBin
             return await Task.FromCanceled<RecycleBinRestoreResult>(cancellationToken).ConfigureAwait(false);
         }
 
-        var effective = options ?? RecycleBinOptions.Default;
+        var effective = options ?? RestoreOptions.Default;
 
         // Started before the work is queued so that Elapsed covers the wait for a pool thread as well as
         // the restore itself.
@@ -338,8 +338,8 @@ public static class RecycleBin
     /// not be answered.
     /// </param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="RecycleBinOptions.Default"/>.
-    /// <see cref="RecycleBinOptions.DirectoryConflict"/> and <see cref="RecycleBinOptions.FileConflict"/>
+    /// Settings. <see langword="null"/> means <see cref="RestoreOptions.Default"/>.
+    /// <see cref="RestoreOptions.DirectoryConflict"/> and <see cref="RestoreOptions.FileConflict"/>
     /// decide what a restore does about a path that is already occupied.
     /// </param>
     /// <param name="cancellationToken">

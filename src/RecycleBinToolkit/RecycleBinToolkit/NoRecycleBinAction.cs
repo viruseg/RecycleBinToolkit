@@ -5,7 +5,7 @@ public enum NoRecycleBinAction
 {
     /// <summary>
     /// Refuse the path and leave the file where it is. The default, and the only value that cannot lose
-    /// data. Raises only when <see cref="RecycleBinOptions.ThrowOnError"/> is on.
+    /// data. Raises only when <see cref="RecycleOptions.ThrowOnError"/> is on.
     /// </summary>
     Throw = 0,
 

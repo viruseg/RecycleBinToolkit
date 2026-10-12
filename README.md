@@ -119,7 +119,7 @@ Never throwing, for a background service:
 
 ```csharp
 IReadOnlyList<string?> paths = [];
-var options = new RecycleBinOptions { ThrowOnError = false };
+var options = new RecycleOptions { ThrowOnError = false };
 
 // An empty list is a valid call: it succeeds and does nothing. Entries may also be null or
 // missing, each reported as a failure without aborting the batch.
@@ -159,7 +159,7 @@ Recycles a single file or directory.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `filePath` | `string?` | Path of the file or directory. |
-| `options` | `RecycleBinOptions?` | Retry, verification and error-handling settings. `null` means `RecycleBinOptions.Default`. |
+| `options` | `RecycleOptions?` | Retry, verification and error-handling settings. `null` means `RecycleOptions.Default`. |
 | `cancellationToken` | `CancellationToken` | Cancels the scan that validates the path and the work itself. |
 
 **Returns** `true` when the path is gone from disk, whether it was recycled or removed permanently
@@ -188,7 +188,7 @@ Recycles a batch. This overload **never throws** for a per-item failure.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `filePaths` | `IReadOnlyList<string?>` | Paths to recycle. Entries may be null or missing; each is reported as a failure without aborting the batch. Repeated paths are recycled once. |
-| `options` | `RecycleBinOptions?` | As above. |
+| `options` | `RecycleOptions?` | As above. |
 | `cancellationToken` | `CancellationToken` | Cancels the scan that validates the batch and the work between paths. A cancelled batch stops part way and raises `OperationCanceledException` carrying no result: which files went is found by reading the bin. |
 
 **Returns** a `RecycleBinResult` describing every item.
@@ -214,7 +214,7 @@ Lists the Recycle Bin.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `volumeRoot` | `string?` | Volume root to read, such as `"W:\"`, or `null` for every volume. A path inside a volume is not a volume root: it is reported in `Failures` rather than answered for the whole volume containing it. |
-| `options` | `RecycleBinOptions?` | `null` means `RecycleBinOptions.Default`. |
+| `options` | `GetItemsOptions?` | `null` means `GetItemsOptions.Default`. |
 | `cancellationToken` | `CancellationToken` | Cancels the wait. |
 
 **Returns** a `RecycleBinContents`. The answer's order is the order the volumes were asked about and does
@@ -234,7 +234,7 @@ arguments after the first:
 | --- | --- | --- |
 | `items` | `IReadOnlyList<RecycleBinItem>` | Entries to restore, as a listing returned them. Repeated entries are restored once, the second one reported. |
 | `volumes` | `IReadOnlyList<RecycleBinVolumeContents>` | The volume groups of a listing, or any subset of them. Flattened group by group, in the order given, and restored as one batch. |
-| `options` | `RecycleBinOptions?` | As above. `DirectoryConflict` and `FileConflict` decide what happens to a path that is already occupied. |
+| `options` | `RestoreOptions?` | `null` means `RestoreOptions.Default`. `DirectoryConflict` and `FileConflict` decide what happens to a path that is already occupied. |
 | `cancellationToken` | `CancellationToken` | Cancels the work between entries and between volumes. A cancelled restore raises and returns nothing: what was already put back is found by listing the bin, not by reading a result. |
 
 **Returns** a [`RecycleBinRestoreResult`](#recyclebinrestoreresult), **never throws** for a per-entry
@@ -281,7 +281,7 @@ Empties the Recycle Bin.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `volumeRoot` | `string?` | Volume root to empty, or `null` for every volume, in which case every mounted Fixed or Removable volume is covered in a single call. A path inside a volume is not a volume root: it is reported in `Failures` rather than emptied as that whole volume. |
-| `options` | `RecycleBinOptions?` | `null` means `RecycleBinOptions.Default`. |
+| `options` | `RecycleBinOptions?` | `null` means the library's defaults. |
 | `cancellationToken` | `CancellationToken` | Cancels the sweep. The sweep stops between entries and raises, so a caller who cancels gets no result at all, and what was removed is found by reading the bin rather than by reading the result. |
 
 **Returns** a `RecycleBinEmptyResult`.
@@ -328,43 +328,91 @@ never blocks inside the bin.
 
 ### `RecycleBinOptions`
 
-Immutable; set with object initialisers. Every property has a production default, so
-`RecycleBinOptions.Default` is always a valid argument.
+The parent of the three types below, and the storage the engine reads. It is neither constructible nor
+derivable outside the library, so a caller's options value is always one of the three and always carries
+only the properties that call honours.
+
+### `RecycleOptions`
+
+What `RecycleAsync` takes, on either overload. Immutable; set with object initialisers. Every property has
+a production default, so `RecycleOptions.Default` is always a valid argument.
 
 | Property | Type | Default | Description |
 | --- | --- | --- | --- |
-| `Default` | `RecycleBinOptions` | — | Shared instance carrying the defaults. |
+| `Default` | `RecycleOptions` | — | Shared instance carrying the defaults. |
 | `MaxAttempts` | `int` | `6` | Attempts per item before it is reported as failed. Clamped to at least 1. |
 | `InitialRetryDelay` | `TimeSpan` | `50ms` | Delay before the first retry; it doubles each attempt, with up to 20 % jitter. Negative values clamp to zero. |
 | `OverallTimeout` | `TimeSpan` | `30s` | Upper bound on wall-clock time spent retrying the batch. A backoff that does not fit the remaining budget ends the loop immediately rather than starting an over-budget round. |
 | `ThrowOnError` | `bool` | `true` | Whether a failure raises instead of being returned. |
 | `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. |
-| `PreloadItemDetails` | `bool` | `false` | Read every entry's record during `GetItemsAsync` instead of leaving each entry to read its own on first access. Off by default, because a listing reads no records at all that way. See [Lazy fields](#lazy-fields). |
-| `FileConflict` | `RestoreFileConflict` | `Skip` | What a restore does with a **file** whose path is already occupied. See [`RestoreFileConflict`](#restorefileconflict). |
-| `DirectoryConflict` | `RestoreDirectoryConflict` | `MergeSkip` | What a restore does with a **directory** whose path is already occupied. See [`RestoreDirectoryConflict`](#restoredirectoryconflict). |
-
-A directory can be **set down whole under a new name**; a file only ever under its own. Merging a tree
-into what is already there is a question a file cannot be asked, which is why these are two properties
-rather than one. Neither has anything to do with `ThrowOnError`: a restore is a batch, so a conflict is
-data — resolved ones in `Conflicts`, and the ones an `Error` policy refuses in `Failures` as well. No
-single entry of a restore raises.
 
 ```csharp
-// Every property has a production default, so RecycleBinOptions.Default — which is what a null
+// Every property has a production default, so RecycleOptions.Default — which is what a null
 // options argument means — is always a valid argument.
-var options = new RecycleBinOptions
+var options = new RecycleOptions
 {
     MaxAttempts = 10,
     InitialRetryDelay = TimeSpan.FromMilliseconds(100),
     OverallTimeout = TimeSpan.FromSeconds(5),
     ThrowOnError = false,
-    NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
-    FileConflict = RestoreFileConflict.Rename,
-    DirectoryConflict = RestoreDirectoryConflict.RenameDirectory
+    NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
 };
 
 // ThrowOnError is the global switch: with it off a refusal arrives in Failures instead of raising.
 Console.WriteLine(options.OverallTimeout);
+```
+
+### `RestoreOptions`
+
+What `RestoreAsync` takes, on either overload. Immutable; set with object initialisers. Every property has
+a production default, so `RestoreOptions.Default` is always a valid argument.
+
+| Property | Type | Default | Description |
+| --- | --- | --- | --- |
+| `Default` | `RestoreOptions` | — | Shared instance carrying the defaults. |
+| `MaxAttempts` | `int` | `6` | Attempts per item before it is reported as failed. Clamped to at least 1. |
+| `InitialRetryDelay` | `TimeSpan` | `50ms` | Delay before the first retry; it doubles each attempt, with up to 20 % jitter. Negative values clamp to zero. |
+| `OverallTimeout` | `TimeSpan` | `30s` | Upper bound on wall-clock time spent retrying the batch. A backoff that does not fit the remaining budget ends the loop immediately rather than starting an over-budget round. |
+| `FileConflict` | `RestoreFileConflict` | `Skip` | What a restore does with a **file** whose path is already occupied. See [`RestoreFileConflict`](#restorefileconflict). |
+| `DirectoryConflict` | `RestoreDirectoryConflict` | `MergeSkip` | What a restore does with a **directory** whose path is already occupied. See [`RestoreDirectoryConflict`](#restoredirectoryconflict). |
+
+A directory can be **set down whole under a new name**; a file only ever under its own. Merging a tree
+into what is already there is a question a file cannot be asked, which is why these are two properties
+rather than one. A restore is a batch, so a conflict is data — the resolved ones in `Conflicts`, and the
+ones an `Error` policy refuses in `Failures` as well. No single entry of a restore raises, and there is no
+`ThrowOnError` here for that reason.
+
+```csharp
+// Every property has a production default, so RestoreOptions.Default — which is what a null
+// options argument means — is always a valid argument.
+var options = new RestoreOptions
+{
+    MaxAttempts = 10,
+    InitialRetryDelay = TimeSpan.FromMilliseconds(100),
+    OverallTimeout = TimeSpan.FromSeconds(5),
+    FileConflict = RestoreFileConflict.Rename,
+    DirectoryConflict = RestoreDirectoryConflict.RenameDirectory
+};
+
+Console.WriteLine(options.OverallTimeout);
+```
+
+### `GetItemsOptions`
+
+What `GetItemsAsync` takes. Immutable; set with object initialisers. `GetItemsOptions.Default` is always a
+valid argument.
+
+| Property | Type | Default | Description |
+| --- | --- | --- | --- |
+| `Default` | `GetItemsOptions` | — | Shared instance carrying the defaults. |
+| `PreloadItemDetails` | `bool` | `false` | Read every entry's record during `GetItemsAsync` instead of leaving each entry to read its own on first access. Off by default, because a listing reads no records at all that way. See [Lazy fields](#lazy-fields). |
+
+```csharp
+// Every property has a production default, so GetItemsOptions.Default — which is what a null
+// options argument means — is always a valid argument.
+var options = new GetItemsOptions { PreloadItemDetails = true };
+
+Console.WriteLine(options.PreloadItemDetails);
 ```
 
 ### `RecycleBinResult`
@@ -478,7 +526,7 @@ That means accessing these two fields is I/O, and it can fail:
 
 - An entry whose record was collected under it — an empty running against a caller holding a listing — raises
   `IOException`. The exception is cached, so a second access raises the same one rather than retrying.
-- Set [`PreloadItemDetails`](#recyclebinoptions) to read every record during the listing instead. An entry
+- Set [`PreloadItemDetails`](#getitemsoptions) to read every record during the listing instead. An entry
   whose record cannot be read is then reported in `RecycleBinContents.Failures` and left out of that volume's
   group in `Items`, rather than being returned and raising later.
 
@@ -776,7 +824,7 @@ Console.WriteLine($"{contents.TotalSize} byte(s) in total");
 // enough. A caller that is going to read every entry's path anyway can have the records read during
 // the listing instead of one at a time from its own loop — and an entry whose record cannot be read
 // is reported in Failures rather than raising later.
-var eager = new RecycleBinOptions { PreloadItemDetails = true };
+var eager = new GetItemsOptions { PreloadItemDetails = true };
 
 var contents = await RecycleBin.GetItemsAsync(@"W:\", eager);
 
@@ -851,7 +899,7 @@ var entry = contents.Items[0].Items[0];
 // A path somebody took again while the entry sat in the bin is the ordinary collision. Rename sets
 // the entry down beside it under the first free name; Skip would leave it in the bin, and Error
 // would report it as a failure. A directory is its own question — see DirectoryConflict.
-var options = new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename };
+var options = new RestoreOptions { FileConflict = RestoreFileConflict.Rename };
 
 var result = await RecycleBin.RestoreAsync([entry], options);
 
@@ -947,7 +995,7 @@ Console.WriteLine($"{result.RecycledPaths.Count} path(s) recycled");
 
 ```csharp
 IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];
-var options = new RecycleBinOptions
+var options = new RecycleOptions
 {
     NoRecycleBinAction = NoRecycleBinAction.DeletePermanently
 };
@@ -976,7 +1024,7 @@ await RecycleBin.RecycleAsync(paths, cancellationToken: cts.Token);
 
 ```csharp
 IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];
-var options = new RecycleBinOptions { ThrowOnError = false };
+var options = new RecycleOptions { ThrowOnError = false };
 
 // The default NoRecycleBinAction is Throw: on a volume with no Recycle Bin the path is refused
 // before anything is attempted. With ThrowOnError off the refusal comes back as data instead of

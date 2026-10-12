@@ -67,7 +67,7 @@ public sealed class RecycleBinContents
     /// also has to do something else.
     /// <para>
     /// The items already read are skipped, which is every item of a listing taken with
-    /// <see cref="RecycleBinOptions.PreloadItemDetails"/>. Nothing is read twice, and a listing with nothing
+    /// <see cref="GetItemsOptions.PreloadItemDetails"/>. Nothing is read twice, and a listing with nothing
     /// pending does no work beyond one pass over its items.
     /// </para>
     /// <para>

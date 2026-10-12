@@ -36,7 +36,7 @@ public enum RecycleFailureStage
 
     /// <summary>
     /// The caller asked for a path to be removed for good — because its volume cannot recycle it and
-    /// <see cref="RecycleBinOptions.NoRecycleBinAction"/> was
+    /// <see cref="RecycleOptions.NoRecycleBinAction"/> was
     /// <see cref="NoRecycleBinAction.DeletePermanently"/> — but the file system refused. The file is exactly
     /// as the caller left it.
     /// </summary>
@@ -127,8 +127,9 @@ public sealed class RecycleFailure
     public int HResult { get; }
 
     /// <summary>
-    /// Rounds this path went through before it was given up on, at most
-    /// <see cref="RecycleBinOptions.MaxAttempts"/>.
+    /// Rounds this path went through before it was given up on, at most the attempt budget the operation
+    /// was given: <see cref="RecycleOptions.MaxAttempts"/> or <see cref="RestoreOptions.MaxAttempts"/>,
+    /// whichever was set.
     /// </summary>
     /// <remarks>
     /// <c>0</c> means nothing was attempted for this path, which covers every stage that settles before the
@@ -170,7 +171,7 @@ public sealed class RecycleBinResult
 
     /// <summary>
     /// Paths, as supplied by the caller, that were removed permanently instead of being recycled:
-    /// because their volume cannot recycle them and <see cref="RecycleBinOptions.NoRecycleBinAction"/>
+    /// because their volume cannot recycle them and <see cref="RecycleOptions.NoRecycleBinAction"/>
     /// was <see cref="NoRecycleBinAction.DeletePermanently"/>. Empty unless that was taken, and a path
     /// in here is never also in <see cref="RecycledPaths"/>.
     /// </summary>

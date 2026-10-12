@@ -76,11 +76,11 @@ internal static class RestoreSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        Check.Equal(RestoreDirectoryConflict.MergeSkip, RecycleBinOptions.Default.DirectoryConflict, "the directory default");
-        Check.Equal(RestoreFileConflict.Skip, RecycleBinOptions.Default.FileConflict, "the file default");
+        Check.Equal(RestoreDirectoryConflict.MergeSkip, RestoreOptions.Default.DirectoryConflict, "the directory default");
+        Check.Equal(RestoreFileConflict.Skip, RestoreOptions.Default.FileConflict, "the file default");
 
         // Normalize copies fields one by one; a field it does not mention is dropped on every internal call.
-        var normalized = new RecycleBinOptions
+        var normalized = new RestoreOptions
         {
             DirectoryConflict = RestoreDirectoryConflict.MergeReplace,
             FileConflict = RestoreFileConflict.Rename
@@ -607,7 +607,7 @@ internal static class RestoreSuite
         File.WriteAllText(takenByFile, "a file");
         Directory.CreateDirectory(takenByDirectory);
 
-        var defaults = new RecycleBinOptions();
+        var defaults = new RestoreOptions();
 
         var freeFile = RestorePathPlanner.Decide(free, isDirectory: false, defaults);
         Check.Equal(RestoreAction.Move, freeFile.Action, "a free path is moved to");
@@ -616,45 +616,45 @@ internal static class RestoreSuite
 
         Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(free, isDirectory: true, defaults).Action, "a free path is the same answer for a directory");
 
-        var replaced = RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RecycleBinOptions { FileConflict = RestoreFileConflict.Replace });
+        var replaced = RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RestoreOptions { FileConflict = RestoreFileConflict.Replace });
         Check.Equal(RestoreAction.Replace, replaced.Action, "the file policy replaces");
         Check.Equal(takenByFile, replaced.TargetPath, "and it lands on the path that was occupied");
         Check.False(replaced.OccupiedByDirectory, "what is in the way is a file");
 
-        var renamed = RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename });
+        var renamed = RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RestoreOptions { FileConflict = RestoreFileConflict.Rename });
         Check.Equal(RestoreAction.Rename, renamed.Action, "the file policy renames");
         Check.Equal("taken (1).bin", Path.GetFileName(renamed.TargetPath), "and it lands under the first free number");
         Check.False(renamed.OccupiedByDirectory, "and what was in the way of the path it asked for is still a file");
 
         Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByFile, isDirectory: false, defaults).Action, "the default file policy skips");
-        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RecycleBinOptions { FileConflict = RestoreFileConflict.Error }).Action, "and refusing is the same action as skipping");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RestoreOptions { FileConflict = RestoreFileConflict.Error }).Action, "and refusing is the same action as skipping");
 
-        var renamedDirectory = RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory });
+        var renamedDirectory = RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory });
         Check.Equal(RestoreAction.Rename, renamedDirectory.Action, "renaming a directory takes a free name rather than merging into what is there");
         Check.Equal("taken (1)", Path.GetFileName(renamedDirectory.TargetPath), "and it lands under the first free number");
         Check.True(renamedDirectory.OccupiedByDirectory, "a directory was in the way of the path it asked for");
 
         Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, defaults).Action, "the default directory policy merges rather than skipping");
-        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip }).Action, "and every merge mode answers the same");
-        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeReplace }).Action, "all three");
-        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeRename }).Action, "all three of them");
-        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.Skip }).Action, "while leaving the directory in the bin is a skip");
-        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.Error }).Action, "and refusing is the same action as skipping");
+        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip }).Action, "and every merge mode answers the same");
+        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.MergeReplace }).Action, "all three");
+        Check.Equal(RestoreAction.Move, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.MergeRename }).Action, "all three of them");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.Skip }).Action, "while leaving the directory in the bin is a skip");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.Error }).Action, "and refusing is the same action as skipping");
 
         // The cross-kind cases: each is a conflict like any other, and the policy that answers is the one
         // for the kind arriving rather than the one for the kind in the way.
-        var fileIntoDirectory = RestorePathPlanner.Decide(takenByDirectory, isDirectory: false, new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename });
+        var fileIntoDirectory = RestorePathPlanner.Decide(takenByDirectory, isDirectory: false, new RestoreOptions { FileConflict = RestoreFileConflict.Rename });
         Check.Equal(RestoreAction.Rename, fileIntoDirectory.Action, "a file arriving at a directory is renamed rather than moved over it");
         Check.True(fileIntoDirectory.OccupiedByDirectory, "and the directory it found is reported as a directory");
 
-        var directoryIntoFile = RestorePathPlanner.Decide(takenByFile, isDirectory: true, new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory });
+        var directoryIntoFile = RestorePathPlanner.Decide(takenByFile, isDirectory: true, new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory });
         Check.Equal(RestoreAction.Rename, directoryIntoFile.Action, "a directory arriving at a file takes a free name");
         Check.False(directoryIntoFile.OccupiedByDirectory, "and the file it found is not a directory");
 
         // An enum value outside either policy is reachable by an unvalidated caller and lands on the arm
         // that touches nothing, rather than on a default that could move something.
-        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RecycleBinOptions { FileConflict = (RestoreFileConflict)42 }).Action, "a file policy that names nothing answers skip");
-        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RecycleBinOptions { DirectoryConflict = (RestoreDirectoryConflict)42 }).Action, "and so does a directory policy");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByFile, isDirectory: false, new RestoreOptions { FileConflict = (RestoreFileConflict)42 }).Action, "a file policy that names nothing answers skip");
+        Check.Equal(RestoreAction.Skip, RestorePathPlanner.Decide(takenByDirectory, isDirectory: true, new RestoreOptions { DirectoryConflict = (RestoreDirectoryConflict)42 }).Action, "and so does a directory policy");
 
         // What a merge decides per file, against the three modes that reach it and one that never does.
         Check.Equal(RestoreAction.Replace, RestorePathPlanner.DecideMerged(takenByFile, RestoreDirectoryConflict.MergeReplace), "a merge that replaces overwrites the file in the way");
@@ -764,7 +764,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { FileConflict = RestoreFileConflict.Skip },
+            new RestoreOptions { FileConflict = RestoreFileConflict.Skip },
             context.CancellationToken);
 
         Check.Equal("mine", File.ReadAllText(target), "the file already there is untouched");
@@ -818,7 +818,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { FileConflict = RestoreFileConflict.Replace },
+            new RestoreOptions { FileConflict = RestoreFileConflict.Replace },
             context.CancellationToken);
 
         Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
@@ -881,7 +881,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { FileConflict = RestoreFileConflict.Rename },
+            new RestoreOptions { FileConflict = RestoreFileConflict.Rename },
             context.CancellationToken);
 
         Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
@@ -936,7 +936,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { FileConflict = RestoreFileConflict.Error },
+            new RestoreOptions { FileConflict = RestoreFileConflict.Error },
             context.CancellationToken);
 
         Check.False(result.Succeeded, "a refused conflict is what makes the result not have succeeded");
@@ -1185,7 +1185,7 @@ internal static class RestoreSuite
         File.Delete(item.PayloadPath);
         Check.False(File.Exists(target), "and the file is not on disk either, so there is nowhere else it could be");
 
-        var options = new RecycleBinOptions { MaxAttempts = 1 };
+        var options = new RestoreOptions { MaxAttempts = 1 };
 
         var result = await RecycleBin.RestoreAsync([item], options, context.CancellationToken);
 
@@ -1429,7 +1429,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory },
+            new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory },
             context.CancellationToken);
 
         Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
@@ -1493,7 +1493,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.Skip },
+            new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.Skip },
             context.CancellationToken);
 
         Check.True(Directory.Exists(shape.Root), $"the directory in the way is still at {shape.Root}");
@@ -1551,7 +1551,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.Error },
+            new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.Error },
             context.CancellationToken);
 
         Check.False(result.Succeeded, "a refused conflict is what makes the result not have succeeded");
@@ -1624,7 +1624,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory },
+            new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory },
             context.CancellationToken);
 
         Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
@@ -1778,7 +1778,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip },
+            new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip },
             context.CancellationToken);
 
         Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
@@ -1854,7 +1854,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeReplace },
+            new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.MergeReplace },
             context.CancellationToken);
 
         Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
@@ -1920,7 +1920,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeRename },
+            new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.MergeRename },
             context.CancellationToken);
 
         Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
@@ -1987,7 +1987,7 @@ internal static class RestoreSuite
 
         var result = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip },
+            new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip },
             context.CancellationToken);
 
         Check.True(result.Succeeded, $"nothing failed (first: {result.Failures.FirstOrDefault()?.Stage})");
@@ -2075,7 +2075,7 @@ internal static class RestoreSuite
         {
             var result = await RecycleBin.RestoreAsync(
                 [item],
-                new RecycleBinOptions
+                new RestoreOptions
                 {
                     DirectoryConflict = RestoreDirectoryConflict.MergeReplace,
 
@@ -2199,7 +2199,7 @@ internal static class RestoreSuite
         // The second attempt the failure promises, and what leaves the bin for this case.
         var again = await RecycleBin.RestoreAsync(
             [item],
-            new RecycleBinOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory },
+            new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.RenameDirectory },
             context.CancellationToken);
 
         Check.True(again.Succeeded, $"a policy that takes a free name has nothing to merge and so succeeds (first: {again.Failures.FirstOrDefault()?.Stage})");
@@ -2358,7 +2358,7 @@ internal static class RestoreSuite
             await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
             target);
 
-        var options = new RecycleBinOptions
+        var options = new RestoreOptions
         {
             FileConflict = RestoreFileConflict.Replace,
             MaxAttempts = 1
@@ -2557,7 +2557,7 @@ internal static class RestoreSuite
         // overwrite is refused over.
         File.WriteAllText(target, "mine");
 
-        var options = new RecycleBinOptions
+        var options = new RestoreOptions
         {
             FileConflict = RestoreFileConflict.Replace,
             MaxAttempts = 3,
@@ -2657,7 +2657,7 @@ internal static class RestoreSuite
         // whatever happens next.
         File.WriteAllText(root, "a file where the tree used to be");
 
-        var options = new RecycleBinOptions
+        var options = new RestoreOptions
         {
             DirectoryConflict = RestoreDirectoryConflict.MergeReplace,
             InitialRetryDelay = TimeSpan.FromMilliseconds(500)
@@ -2788,7 +2788,7 @@ internal static class RestoreSuite
 
         File.WriteAllText(target, "mine");
 
-        var options = new RecycleBinOptions
+        var options = new RestoreOptions
         {
             FileConflict = RestoreFileConflict.Replace,
             MaxAttempts = 6,
@@ -2852,7 +2852,7 @@ internal static class RestoreSuite
             File.WriteAllText(file, "mine");
         }
 
-        var options = new RecycleBinOptions
+        var options = new RestoreOptions
         {
             FileConflict = RestoreFileConflict.Replace,
             MaxAttempts = 6,
@@ -3428,7 +3428,7 @@ internal static class RestoreSuite
         await cancelling.CancelAsync();
 
         var thrown = Check.Throws<OperationCanceledException>(
-            () => RestoreRunner.Run(items, RecycleBinOptions.Default, cancelling.Token),
+            () => RestoreRunner.Run(items, RestoreOptions.Default, cancelling.Token),
             "the engine raises rather than reporting entries it never decided about");
 
         Check.Equal(cancelling.Token, thrown.CancellationToken, "carrying the token the caller cancelled");

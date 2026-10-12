@@ -1,40 +1,39 @@
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Tuning knobs for a Recycle Bin operation.
+/// The storage behind the settings one operation takes, and the base of the three types a caller can name.
 /// </summary>
 /// <remarks>
-/// Every property has a production-ready default, so <see cref="Default"/> is a valid argument for
-/// every call. A single value is overridden with an object initialiser:
-/// <c>new RecycleBinOptions { ThrowOnError = false }</c>. Out-of-range values are clamped rather than
+/// Neither constructible nor derivable outside this library, so the properties live here and each operation's
+/// type exposes only the ones that operation reads: <see cref="RecycleOptions"/>,
+/// <see cref="RestoreOptions"/> and <see cref="GetItemsOptions"/>. Out-of-range values are clamped rather than
 /// rejected, so an unvalidated instance cannot produce a zero-attempt or negative-delay loop.
 /// </remarks>
-public sealed class RecycleBinOptions
+public abstract class RecycleBinOptions
 {
-    /// <summary>Shared instance carrying the documented defaults.</summary>
-    public static RecycleBinOptions Default { get; } = new();
+    internal RecycleBinOptions() { }
 
     /// <summary>How many times an item is attempted before it is reported as a failure. Defaults to <c>6</c>, clamped to at least 1.</summary>
-    public int MaxAttempts { get; init; } = 6;
+    internal int MaxAttempts { get; init; } = 6;
 
     /// <summary>
     /// Delay before the first retry, doubling on every subsequent attempt. Defaults to <c>50</c>
     /// milliseconds; negative values clamp to zero.
     /// </summary>
-    public TimeSpan InitialRetryDelay { get; init; } = TimeSpan.FromMilliseconds(50);
+    internal TimeSpan InitialRetryDelay { get; init; } = TimeSpan.FromMilliseconds(50);
 
     /// <summary>
     /// Upper bound on the wall-clock time spent retrying the whole batch. Defaults to <c>30</c> seconds.
     /// One budget for the call, not one per item or per volume: a backoff that does not fit what is left of
     /// it ends the loop immediately rather than starting an over-budget round.
     /// </summary>
-    public TimeSpan OverallTimeout { get; init; } = TimeSpan.FromSeconds(30);
+    internal TimeSpan OverallTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Whether a failure raises an exception instead of being reported through
     /// <see cref="RecycleBinResult.Failures"/>. Defaults to <c>true</c>.
     /// </summary>
-    public bool ThrowOnError { get; init; } = true;
+    internal bool ThrowOnError { get; init; } = true;
 
     /// <summary>
     /// What happens to a file whose volume cannot recycle it. Defaults to
@@ -42,7 +41,7 @@ public sealed class RecycleBinOptions
     /// <see cref="ThrowOnError"/> still decides whether the refusal raises or is returned through
     /// <see cref="RecycleBinResult.Failures"/>.
     /// </summary>
-    public NoRecycleBinAction NoRecycleBinAction { get; init; } = NoRecycleBinAction.Throw;
+    internal NoRecycleBinAction NoRecycleBinAction { get; init; } = NoRecycleBinAction.Throw;
 
     /// <summary>
     /// Whether a listing reads every entry's record up front instead of leaving each entry to read its own
@@ -58,7 +57,7 @@ public sealed class RecycleBinOptions
     /// whose payload is present.
     /// </para>
     /// </remarks>
-    public bool PreloadItemDetails { get; init; }
+    internal bool PreloadItemDetails { get; init; }
 
     /// <summary>
     /// What a restore does with a directory whose original path is already occupied. Defaults to
@@ -78,14 +77,14 @@ public sealed class RecycleBinOptions
     /// <see cref="RecycleFailureStage.RestoreFailed"/> like any other refused move.
     /// </para>
     /// </remarks>
-    public RestoreDirectoryConflict DirectoryConflict { get; init; } = RestoreDirectoryConflict.MergeSkip;
+    internal RestoreDirectoryConflict DirectoryConflict { get; init; } = RestoreDirectoryConflict.MergeSkip;
 
     /// <summary>
     /// What a restore does with a file whose original path is already occupied. Defaults to
     /// <see cref="RestoreFileConflict.Skip"/>, which leaves the file where the caller put it and leaves the
     /// entry in the Recycle Bin.
     /// </summary>
-    public RestoreFileConflict FileConflict { get; init; } = RestoreFileConflict.Skip;
+    internal RestoreFileConflict FileConflict { get; init; } = RestoreFileConflict.Skip;
 
     /// <summary>
     /// Returns a copy with out-of-range values clamped into a usable range.
@@ -93,7 +92,7 @@ public sealed class RecycleBinOptions
     // Every property is named here, because a property this initialiser does not mention is not clamped
     // but reset — silently, on every internal call, back to the property initialiser's default. A caller
     // who asked for one behaviour would get another with nothing raised and nothing reported.
-    internal RecycleBinOptions Normalize() => new()
+    internal RecycleBinOptions Normalize() => new Normalized
     {
         MaxAttempts = Math.Max(1, MaxAttempts),
         InitialRetryDelay = InitialRetryDelay < TimeSpan.Zero ? TimeSpan.Zero : InitialRetryDelay,
@@ -126,4 +125,12 @@ public sealed class RecycleBinOptions
     /// Longest run the elapsed time is allowed to reach, which bounds the addition above.
     /// </summary>
     private static readonly TimeSpan MaxElapsedAllowance = TimeSpan.FromDays(365);
+
+    /// <summary>
+    /// A copy that keeps the base type, which is all the engine ever asks for. Declared here so the
+    /// eight properties can be named in one initialiser; see the comment on <see cref="Normalize"/>.
+    /// </summary>
+    private sealed class Normalized : RecycleBinOptions
+    {
+    }
 }
