@@ -1,12 +1,10 @@
 namespace RecycleBinToolkit;
 
-/// <summary>
-/// One item currently sitting in the Windows Recycle Bin.
-/// </summary>
+/// <summary>One entry in the Recycle Bin.</summary>
 /// <remarks>
-/// <see cref="Size"/> and <see cref="IsDirectory"/> are answered from the listing.
-/// <see cref="OriginalPath"/> and <see cref="DeletedAt"/> are read from the item's own record on first access
-/// to either, which answers both at once and can raise <see cref="IOException"/>.
+/// <see cref="Size"/> and <see cref="IsDirectory"/> are answered by the listing.
+/// <see cref="OriginalPath"/> and <see cref="DeletedAt"/> are read from the entry's record on first access to
+/// either, which answers both at once and can raise <see cref="IOException"/>.
 /// </remarks>
 public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
 {
@@ -95,7 +93,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// <summary>Size in bytes. <c>0</c> for a directory, whose contents are not measured.</summary>
     public long Size { get; }
 
-    /// <summary>Whether the item is a directory.</summary>
+    /// <summary>Whether the entry is a directory.</summary>
     public bool IsDirectory { get; }
 
     /// <summary>Physical <c>$R</c> path of the payload, inside the Recycle Bin.</summary>
@@ -109,16 +107,20 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// </remarks>
     internal string IndexPath => _indexPath;
 
-    /// <summary>Full path the item was deleted from.</summary>
+    /// <summary>Full path the entry was deleted from, exactly as it was recorded.</summary>
+    /// <remarks>
+    /// Compare without regard to case: the drive letter is written in whichever case Windows used, so an ordinal
+    /// comparison of a correct pair can report it as different.
+    /// </remarks>
     /// <exception cref="IOException">
-    /// The item's record could not be read — it was removed or locked between the listing and this access.
-    /// The same exception is raised by every later access, because the attempt is not repeated.
+    /// The entry's record could not be read — it was removed or locked between the listing and this access. The
+    /// same exception is raised by every later access, because the attempt is not repeated.
     /// </exception>
     public string OriginalPath => Details.OriginalPath;
 
-    /// <summary>When the item was deleted, in the local offset.</summary>
+    /// <summary>When the entry was deleted, in the local offset.</summary>
     /// <exception cref="IOException">
-    /// The item's record could not be read. See <see cref="OriginalPath"/>.
+    /// The entry's record could not be read. See <see cref="OriginalPath"/>.
     /// </exception>
     public DateTimeOffset DeletedAt => Details.DeletedAt;
 
@@ -282,10 +284,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     private static RecordDetails ToDetails(NativeIndexRecord record) =>
         new(record.OriginalPath, new DateTimeOffset(record.DeletedAtUtc.ToLocalTime()));
 
-    /// <summary>
-    /// Two entries are the same when they are the same stored entry. Compared on the path that identifies it,
-    /// without reading either one's details.
-    /// </summary>
+    /// <summary>Two entries are equal when they are the same stored entry.</summary>
     /// <param name="other">The entry to compare with.</param>
     /// <returns><see langword="true"/> when both name the same entry in the Recycle Bin.</returns>
     public bool Equals(RecycleBinItem? other) =>

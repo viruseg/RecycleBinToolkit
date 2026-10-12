@@ -1,19 +1,15 @@
 namespace RecycleBinToolkit;
 
-/// <summary>
-/// Settings for <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/> and
-/// its batch overload.
-/// </summary>
+/// <summary>Settings for either <c>RecycleAsync</c> overload.</summary>
 /// <remarks>
-/// Every property has a production default, so <see cref="Default"/> is a valid argument for either
-/// overload. <see langword="null"/> means the same thing.
+/// <see langword="null"/> means <see cref="Default"/>.
 /// </remarks>
 public sealed class RecycleOptions : RecycleBinOptions
 {
     /// <summary>Shared instance carrying the documented defaults.</summary>
     public static RecycleOptions Default { get; } = new();
 
-    /// <summary>How many times an item is attempted before it is reported as a failure. Defaults to <c>6</c>, clamped to at least 1.</summary>
+    /// <summary>Attempts per item before it is reported as a failure. Defaults to <c>6</c>, clamped to at least 1.</summary>
     public new int MaxAttempts
     {
         get => base.MaxAttempts;
@@ -21,8 +17,8 @@ public sealed class RecycleOptions : RecycleBinOptions
     }
 
     /// <summary>
-    /// Delay before the first retry, doubling on every subsequent attempt. Defaults to <c>50</c>
-    /// milliseconds; negative values clamp to zero.
+    /// Delay before the first retry, doubling on every subsequent attempt. Defaults to <c>50</c> milliseconds;
+    /// negative values clamp to zero.
     /// </summary>
     public new TimeSpan InitialRetryDelay
     {
@@ -31,9 +27,8 @@ public sealed class RecycleOptions : RecycleBinOptions
     }
 
     /// <summary>
-    /// Upper bound on the wall-clock time spent retrying the whole batch. Defaults to <c>30</c> seconds.
-    /// One budget for the call, not one per item or per volume: a backoff that does not fit what is left of
-    /// it ends the loop immediately rather than starting an over-budget round.
+    /// Upper bound on the time spent retrying. Defaults to <c>30</c> seconds. One budget for the call, not
+    /// one per item or per volume.
     /// </summary>
     public new TimeSpan OverallTimeout
     {
@@ -42,10 +37,10 @@ public sealed class RecycleOptions : RecycleBinOptions
     }
 
     /// <summary>
-    /// Whether a failure raises rather than coming back as <see langword="false"/>, and only on
-    /// <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/> — the batch
-    /// overload reports its per-item failures through <see cref="RecycleBinResult.Failures"/> however
-    /// this is set. Defaults to <c>true</c>.
+    /// Whether a failure raises rather than returning <see langword="false"/>. Defaults to <c>true</c>. Read
+    /// only by <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/>: the batch
+    /// overload reports its per-item failures through <see cref="RecycleBinResult.Failures"/> however this is
+    /// set.
     /// </summary>
     public new bool ThrowOnError
     {
@@ -54,12 +49,8 @@ public sealed class RecycleOptions : RecycleBinOptions
     }
 
     /// <summary>
-    /// What happens to a file whose volume cannot recycle it. Defaults to
-    /// <see cref="NoRecycleBinAction.Throw"/>, which refuses it and leaves the file in place: that
-    /// refusal raises or comes back as <see langword="false"/> according to <see cref="ThrowOnError"/>
-    /// on <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/>, and
-    /// arrives in <see cref="RecycleBinResult.Failures"/> on the batch overload, which never raises
-    /// for one item.
+    /// What happens to a path on a volume that cannot recycle it. Defaults to
+    /// <see cref="NoRecycleBinAction.Throw"/>, which refuses it and leaves the file untouched.
     /// </summary>
     public new NoRecycleBinAction NoRecycleBinAction
     {

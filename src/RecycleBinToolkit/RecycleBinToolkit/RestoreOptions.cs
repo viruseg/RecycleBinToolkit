@@ -1,24 +1,15 @@
 namespace RecycleBinToolkit;
 
-/// <summary>
-/// Settings for <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/>
-/// and its overload over the volume groups of a listing.
-/// </summary>
+/// <summary>Settings for either <c>RestoreAsync</c> overload.</summary>
 /// <remarks>
-/// Every property has a production default, so <see cref="Default"/> is a valid argument for either
-/// overload. <see langword="null"/> means the same thing.
-/// <para>
-/// There is no <c>ThrowOnError</c> here because a restore is a batch: a conflict is data — the resolved
-/// ones in <see cref="RecycleBinRestoreResult.Conflicts"/> and the ones a policy refuses in
-/// <see cref="RecycleBinRestoreResult.Failures"/> as well — and no single entry raises.
-/// </para>
+/// <see langword="null"/> means <see cref="Default"/>.
 /// </remarks>
 public sealed class RestoreOptions : RecycleBinOptions
 {
     /// <summary>Shared instance carrying the documented defaults.</summary>
     public static RestoreOptions Default { get; } = new();
 
-    /// <summary>How many times an item is attempted before it is reported as a failure. Defaults to <c>6</c>, clamped to at least 1.</summary>
+    /// <summary>Attempts per entry before it is reported as a failure. Defaults to <c>6</c>, clamped to at least 1.</summary>
     public new int MaxAttempts
     {
         get => base.MaxAttempts;
@@ -26,8 +17,8 @@ public sealed class RestoreOptions : RecycleBinOptions
     }
 
     /// <summary>
-    /// Delay before the first retry, doubling on every subsequent attempt. Defaults to <c>50</c>
-    /// milliseconds; negative values clamp to zero.
+    /// Delay before the first retry, doubling on every subsequent attempt. Defaults to <c>50</c> milliseconds;
+    /// negative values clamp to zero.
     /// </summary>
     public new TimeSpan InitialRetryDelay
     {
@@ -36,9 +27,8 @@ public sealed class RestoreOptions : RecycleBinOptions
     }
 
     /// <summary>
-    /// Upper bound on the wall-clock time spent retrying the whole batch. Defaults to <c>30</c> seconds.
-    /// One budget for the call, not one per item or per volume: a backoff that does not fit what is left of
-    /// it ends the loop immediately rather than starting an over-budget round.
+    /// Upper bound on the time spent retrying. Defaults to <c>30</c> seconds. One budget for the call, not
+    /// one per entry or per volume.
     /// </summary>
     public new TimeSpan OverallTimeout
     {
@@ -47,16 +37,12 @@ public sealed class RestoreOptions : RecycleBinOptions
     }
 
     /// <summary>
-    /// What a restore does with a directory whose original path is already occupied. Defaults to
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, which merges and leaves what is already there as it
-    /// is — a file of the tree that does not fit goes back into the Recycle Bin as an entry of its own
-    /// rather than being lost with the payload it was in.
+    /// What a restore does with a directory whose original path is occupied. Defaults to
+    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>.
     /// </summary>
     /// <remarks>
-    /// A merge reports a conflict per file it settled rather than per entry, and none of the three reaches a
-    /// failure stage <em>of its own</em>: a file of the tree the filesystem would not take, and a payload or
-    /// a record that would not go afterwards, are reported at
-    /// <see cref="RecycleFailureStage.RestoreFailed"/> like any other refused move.
+    /// A merge reports one conflict per file it settled rather than one per entry, and reports a refused file
+    /// at <see cref="RecycleFailureStage.RestoreFailed"/> like any other move that would not happen.
     /// </remarks>
     public new RestoreDirectoryConflict DirectoryConflict
     {
@@ -65,9 +51,8 @@ public sealed class RestoreOptions : RecycleBinOptions
     }
 
     /// <summary>
-    /// What a restore does with a file whose original path is already occupied. Defaults to
-    /// <see cref="RestoreFileConflict.Skip"/>, which leaves the file where the caller put it and leaves the
-    /// entry in the Recycle Bin.
+    /// What a restore does with a file whose original path is occupied. Defaults to
+    /// <see cref="RestoreFileConflict.Skip"/>, which leaves the file on disk and the entry in the Recycle Bin.
     /// </summary>
     public new RestoreFileConflict FileConflict
     {

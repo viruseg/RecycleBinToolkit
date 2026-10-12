@@ -14,33 +14,34 @@ public static class RecycleBin
     private const int VolumeNotFound = unchecked((int)0x800703FE);
 
     /// <summary>Recycles a single file or directory.</summary>
-    /// <param name="filePath">Path of the file or directory to recycle.</param>
+    /// <param name="filePath">Path of the file or directory.</param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="RecycleOptions.Default"/>.
-    /// <see cref="RecycleOptions.ThrowOnError"/> decides whether a failure raises or comes back as
-    /// <see langword="false"/>.
+    /// <see langword="null"/> means <see cref="RecycleOptions.Default"/>. This is the overload
+    /// <see cref="RecycleOptions.ThrowOnError"/> is read on.
     /// </param>
-    /// <param name="cancellationToken">Cancels the validation scan and the work between paths.</param>
-    /// <returns><see langword="true"/> when the path was removed from disk.</returns>
+    /// <param name="cancellationToken">Cancels the validation scan and the work.</param>
+    /// <returns>
+    /// <see langword="true"/> when the path is gone from disk, whether it was recycled or deleted
+    /// permanently under an explicit policy.
+    /// </returns>
     /// <exception cref="ArgumentException">
     /// <paramref name="filePath"/> is null, empty or whitespace and
     /// <see cref="RecycleOptions.ThrowOnError"/> is on.
     /// </exception>
     /// <exception cref="FileNotFoundException">
-    /// <paramref name="filePath"/> does not exist and <see cref="RecycleOptions.ThrowOnError"/> is
-    /// on.
+    /// <paramref name="filePath"/> does not exist and <see cref="RecycleOptions.ThrowOnError"/> is on.
     /// </exception>
     /// <exception cref="IOException">
-    /// The move failed, or the volume holding the path cannot recycle it and
-    /// <see cref="RecycleOptions.NoRecycleBinAction"/> is <see cref="NoRecycleBinAction.Throw"/>, or
-    /// that action is <see cref="NoRecycleBinAction.DeletePermanently"/> and the file system refused
-    /// the removal — and <see cref="RecycleOptions.ThrowOnError"/> is on. The file is left in place
-    /// in every one of those cases.
+    /// A move failed, or a volume refused the path, and <see cref="RecycleOptions.ThrowOnError"/> is on.
+    /// The file is untouched in every one of those cases.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The path names its volume by GUID, which this library cannot measure, and
-    /// <see cref="RecycleOptions.ThrowOnError"/> is on. Nothing was attempted; address the same
-    /// location by drive letter or mount point instead.
+    /// The path names its volume by GUID and <see cref="RecycleOptions.ThrowOnError"/> is on. Nothing was
+    /// attempted; address the same location by drive letter or mount point instead.
+    /// </exception>
+    /// <exception cref="PlatformNotSupportedException">
+    /// This machine's Recycle Bin cannot be written to (see Requirements in the README). Nothing was
+    /// attempted, and <see cref="RecycleOptions.ThrowOnError"/> does not suppress it.
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
@@ -78,29 +79,26 @@ public static class RecycleBin
     /// <summary>Recycles a batch of files or directories.</summary>
     /// <param name="filePaths">
     /// Paths to recycle. Entries may be <see langword="null"/> or name paths that do not exist; each such
-    /// entry is reported as a failure without aborting the rest of the batch. Repeated paths are
-    /// recycled once.
+    /// entry is reported as a failure without aborting the rest of the batch. A repeated path is recycled
+    /// once.
     /// </param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="RecycleOptions.Default"/>.
-    /// <see cref="RecycleOptions.ThrowOnError"/> is a single-path switch and the batch reports every
-    /// per-item failure through <see cref="RecycleBinResult.Failures"/>, so setting it changes nothing
-    /// on this overload.
+    /// <see langword="null"/> means <see cref="RecycleOptions.Default"/>.
+    /// <see cref="RecycleOptions.ThrowOnError"/> is not read here: every per-item failure is reported
+    /// through <see cref="RecycleBinResult.Failures"/> instead of raising.
     /// </param>
     /// <param name="cancellationToken">
     /// Cancels the validation scan and the work between paths. A cancelled batch raises and returns no
-    /// result: what went is found by reading the bin.
+    /// result: what was recycled is found by reading the bin.
     /// </param>
     /// <returns>
     /// The outcome of the batch, naming every path that was not handled in
-    /// <see cref="RecycleBinResult.Failures"/>. Never throws for a per-item failure. A path refused
-    /// because its volume cannot recycle it arrives there at stage
-    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/>, and the paths on every other volume in
-    /// the batch are still recycled.
+    /// <see cref="RecycleBinResult.Failures"/>. A path refused because its volume cannot recycle it
+    /// arrives there at stage <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/>, and the paths on
+    /// every other volume in the batch are still recycled.
     /// </returns>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled, whether before the work started or while the
-    /// batch was being validated.
+    /// <paramref name="cancellationToken"/> was cancelled.
     /// </exception>
     public static async Task<RecycleBinResult> RecycleAsync(
         IReadOnlyList<string?> filePaths,
@@ -162,20 +160,19 @@ public static class RecycleBin
 
     /// <summary>Reads the contents of the Recycle Bin.</summary>
     /// <param name="volumeRoot">
-    /// Volume root to keep, such as <c>"X:\\"</c>, or <see langword="null"/> for every volume. A path inside
-    /// a volume is not a volume root: it is refused with a <see cref="RecycleFailureStage.PathValidation"/>
-    /// failure rather than answered for the whole volume containing it, because an empty listing is a claim
-    /// about the bin and a caller whose root was one character wrong cannot tell that from a bin that really
-    /// is empty.
+    /// Volume root to read, such as <c>"X:\\"</c>, or <see langword="null"/> for every volume. A path
+    /// inside a volume is not a volume root: it is refused at stage
+    /// <see cref="RecycleFailureStage.PathValidation"/> rather than answered for the whole volume
+    /// containing it.
     /// </param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="GetItemsOptions.Default"/>.
+    /// <see langword="null"/> means <see cref="GetItemsOptions.Default"/>.
     /// </param>
     /// <param name="cancellationToken">Cancels the wait.</param>
     /// <returns>
-    /// The entries that could be read, grouped by volume in the order the volumes were asked about, plus the
-    /// ones that could not in <see cref="RecycleBinContents.Failures"/>. An environmental problem is never
-    /// an exception.
+    /// The entries that could be read, grouped by volume in the order the volumes were asked about, and
+    /// the ones that could not in <see cref="RecycleBinContents.Failures"/>. An environmental problem is
+    /// data in the result, not an exception.
     /// </returns>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
@@ -210,20 +207,15 @@ public static class RecycleBin
 
     /// <summary>Empties the Recycle Bin.</summary>
     /// <param name="volumeRoot">
-    /// Volume root to empty, such as <c>"X:\\"</c>, or <see langword="null"/> for every volume that can
-    /// hold a Recycle Bin. A path inside a volume is not a volume root and is reported in
-    /// <see cref="RecycleBinEmptyResult.Failures"/> rather than emptied as that whole volume.
+    /// Volume root to empty, such as <c>"X:\\"</c>, or <see langword="null"/> for every mounted volume
+    /// that can hold a Recycle Bin. A path inside a volume is not a volume root and is reported in
+    /// <see cref="RecycleBinEmptyResult.Failures"/>.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the sweep between entries. A cancellation part way through raises
-    /// <see cref="OperationCanceledException"/> — so a caller who cancels gets no result at all, and what
-    /// was removed is found by reading the bin rather than by reading the result.
+    /// Cancels the sweep between entries. A cancellation part way through raises: the caller gets no
+    /// result, and what was removed is found by reading the bin.
     /// </param>
-    /// <returns>
-    /// What was removed and what could not be reached. Naming no volume covers every mounted volume that
-    /// can hold a Recycle Bin; a machine with none of those covers nothing, and that is an empty operation
-    /// reporting nothing removed and no failures.
-    /// </returns>
+    /// <returns>What was removed and what could not be reached.</returns>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
     /// </exception>
@@ -258,48 +250,29 @@ public static class RecycleBin
         return emptied with { Elapsed = stopwatch.Elapsed };
     }
 
-    /// <summary>
-    /// Restores items from the Recycle Bin to the paths they were deleted from.
-    /// </summary>
+    /// <summary>Restores items from the Recycle Bin to the paths they were deleted from.</summary>
     /// <param name="items">
-    /// The entries to restore, as a listing returned them. An entry whose record cannot be read is a failure
-    /// rather than an exception, reported against the entry's own record inside the bin, because a restore
-    /// that cannot say where a payload came from has nothing to restore it to.
+    /// The entries to restore, as a listing returned them. An entry whose record cannot be read is a
+    /// failure rather than an exception, reported against the entry's own record inside the bin.
     /// </param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="RestoreOptions.Default"/>.
-    /// <see cref="RestoreOptions.DirectoryConflict"/> and <see cref="RestoreOptions.FileConflict"/>
-    /// decide what a restore does about a path that is already occupied.
+    /// <see langword="null"/> means <see cref="RestoreOptions.Default"/>.
+    /// <see cref="RestoreOptions.FileConflict"/> and <see cref="RestoreOptions.DirectoryConflict"/>
+    /// decide what a restore does about an occupied path.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the work between entries and between volumes. A cancelled restore raises without returning a
-    /// result: a restore is not transactional, so what was already put back is found by listing the bin
-    /// rather than by reading a result.
+    /// Cancels the work between entries. A cancelled restore raises without returning a result: what was
+    /// already put back is found by listing the bin.
     /// </param>
     /// <returns>
-    /// What every entry became, in the order the entries were passed in whatever order the work itself
-    /// finished in. Each entry's payload is moved to the path its record names and its record deleted, so a
-    /// restored item leaves the Recycle Bin rather than being copied out of it; a move that fails leaves the
-    /// entry whole and restorable, and a delete that fails leaves the file already back where the caller
-    /// asked with its entry still in the bin.
-    /// <para>
-    /// A move the file system refuses is asked again rather than given up on, up to
-    /// <see cref="RestoreOptions.MaxAttempts"/> times, under one <see cref="RestoreOptions.OverallTimeout"/>
-    /// budget for the whole call. What it is, and a destination somebody lets go of half way through, is
-    /// restored; what stays held is reported carrying the attempts it was actually given in
-    /// <see cref="RecycleFailure.Attempts"/>.
-    /// </para>
-    /// <para>
-    /// Carries no machine gate, so it is available on a machine too old to write a record. A merge that
-    /// cannot place a file of its tree puts that file back into the Recycle Bin with a record of its own,
-    /// which is this library's version 2 like any other — so on such a machine that entry is restorable
-    /// through this library and not through Explorer's own Restore.
-    /// </para>
+    /// What every entry became, in the order the entries were passed in. A move the file system refuses is
+    /// tried again up to <see cref="RestoreOptions.MaxAttempts"/> times, under one
+    /// <see cref="RestoreOptions.OverallTimeout"/> budget for the whole call; what stays held is reported
+    /// carrying the attempts it was given in <see cref="RecycleFailure.Attempts"/>.
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="items"/> is <see langword="null"/>.</exception>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled before the work started, or between entries
-    /// and between volumes.
+    /// <paramref name="cancellationToken"/> was cancelled.
     /// </exception>
     public static async Task<RecycleBinRestoreResult> RestoreAsync(
         IReadOnlyList<RecycleBinItem> items,
@@ -326,40 +299,33 @@ public static class RecycleBin
         return restored.WithElapsed(stopwatch.Elapsed);
     }
 
-    /// <summary>
-    /// Restores every entry in every volume group of a listing, to the paths they were deleted from.
-    /// </summary>
+    /// <summary>Restores every entry in every volume group of a listing.</summary>
     /// <param name="volumes">
-    /// The groups to restore, as <see cref="RecycleBinContents.Items"/> returned them — or any subset of
-    /// them, filtered by the caller. A group holding nothing contributes nothing. A <see langword="null"/>
-    /// group is an <see cref="ArgumentException"/> rather than a failure entry: it has no entries to restore
-    /// and no volume root to name, so there is no path to report it at and nothing to say which volume could
-    /// not be answered.
+    /// The groups to restore, as <see cref="RecycleBinContents.Items"/> returned them, or any subset of
+    /// them. A group holding nothing contributes nothing. An entry named twice is restored once and
+    /// reported.
     /// </param>
     /// <param name="options">
-    /// Settings. <see langword="null"/> means <see cref="RestoreOptions.Default"/>.
-    /// <see cref="RestoreOptions.DirectoryConflict"/> and <see cref="RestoreOptions.FileConflict"/>
-    /// decide what a restore does about a path that is already occupied.
+    /// <see langword="null"/> means <see cref="RestoreOptions.Default"/>.
+    /// <see cref="RestoreOptions.FileConflict"/> and <see cref="RestoreOptions.DirectoryConflict"/>
+    /// decide what a restore does about an occupied path.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the work between entries and between volumes. A cancelled restore raises without returning a
-    /// result: a restore is not transactional, so what was already put back is found by listing the bin
-    /// rather than by reading a result.
+    /// Cancels the work between entries and between volumes. A cancelled restore raises without returning
+    /// a result: what was already put back is found by listing the bin.
     /// </param>
     /// <returns>
     /// What every entry became, in the order the groups were passed in and the entries sat inside them. The
-    /// groups are restored as one batch, so the answer of a group of fifty volumes is the answer of the
-    /// fifty thousand entries they hold rather than fifty answers. An entry named twice is restored once and
-    /// reported, because the group it arrived in does not decide which volume it came from.
+    /// groups are restored as one batch.
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="volumes"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">
-    /// One of the groups is <see langword="null"/>. Nothing was attempted and every other group was left
-    /// alone, because the argument is settled before any entry is read.
+    /// One of the groups is <see langword="null"/>. It has no entries to restore and no volume root to
+    /// name, so there is no path to report it at. Nothing was attempted and every other group was left
+    /// alone.
     /// </exception>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled before the work started, or between entries
-    /// and between volumes.
+    /// <paramref name="cancellationToken"/> was cancelled.
     /// </exception>
     public static async Task<RecycleBinRestoreResult> RestoreAsync(
         IReadOnlyList<RecycleBinVolumeContents> volumes,
@@ -382,21 +348,15 @@ public static class RecycleBin
             .ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Reports whether the Recycle Bin is in use for a volume, and why.
-    /// </summary>
+    /// <summary>Reports whether the Recycle Bin is in use for a volume.</summary>
     /// <param name="volumeRoot">Volume root to inspect, such as <c>"X:\\"</c>.</param>
-    /// <param name="cancellationToken">Cancels the wait.</param>
+    /// <param name="cancellationToken">Checked before the work starts.</param>
     /// <returns>
     /// The status of that volume. A volume whose own setting was never recorded answers
-    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/>: unproven, never enabled, and refused
-    /// under the default <see cref="NoRecycleBinAction.Throw"/>.
+    /// <see cref="RecycleBinAvailabilityReason.Indeterminate"/>, and is refused under the default
+    /// <see cref="NoRecycleBinAction.Throw"/>.
     /// </returns>
-    /// <remarks>
-    /// A configuration answer is not a prediction. A volume mounted after the call, or a policy applied
-    /// after it, changes the answer without this call having been wrong. Nothing is cached, so each call
-    /// asks the question again.
-    /// </remarks>
+    /// <remarks>The answer is not cached: a change made after the call is seen by the next one.</remarks>
     /// <exception cref="ArgumentException"><paramref name="volumeRoot"/> is null, empty or whitespace.</exception>
     public static Task<RecycleBinStatus> GetStatusAsync(
         string volumeRoot,
