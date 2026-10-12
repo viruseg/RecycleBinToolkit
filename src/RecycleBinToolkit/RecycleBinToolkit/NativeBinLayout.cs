@@ -103,17 +103,14 @@ internal static class NativeBinLayout
     /// <param name="destination">Receives <see cref="StemLength"/> characters from the alphabet Windows uses.</param>
     /// <remarks>
     /// <b>The fallback, not the ordinary answer.</b> <see cref="BinStemSequencer"/> hands out names that
-    /// climb, because a directory's index is ordered and appending at its right edge keeps every write of
-    /// a batch in the same leaf instead of scattering them over a million kilobytes of index. This is what
-    /// that sequencer falls back on: a bin directory it could not walk, and a stem space it has used up.
-    /// Neither is a shape an ordinary delete is in.
+    /// climb, because a directory's index is ordered and appending at its right edge keeps every write of a
+    /// batch in the same leaf instead of scattering them. This is what that sequencer falls back on: a bin
+    /// directory it could not walk, and a stem space it has used up. Neither is a shape an ordinary delete
+    /// is in.
     /// <para>
-    /// What the two paths share is that nothing is probed. Both names this becomes are refused by the
-    /// filesystem if they are taken — the record is created with <see cref="FileMode.CreateNew"/>, which
-    /// fails rather than overwrites, and a move onto a name that exists fails rather than replacing it. A
-    /// payload left behind by a crash with no record of its own therefore cannot be overwritten and
-    /// cannot be silently joined to the wrong record; it costs the caller one path that did not move, and
-    /// the caller gives that path a fresh name.
+    /// What the two paths share is that nothing is probed: both names this becomes are refused by the
+    /// filesystem if they are taken, so a payload left behind by a crash with no record of its own cannot be
+    /// overwritten nor silently joined to the wrong record.
     /// </para>
     /// </remarks>
     internal static void NextStem(Span<char> destination)

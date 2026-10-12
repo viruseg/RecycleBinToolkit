@@ -7,43 +7,24 @@ namespace RecycleBinToolkit;
 /// Hands out entry names for one bin directory in an order that keeps writing to it in one place.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <b>Why an order at all.</b> A bin directory is one directory, and a directory of a few thousand entries
-/// is a B-tree of index pages rather than a list: a few kilobytes a leaf, sixty thousand names a couple of
-/// megabytes of index, more than a CPU holds. A name drawn at random is inserted wherever its sort order
-/// falls, so every write of a batch lands in a different leaf and the directory's own metadata is read and
-/// dirtied over and over. Names that climb are appended at the right edge instead, and the leaf they go
-/// into is the leaf the previous one went into.
-/// </para>
-/// <para>
-/// <b>A stem is the whole of what is remembered, and not the extension with it.</b>
-/// <c>$I000000.txt</c> and <c>$I000000.bin</c> are two names a filesystem would happily hold at once, so a
-/// set keyed on the name minus its marker would let both exist and hand the same index to two files whose
-/// extensions differ — which puts one write at each end of the index again and gives back everything the
-/// order was for. Keyed on the stem, one index is one index whatever it carries, and the pair
-/// <c>$I000000.ext</c> and <c>$R000000.ext</c> stays adjacent in the sort order where the leaf is.
-/// </para>
-/// <para>
-/// <b>What this is not is a check on whether a name is free.</b> The walk sees a bin as it was when it
-/// looked, which is a statement about the past rather than a promise about the present: another process
-/// can create a name in between. What stops that name being overwritten is this library's own
-/// <see cref="FileMode.CreateNew"/> on the record, which is where it was before this existed and is
-/// unchanged; <see cref="NameCollision.IsTaken"/> judges the refusal and is unchanged too. The set is
-/// here to keep a batch climbing rather than to make it safe, and a name that slips in is a name the
-/// create refuses and the caller is given a fresh one of.
-/// </para>
-/// <para>
-/// <b>The walk is paid once per volume per operation, not once per path.</b> A delete of a single file into
-/// a bin holding thirty thousand entries therefore costs one directory listing that deleting ten thousand
-/// at once would have cost the same. That is the shape this trades for, and it was taken because the walk
-/// is bounded by the bin and the per-path work is not, and because <see cref="NativeBinLister"/> already
-/// pays the same walk on every listing of the same directory.
-/// </para>
-/// <para>
-/// One thread, and no lock: the runner that owns a sequencer is single-threaded by design — see the note
-/// on <see cref="NativeRecycleRunner"/> — and two operations in one process get two sequencers over one
-/// directory, which is a collision the create above already answers.
-/// </para>
+/// <list type="bullet">
+/// <item>A bin directory of a few thousand entries is a B-tree of index pages, and a name drawn at random is
+/// inserted wherever its sort order falls, so every write of a batch lands in a different leaf. Names that
+/// climb are appended at the right edge instead.</item>
+/// <item>The set is keyed on the stem, not on the name minus its marker: <c>$I000000.txt</c> and
+/// <c>$I000000.bin</c> are two names a filesystem would hold at once, and keying on the part without the
+/// extension would hand one index to two files and put one write at each end of the index again.</item>
+/// <item>This is not a check on whether a name is free. The walk sees a bin as it was when it looked, and
+/// what stops a name slipping in is this library's own <see cref="FileMode.CreateNew"/> on the record,
+/// which is unchanged, with <see cref="NameCollision.IsTaken"/> judging the refusal. The set is here to keep
+/// a batch climbing rather than to make it safe.</item>
+/// <item>The walk is paid once per volume per operation, not once per path, which is bounded by the bin
+/// where the per-path work is not.</item>
+/// <item>One thread and no lock: the runner that owns a sequencer is single-threaded by design, and two
+/// operations in one process get two sequencers over one directory, which the create above already
+/// answers.</item>
+/// </list>
+/// Nothing here is measured: the ordering is a hypothesis about how a directory's index behaves.
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal sealed class BinStemSequencer

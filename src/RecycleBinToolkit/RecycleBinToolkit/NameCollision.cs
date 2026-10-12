@@ -2,28 +2,14 @@ namespace RecycleBinToolkit;
 
 /// <summary>
 /// Whether a refusal is a name this library drew being taken, and how many names one item is given before
-/// that stops being worth another. Shared by the two paths that draw a name of their own,
-/// <see cref="NativeRecycleRunner"/> and <see cref="RestoreRunner"/>.
+/// that stops being worth another.
 /// </summary>
 /// <remarks>
-/// <b>One judgment, because two of them is how this one was wrong twice.</b> Each of those classes had its
-/// own copy of the comparison, they had drifted apart in the type they took, and the masking landed on the
-/// restore path first and in the recycle runner afterwards — a case was written for the recycle runner and
-/// none for the other. They share this now, so there is no second copy to find.
+/// Shared by the two paths that draw a name of their own, <see cref="NativeRecycleRunner"/> and
+/// <see cref="RestoreRunner"/>, so there is one copy of the comparison to find.
 /// <para>
-/// <b>What is answered here is whether a refusal was a name being taken, and how many names one item may be
-/// given.</b> How many times an item is asked again is <see cref="RecycleBinOptions.MaxAttempts"/>'s and not
-/// this class's, and it asks again on the same name: a locked file is not answered with a different one here,
-/// it is asked again by the caller's own budget.
-/// </para>
-/// <para>
-/// <b>The comparison is witnessed; the branch either call site takes is not.</b>
-    /// <c>NativeBinSuite.ATakenNameIsRecognisedByItsCodeAndALockedFileIsNot</c> stages the refusals the judgment
-    /// has to tell apart and reads them back through here. What no run can arrange is the collision that reaches
-    /// the branch: <see cref="BinStemSequencer"/> starts above every name in the bin and moves on by one, so
-    /// making it land on a taken name would take another process writing to the same bin at that instant, and
-    /// making <see cref="RestorePathPlanner.WithFreeNumber"/> do it would take a hook inside the library rather
-    /// than an arrangement in a test.
+/// How many times an item is asked again is <see cref="RecycleBinOptions.MaxAttempts"/>'s and not this
+/// class's, and it asks again on the same name: a locked file is not answered with a different one here.
 /// </para>
 /// </remarks>
 internal static class NameCollision

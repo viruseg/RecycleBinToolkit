@@ -137,7 +137,7 @@ internal static partial class RecycleBinRegistry
     /// or into <see cref="RecycleBinVolumePolicy.VolumeRecycleSetting.Recycled"/>. Windows writes that
     /// key only for volumes it has configured a bin for, so a volume with no key at all has never been
     /// given one — reporting it as recycling would answer "Enabled" for a volume where a delete is
-    /// removed for good, which is the failure this library exists to prevent.
+    /// deleted permanently, which is the failure this library exists to prevent.
     /// </para>
     /// </remarks>
     /// <param name="volumeGuidKeyName">

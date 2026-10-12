@@ -168,7 +168,7 @@ public sealed class RecycleBinResult
     /// A batch that rejects some of its paths before the move comes back needing the two
     /// failure lists joined. Rebuilding it through the constructor that has no
     /// <see cref="PermanentlyDeletedPaths"/> would quietly reset it, and that is the field a caller
-    /// needs to learn that a file was removed for good.
+    /// needs to learn that a file was deleted permanently.
     /// </remarks>
     /// <param name="failures">The failures the copy should carry, in the order they should be read.</param>
     internal RecycleBinResult WithFailures(IReadOnlyList<RecycleFailure> failures) =>

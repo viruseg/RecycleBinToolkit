@@ -94,14 +94,11 @@ internal static class VolumeSeekPenalty
     /// </remarks>
     internal const int MechanicalReadDegreeCap = 8;
 
-    /// <summary>
-    /// The fewest threads a local volume is read on, however the driver answered.
-    /// </summary>
+    /// <summary>The fewest threads a local volume is read on, however the driver answered.</summary>
     /// <remarks>
-    /// Below four the cold measurements are still steeply improving: on a mechanical volume they went
-    /// 73.1, 23.7 and 13.6 s for one, two and three threads. Four is the floor rather than a claim that
-    /// fewer would be worse — it is the smallest figure this machine was measured at, and a wider one
-    /// should re-measure before moving it.
+    /// Four is a floor rather than a claim that fewer would be worse: it is the smallest figure the cold sweep
+    /// measured at, where the curve was still improving steeply below it. A wider one should re-measure before
+    /// moving it.
     /// </remarks>
     internal const int ReadDegreeFloor = 4;
 
@@ -138,32 +135,21 @@ internal static class VolumeSeekPenalty
         return answered;
     }
 
-    /// <summary>
-    /// How many threads may work on a volume's Recycle Bin at once.
-    /// </summary>
+    /// <summary>How many threads may read one volume's Recycle Bin at once.</summary>
     /// <param name="volumeRoot">Volume root, such as <c>"X:\\"</c>.</param>
     /// <returns>
-    /// How many threads read this volume's bin: one per core for a solid-state volume, two per core for a
-    /// mechanical one, each capped where a cold sweep stopped improving, and one for a share.
+    /// One per core for a solid-state volume, two per core for a mechanical one, each capped where a cold
+    /// sweep stopped improving, and one for a share.
     /// </returns>
     /// <remarks>
-    /// Every answer but a share's is above one, and that is the point of the change. The rule this replaces
-    /// read one thread off a mechanical disk — which is right when the work is <em>writing</em> a bin, where
-    /// every record lands in one directory — and applied it to reading one as well. Measured over 30,010
-    /// records cold on a mechanical volume, one thread took 73.1 s where eight take 7.7 s: a factor of nine
-    /// and a half, given away by the rule.
-    /// <para>
-    /// The two kinds scale differently, and this is where the driver's answer is still worth having. On a
-    /// solid-state volume the curve keeps improving to eight threads and is flat after it — 18.0 s at six,
-    /// 16.1 s at eight, 16.1 s at sixteen. On a mechanical one it peaks at eight and then falls away, because
-    /// each further request in flight is another seek for the head to interleave. Sixteen measured 9.6 s
-    /// against 7.7 s at eight over three passes each, so the two caps differ in why they exist rather than
-    /// in what they are.
-    /// </para>
-    /// <para>
-    /// A share is still one. Its cost is network latency, which multiplying does not reduce, and
-    /// <see cref="Classify"/> never asked it anything.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>A mechanical volume peaks at <see cref="MechanicalReadDegreeCap"/> on a cold read and falls away
+    /// after it, because each further request in flight is another seek for the head to interleave.</item>
+    /// <item>A solid-state volume keeps improving to <see cref="SolidStateReadDegreeCap"/> and is flat after
+    /// it, so the two caps differ in why they exist rather than in what they are.</item>
+    /// <item>A share is one: its cost is network latency, which multiplying does not reduce.</item>
+    /// </list>
+    /// The cold sweep these figures come from is in AGENTS.md.
     /// </remarks>
     internal static int DegreeOfParallelism(string volumeRoot)
     {

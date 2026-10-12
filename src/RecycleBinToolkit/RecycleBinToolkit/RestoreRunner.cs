@@ -6,55 +6,24 @@ using System.Threading.Channels;
 
 namespace RecycleBinToolkit;
 
-/// <summary>
-/// Moves entries out of the Recycle Bin and back to the paths they were deleted from.
-/// </summary>
+/// <summary>Moves entries out of the Recycle Bin and back to the paths they were deleted from.</summary>
 /// <remarks>
-/// Synchronous, because everything it does blocks: a file move is a metadata operation the thread waits on.
-/// It is only ever given a thread from the pool, never a caller's.
-/// <para>
-/// <b>The order of the two actions is the whole design, and it is not interchangeable.</b> The payload is
-/// moved out first and the <c>$I</c> record is deleted second. The other order — record first, payload
-/// second — leaves a payload in <c>$RECYCLE.BIN</c> that nothing describes when the move fails:
-/// <see cref="NativeBinEntries"/> cannot pair the two halves, no listing shows it, and nothing above this
-/// library can put it back, because a restore needs a record to say where a payload came from. Only
-/// <see cref="NativeBinEmptier"/> would ever collect it, and a caller who never empties their bin has lost
-/// the file. The chosen order's failure is the opposite shape: the file is already back where its caller
-/// expects it while its entry still shows in the bin — visible in a listing, reported by the result, and
-/// fixable by restoring that entry again.
-/// </para>
-/// <para>
-    /// <b>A refusal is not the end of one entry; the caller's budget is.</b> A move the filesystem will not
-/// make — a destination somebody is holding, a directory in the way of a file — is asked again, up to
-/// <see cref="RecycleBinOptions.MaxAttempts"/> times, and what is in the way is asked again with it rather
-/// than answered once before the first attempt.
-/// <see cref="RecycleBinOptions.OverallTimeout"/> bounds all of that, and it is one budget for the whole
-/// call: taken before any disk is read, so a run of refused entries cannot each spend a budget of their
-/// own and a slow disk cannot lengthen the one a fast disk is spending.
-/// </para>
-/// <para>
-/// <b>Nothing one entry does ends the call; the caller's own cancellation does.</b> A payload deleted since the
-/// listing, a destination occupied by the other kind, a record that cannot be read, an entry the caller named
-/// twice: each is one entry's answer, carried in <see cref="RecycleBinRestoreResult.Failures"/> with the code
-/// the filesystem gave where there was one, and the entries around it keep the outcomes they had. A caller
-/// restoring ninety entries gets ninety answers however many of them the disk would not allow, which is the
-/// only shape in which the failures list can be read as a list rather than as the exception that stopped the
-/// batch.
-/// </para>
-/// <para>
-/// A cancellation is not one of those answers. It raises <see cref="OperationCanceledException"/> out of
-/// <see cref="Run"/> and returns nothing, because a restore is not transactional and so what it got through
-/// is found by listing the bin — the same answer
-/// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleOptions?, CancellationToken)"/>
-/// gives for its own cancellation.
-/// </para>
-/// <para>
-    /// <b>The token is checked between entries, and which entry a cancellation lands on is not pinned here.</b>
-    /// Deciding it at a chosen entry would need a hook in this class, which is a change to the library rather
-    /// than to what is known about it. So the library promises the raise and nothing about the stopping point,
-    /// and <c>RestoreSuite.ACancelledRestoreRaisesAndLeavesNoHalfAnswer</c> is where that limit is written down.
-    /// </para>
-    /// </remarks>
+/// Synchronous: everything it does blocks, and it is only ever given a thread from the pool.
+/// <list type="bullet">
+/// <item>The payload moves out first and its record is deleted second. The other order leaves a payload that
+/// nothing describes when the move fails, which no listing shows and nothing can put back. This order's
+/// failure is the opposite shape: the file is already back and its entry is still in the bin.</item>
+/// <item>Each entry's outcome goes into a slot taken by its own position in the caller's list, and the lists
+/// are flattened in that order once every disk is done. The order work finished in is not an order a caller
+/// can rely on.</item>
+/// <item>Volumes are grouped by the physical disk behind them and each group runs as a loop, so two volumes on
+/// two devices are restored together and two on one device are not. See <see cref="RunDisk"/>.</item>
+/// <item>Inside one volume the entries move on that volume's own movers, over a channel that volume owns, so
+/// an entry starts moving as it is read rather than after the last one.</item>
+/// <item>A cancellation discards the slots. The entries not reached stay in the bin with their records beside
+/// their payloads, and a merge that had already set something down keeps it.</item>
+/// </list>
+/// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class RestoreRunner
 {
@@ -67,65 +36,32 @@ internal static class RestoreRunner
     /// </summary>
     private const double MaxJitterFraction = 0.2;
 
-    /// <summary>
-    /// Puts every entry back and reports what happened to each.
-    /// </summary>
+    /// <summary>Puts every entry back and reports what happened to each.</summary>
     /// <param name="items">
-    /// The entries to restore, as a listing returned them. Their order is the order the answer is reported
-    /// in.
+    /// The entries to restore, as a listing returned them. Their order is the order the answer is reported in.
     /// </param>
     /// <param name="options">
     /// Settings, normalised here rather than trusted: a caller-supplied <see cref="RecycleBinOptions"/> is
     /// not obliged to have been through <see cref="RecycleBinOptions.Normalize"/>.
     /// </param>
     /// <param name="cancellationToken">
-    /// Cancels the operation between entries and between volumes. A cancellation raises
-    /// <see cref="OperationCanceledException"/> rather than returning a result, and the entries already put
-    /// back are left where they are.
+    /// Cancels the operation between entries and between volumes. A cancellation raises rather than returning
+    /// a result.
     /// </param>
-    /// <returns>
-    /// What every entry became. The elapsed time is zero because the caller measures the wait instead.
-    /// </returns>
+    /// <returns>What every entry became, with a zero elapsed time the caller overwrites with its own.</returns>
     /// <remarks>
-    /// <b>Each entry's outcome goes into a slot taken by its own position in the caller's list, and the
-    /// lists are flattened in that order once every disk is done.</b> That is what
-    /// <see cref="NativeBinLister"/> does with the volumes it reads, and the reason is the same one: the
-    /// order work finished in is not an order a caller can rely on, and an answer that moved with the
-    /// machine's load could not be compared with the next call's.
-    /// <para>
-    /// <b>The work is split by the physical disk behind each volume, not by the volume.</b> Two volumes on two
-    /// devices are restored together; two volumes on one device are not, because they are two directories
-    /// sharing one head. <see cref="RunDisk"/> is the whole of the second half, and it is a loop rather than
-    /// a number: a volume's movers are opened and joined before the next volume's are asked for, so nothing
-    /// decides at run time whether two volumes on one disk may move at once. The key is the driver's own
-    /// answer through <see cref="PhysicalVolumeDisk"/>, and a volume that named no disk shares one group with
-    /// every other such volume — the conservative side, which is that two unknown volumes move one after
-    /// another. <see cref="PhysicalDiskKey"/> carries the caveat this rests on: a spanning or striped volume
-    /// is named after the storage it is a volume of, so two volumes can key alike while sharing more than
-    /// one head.
-    /// </para>
-    /// <para>
-    /// <b>Inside one volume, its entries move on that volume's own movers</b> — <see cref="MoveDegree"/> of
-    /// them, which is one until something measures the answer. The channel belongs to the volume rather than
-    /// to the disk for that reason: it is the queue those movers drain, and a channel shared across a
-    /// disk's volumes would be a pool two of them could both put work into, which is the one thing the loop
-    /// above exists to stop. Inside one disk its volumes are still read one after another, which is the
-    /// reading decision <see cref="ItemDetailLoader"/> already made rather than a new one: it reads volumes
-    /// in sequence because a single degree of parallelism would be wrong for one of them. The channel is
-    /// what makes a volume's entries start moving as they are read instead of after the last one, and it is
-    /// unbounded because that overlap is the point — a bound would put a limit on how far ahead of the movers
-    /// the reading may run, which is the reading's own figure to set and not this one's.
-    /// </para>
-    /// <para>
-    /// <b>The slots are what a cancellation throws away.</b> A caller who cancels is told the call stopped,
-    /// and the entries it had not reached are in the bin with their records still beside their payloads.
-    /// </para>
-    /// <para>
-    /// A merge is the exception, and the one that has moved something: its walk has already set down whatever
-    /// children it placed before the cancellation reached it, and the payload holds the rest. Nothing rolls any
-    /// of that back, and no slot is written for the entry either — so nothing reads the slots to say what went,
-    /// and the caller who wants that reads the bin.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>A refused move is asked again up to <see cref="RecycleBinOptions.MaxAttempts"/> times, with what
+    /// is in the way asked again alongside it. <see cref="RecycleBinOptions.OverallTimeout"/> bounds all of it
+    /// and is taken before any disk is read, so a run of refused entries cannot each spend a budget.</item>
+    /// <item>One entry's failure never ends the call. Each is that entry's answer in
+    /// <see cref="RecycleBinRestoreResult.Failures"/>, carrying the code the filesystem gave where there was
+    /// one, and the entries around it keep the outcomes they had.</item>
+    /// <item>A volume that named no disk shares one group with every other such volume, so two unknown volumes
+    /// move one after another. <see cref="PhysicalDiskKey"/> carries the caveat this rests on.</item>
+    /// <item>The token is checked between entries. Which entry a cancellation lands on is not pinned: the
+    /// library promises the raise and nothing about the stopping point.</item>
+    /// </list>
     /// </remarks>
     internal static RecycleBinRestoreResult Run(
         IReadOnlyList<RecycleBinItem> items,
@@ -186,14 +122,15 @@ internal static class RestoreRunner
     /// <b>This loop is the within-disk exclusion, and it is the whole of it.</b> Each volume's movers are
     /// opened, fed, joined and let go before the next volume's are opened, so two volumes sharing a physical
     /// disk are never moving at the same time — whatever <see cref="MoveDegree"/> answers, and however many
-    /// volumes the group holds. A remark saying that a degree of one is what keeps it so would be a promise
-    /// the next task breaks by raising the number; the loop cannot be raised.
-    /// <para>
-    /// Nothing a disk's volumes share survives between them: the channel, the movers, the entries already
-    /// answered and the put-back guard all belong to the volume <see cref="RunVolume"/> was given. That is
-    /// what makes the separation structural rather than a condition a worker applies to itself, and it is why
-    /// the disk group carries nothing but volumes.
-    /// </para>
+    /// volumes the group holds. Raising the loop's degree would break that; the loop itself cannot be raised.
+    /// <list type="bullet">
+    /// <item>Nothing a disk's volumes share survives between them: the channel, the movers, the entries
+    /// already answered and the put-back guard all belong to the volume <see cref="RunVolume"/> was given.
+    /// That makes the separation structural rather than a condition a worker applies to itself, and is why
+    /// the disk group carries nothing but volumes.</item>
+    /// <item>Two <em>disks</em> are two devices whose <c>$RECYCLE.BIN</c> directories nothing about them
+    /// contends for, so they run together.</item>
+    /// </list>
     /// </remarks>
     private static void RunDisk(
         RestoreDiskGroup disk,
@@ -238,35 +175,24 @@ internal static class RestoreRunner
         return opened;
     }
 
-    /// <summary>
-    /// Reads one volume's records and puts back what it read, on the movers this volume owns.
-    /// </summary>
+    /// <summary>Reads one volume's records and puts back what it read, on the movers this volume owns.</summary>
     /// <param name="pipeline">The volume's own channel, movers, put-back guard and answered set.</param>
     /// <param name="options">The normalised settings the restore runs under.</param>
     /// <param name="budget">The whole call's retry budget, which this volume shares with every other one.</param>
     /// <param name="slots">Where each entry's outcome is written, by position in the caller's list.</param>
     /// <param name="cancellationToken">Cancels the operation between entries.</param>
     /// <remarks>
-    /// The movers are threads of their own rather than pool tasks, which is the whole of why. A mover blocks
-    /// on a file move for as long as the disk takes, and the thread feeding this volume is already waiting on
-    /// it — so a pool task would be borrowing, from the pool the next disk's mover needs, a thread for work
-    /// that never yields. A machine with more disks than cores would otherwise wait for the pool to notice and
-    /// inject one.
-    /// <para>
-    /// The put-back guard is one per volume rather than one for the call, and so is the set of entries
-    /// already answered. Both follow from the scope: two equal entries are in the same volume group, so a
-    /// volume's own set answers each of them once; and two volumes of one disk never run together, so there
-    /// is nothing for a guard between them to arbitrate — while two <em>disks</em> are two devices whose
-    /// <c>$RECYCLE.BIN</c> directories nothing about them contends for.
-    /// </para>
-    /// <para>
-    /// <b>Nothing raised here is turned into an entry's answer.</b> A live cancellation reaches this method
-    /// from either side — from the reading, between two records, or from a mover, through
-    /// <see cref="Restore"/> and the put-back — and both are the caller's own cancellation. So the first one
-    /// raised is held back until every mover has finished and then re-raised as itself: the tokens are not
-    /// manufactured here, and an <see cref="AggregateException"/> would be a different exception from the one
-    /// this call promises.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>The movers are threads of their own rather than pool tasks. A mover blocks on a file move for as
+    /// long as the disk takes while the thread feeding this volume is already waiting on it, so a pool task
+    /// would be borrowing, from the pool the next disk's mover needs, a thread for work that never yields.</item>
+    /// <item>The put-back guard is one per volume rather than one for the call, and so is the set of entries
+    /// already answered. Both follow from the scope: two equal entries are in the same volume group, and two
+    /// volumes of one disk never run together.</item>
+    /// <item><b>Nothing raised here is turned into an entry's answer.</b> A live cancellation reaches this
+    /// method from either side, and both are the caller's own cancellation. The first one raised is held back
+    /// until every mover has finished and then re-raised as itself.</item>
+    /// </list>
     /// </remarks>
     private static void RunVolume(
         RestoreVolumePipeline pipeline,
@@ -356,45 +282,18 @@ internal static class RestoreRunner
         }
     }
 
-    /// <summary>
-    /// How many threads one volume's entries are put back on.
-    /// </summary>
+    /// <summary>How many threads one volume's entries are put back on.</summary>
     /// <param name="volumeRoot">The volume root the figure is asked for.</param>
     /// <returns>How many movers that volume's entries may be moving on at once.</returns>
     /// <remarks>
-    /// <b>One, and that is what was measured.</b> No existing table says how many <c>MoveFile</c> calls a
-    /// disk takes well, so none was borrowed from the reading figures; a restore was measured instead, on
-    /// one solid-state volume and two mechanical ones, over 300 files and again over 2000:
-    ///
-    /// <list type="bullet">
-    /// <item><description>threads 1: 250 / 327 / 197 ms — the fastest answer on every volume</description></item>
-    /// <item><description>threads 2: 408 / 473 / 502</description></item>
-    /// <item><description>threads 4: 1578 / 1678 / 1808</description></item>
-    /// <item><description>threads 8: 1915 / 1784 / 1832</description></item>
-    /// <item><description>threads 16: 1883 / 1642 / 1846</description></item>
-    /// </list>
-    ///
-    /// It falls away monotonically, to seven or nine times one thread, and the curve has the <em>same
-    /// shape on a solid-state volume as on both mechanical ones</em> — which is what says the cost is not
-    /// the seek penalty a spinning head would charge but contention, and that contention is the one
-    /// directory every entry on the volume has in common: its <c>$RECYCLE.BIN\&lt;SID\&gt;</c>, where each
-    /// entry's <c>$I</c> record is deleted. That is the writing table's own finding about one directory
-    /// taking no concurrent writers, reached here from the deleting side, and it is why <c>1</c> is the
-    /// answer for both kinds of drive rather than two different figures.
+    /// <b>One.</b> Measured over 300 and 2000 files on a solid-state volume and two mechanical ones, the
+    /// curve falls away monotonically to seven or nine times one thread and has the same shape on both kinds
+    /// of drive, so the cost is not the seek penalty but contention on the one directory every entry of the
+    /// volume shares — the one its records are deleted from. The sweep is in AGENTS.md.
     /// <para>
-    /// <b>Raising it widens one axis and only one.</b> It says how many movers a volume may read its own
-    /// records into and drain; it says nothing about which volumes run at the same time, because that is
-    /// <see cref="RunDisk"/>'s loop rather than a number, and no figure here can hand two volumes of one
-    /// disk a shared pool. What it must not become is a way to start movers over several volumes at once:
-    /// that would put two writers on one head, which is the reading table's own finding about writing a
-    /// directory and the reason <see cref="NativeRecycleRunner"/> is single-threaded.
-    /// </para>
-    /// <para>
-    /// The one axis that <em>does</em> pay is volumes on different physical disks, and it pays there
-    /// because they are different directories: 300 files each on a solid-state volume and a mechanical one
-    /// restore in 257 ms where the same two volumes one after another take 458 ms. The two mechanical
-    /// volumes, on one physical disk, take 482 ms — which is what running them one after another
-    /// costs, and what <see cref="RunDisk"/>'s loop exists to guarantee.
+    /// Raising it widens one axis only: how many movers a volume drains its own channel with. Which volumes
+    /// run together is <see cref="RunDisk"/>'s loop rather than a number, and this figure must not become a
+    /// way to start movers over several volumes at once — that would put two writers on one head.
     /// </para>
     /// </remarks>
     internal static int MoveDegree(string volumeRoot)
@@ -559,44 +458,24 @@ internal static class RestoreRunner
     /// <param name="position">That entry's position in the caller's list.</param>
     /// <param name="cancellationToken">Cancels the operation between this entry and the next.</param>
     /// <remarks>
-    /// What is in the way is asked about rather than assumed, because it is a fact about the disk and not
-    /// about this call: an entry whose path was taken again while it sat in the Recycle Bin must not be
-    /// moved over whatever is there now. Every answer the planner gives is acted on here, and each is a
-    /// whole answer — nothing outside this switch reaches the payload, and nothing here renames, moves or
-    /// removes what is already on disk except under <see cref="RestoreAction.Replace"/>, which the caller
-    /// asked for by name.
-    /// <para>
-    /// An entry that is not moved keeps its record and its place in the bin, which is what leaves a second
-    /// attempt worth making. Whether that is a conflict the caller asked about or a failure is the answer in
-    /// the options rather than in the action: both <c>Error</c> policies answer
-    /// <see cref="RestoreAction.Skip"/>, and only one of them also lands in
-    /// <see cref="RecycleBinRestoreResult.Failures"/>.
-    /// </para>
-    /// <para>
-    /// <b>What goes wrong here is an answer rather than an exception.</b> Of two entries the caller named
-    /// twice one is moved and the other is reported and not moved, because one has already been answered and
-    /// a second would move one payload twice or report one collision twice. And a refusal from the
-    /// filesystem — a payload deleted since the listing, a destination occupied by the other kind under a
-    /// policy that asked to overwrite it, a record that cannot be read — becomes a
-    /// <see cref="RecycleFailureStage.RestoreFailed"/> carrying the code it raised, whichever policy asked
-    /// for the move. Only what the filesystem itself raises on these paths is caught, so a defect here still
-    /// surfaces rather than being reported as a disk that said no.
-    /// </para>
-    /// <para>
-    /// <b>The loop is this entry's own, not a round shared with the batch.</b> A mover thread holds one entry
-    /// at a time, so a round would drive entries that had already been answered; and
-    /// <see cref="RestoreOutcome.Attempts"/> is the number of times <em>this</em> payload was put down, which
-    /// is what <see cref="RecycleFailure.Attempts"/> is documented to be and what a round number is not. The
-    /// budget is <see cref="RestoreBudget"/> rather than a fresh one per entry, so a run of refused entries
-    /// cannot each take a whole budget of their own.
-    /// </para>
-    /// <para>
-    /// <b>The conflict is asked again on every attempt rather than answered once before the loop.</b> After a
-    /// refused overwrite the destination holds whatever the last attempt left there, and deciding against the
-    /// path the first attempt chose is how <see cref="RestoreAction.Replace"/> ends up clobbering a file it no
-    /// longer means to. A re-decision may therefore answer something else altogether — a directory now in the
-    /// way where a file was, a free path where something was — and that answer is acted on like any other.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>What is in the way is asked about on every attempt rather than assumed, because it is a fact
+    /// about the disk rather than about this call. A re-decision may answer something else altogether, and
+    /// that answer is acted on like any other.</item>
+    /// <item>An entry that is not moved keeps its record and its place in the bin, which is what leaves a
+    /// second attempt worth making. Whether that is a conflict or a failure is the answer in the options:
+    /// both <c>Error</c> policies answer <see cref="RestoreAction.Skip"/>, and only one also lands in
+    /// <see cref="RecycleBinRestoreResult.Failures"/>.</item>
+    /// <item>What goes wrong here is an answer rather than an exception. Of two entries named twice one is
+    /// moved and the other is reported, and a refusal from the filesystem becomes a
+    /// <see cref="RecycleFailureStage.RestoreFailed"/> carrying the code it raised. Only what the filesystem
+    /// raises on these paths is caught, so a defect here still surfaces.</item>
+    /// <item>The loop is this entry's own. A mover thread holds one entry at a time, so a round shared with
+    /// the batch would drive entries already answered, and <see cref="RestoreOutcome.Attempts"/> is the number
+    /// of times this payload was put down. The budget is the call's rather than a fresh one per entry.</item>
+    /// <item>Nothing here renames, moves or removes what is already on disk except under
+    /// <see cref="RestoreAction.Replace"/>, which the caller asked for by name.</item>
+    /// </list>
     /// </remarks>
     private static void Restore(
         RecycleBinItem item,
@@ -717,7 +596,7 @@ internal static class RestoreRunner
     }
 
     /// <summary>
-    /// An entry that did not come back, under the path it is to be reported at and the code the filesystem
+    /// An entry that was not restored, under the path it is to be reported at and the code the filesystem
     /// gave for it.
     /// </summary>
     /// <param name="path">The path the failure names: where the entry was to land, or — where nothing could be read about where it came from — its own record.</param>
@@ -811,36 +690,22 @@ internal static class RestoreRunner
     /// </param>
     /// <param name="wantedPath">The path the entry's own record named, which is what a free name is taken beside.</param>
     /// <remarks>
-    /// <b>A name this library chose is not a failed attempt, and this loop is why.</b> Under
-    /// <see cref="RestoreAction.Rename"/> the target is a free name this code picked, and somebody else can
-    /// take it between the query and the move; the next free name is taken and the move made again, inside
+    /// <list type="bullet">
+    /// <item>A name this library chose is not a failed attempt. Under <see cref="RestoreAction.Rename"/>
+    /// somebody else can take the free name between the query and the move, and the next one is taken inside
     /// the same attempt. <see cref="RecycleBinOptions.MaxAttempts"/> is spent on the filesystem refusing the
-    /// move, not on somebody else being faster at naming files. A refusal under any other action, and any
-    /// refusal that is not a name being taken, leaves this method by raising.
-    /// <para>
-    /// The names are counted against <see cref="NameCollision.NameAttempts"/> so that a name taken on every
-    /// attempt cannot loop here for ever, and bounded at that because the probability of one is about two in
-    /// a billion. What <see cref="NameCollision.IsTaken"/> is compared against was measured rather than
-    /// assumed, and the measurement is written down there.
-    /// </para>
-    /// <para>
-    /// A directory is one <see cref="Directory.Move(string, string)"/> rather than a walk of what is inside
-    /// it. Windows moves a whole directory to a free name in a single call, and that is the shape nearly
-    /// every directory restore takes; a destination something is already standing in is not a name that
-    /// call can land on.
-    /// </para>
-    /// <para>
-    /// The folder the payload lands in is made here rather than by the caller, because the folder
-    /// <see cref="RecycleBinItem.OriginalPath"/> sits in need not be there any more and neither move takes
-    /// a path whose own parent is missing. Belonging here rather than one level up is also what keeps an
-    /// entry that is not going to be placed from leaving a folder tree behind: nothing reaches this method
-    /// unless the entry is being put down.
-    /// </para>
-    /// <para>
-    /// One path is resolved once, without its trailing separator, and both the folder taken off it and the
-    /// move itself are given that. A record written from a path a caller spelled as a directory carries
-    /// the separator, and it is read as the same name by everything here rather than by half of it.
-    /// </para>
+    /// move, not on somebody else being faster at naming files.</item>
+    /// <item>The names are counted against <see cref="NameCollision.NameAttempts"/> so a name taken on every
+    /// attempt cannot loop here for ever.</item>
+    /// <item>A directory is one <see cref="Directory.Move(string, string)"/> rather than a walk of what is
+    /// inside it. A destination something is standing in is not a name that call can land on.</item>
+    /// <item>The folder the payload lands in is made here, because the folder
+    /// <see cref="RecycleBinItem.OriginalPath"/> sits in need not be there any more. Nothing reaches this
+    /// method unless the entry is being put down, so an entry that is not placed leaves no folder tree
+    /// behind.</item>
+    /// <item>One path is resolved once without its trailing separator, and both the folder taken off it and
+    /// the move itself are given that.</item>
+    /// </list>
     /// </remarks>
     private static void Place(RecycleBinItem item, ref RestoreDecision decision, string wantedPath)
     {
@@ -1030,27 +895,18 @@ internal static class RestoreRunner
     /// directory's outcome as much as of the directory's own.
     /// </returns>
     /// <remarks>
-    /// <b>Windows cannot merge two directories in one move,</b> so this is a walk rather than a call:
-    /// everything inside the payload is placed one entry at a time and then the payload, now holding nothing
-    /// but empty folders, is removed. The payload goes before the record, for the reason this class is
-    /// documented with.
-    /// <para>
-    /// A file the policy would not place is <em>still lying inside the payload</em>, and removing the
-    /// payload afterwards is what would take it with it. Leaving it there and keeping the entry was
-    /// considered and rejected: the record would then describe a directory whose payload no longer holds
-    /// what the record's size says, and the entry would look restorable for ever while never restoring.
-    /// So it goes back into the Recycle Bin as an entry of its own — through
-    /// <see cref="NativeRecycleRunner"/>, the machinery <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?},
-    /// RecycleOptions?, CancellationToken)"/> uses, rather than through a second implementation of writing
-    /// a record — and the caller is handed back a directory whose files are either at their paths or in the
-    /// bin again, with the answer saying which is which.
-    /// </para>
-    /// <para>
-    /// Which is also why the payload is removed only once the put-back has emptied it: a file left inside it
-    /// is a file the caller has already been told about and then lost, which is the one outcome a Recycle
-    /// Bin exists to prevent. An entry the walk could not even describe stops the removal outright for the
-    /// same reason.
-    /// </para>
+    /// Windows cannot merge two directories in one move, so this is a walk: everything inside the payload is
+    /// placed one entry at a time and the payload, now holding nothing but empty folders, is removed.
+    /// <list type="bullet">
+    /// <item>A file the policy would not place is still lying inside the payload, so it goes back into the
+    /// Recycle Bin as an entry of its own, through <see cref="NativeRecycleRunner"/> rather than a second
+    /// implementation of writing a record. The caller is handed back a directory whose files are either at
+    /// their paths or in the bin again, and the answer says which.</item>
+    /// <item>The payload is removed only once the put-back has emptied it, and an entry the walk could not
+    /// describe stops the removal outright. A file left inside it is a file the caller was told about and then
+    /// lost.</item>
+    /// <item>The payload goes before the record, for the reason this class is documented with.</item>
+    /// </list>
     /// </remarks>
     private static RestoreOutcome Merge(
         RecycleBinItem item,
@@ -1231,34 +1087,19 @@ internal static class RestoreRunner
     /// removed.
     /// </returns>
     /// <remarks>
-    /// Straight to <see cref="NativeRecycleRunner"/> rather than through <see cref="RecycleBatch"/>, and the
-    /// difference that matters is what sits in between: the volume gate, which acts on a volume the library
-    /// will not recycle on the caller's behalf. That question is already settled here — the volume is holding
-    /// the payload this file is being taken out of, and a bin this library could not write to is not one
-    /// holding a file it is restoring — so the gate is asked a question whose answer is yes, and under
-    /// <see cref="NoRecycleBinAction.DeletePermanently"/> it does not refuse the path but
-    /// <em>deletes it</em>, reporting it only in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>
-    /// rather than in the failures this method reads. A file destroyed that way leaves
+    /// <list type="bullet">
+    /// <item>Straight to <see cref="NativeRecycleRunner"/> rather than through <see cref="RecycleBatch"/>. The
+    /// volume gate sits in between and acts on a volume the library will not recycle on the caller's behalf:
+    /// under <see cref="NoRecycleBinAction.DeletePermanently"/> it would not refuse the path but delete it,
+    /// reporting that only in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>. That leaves
     /// <see cref="RecycleBinResult.Failures"/> empty, so the caller would be told the payload was dealt with
-    /// and it would be deleted with the file still inside.
-    /// <para>
-    /// Under the other two actions the gate is harmless here — a refused path arrives as a failure, and this
-    /// method withholds the removal of the payload when it sees one, so nothing is lost either way — which is
-    /// exactly why the dangerous case is the quiet one, and why this note is here rather than in a task.
-    /// </para>
-    /// <para>
-    /// One call for the whole list rather than one per file, so that the put-back is the
-    /// single writer it is documented to be and this library's own record writer is the only one in the
-    /// business.
-    /// </para>
-    /// <para>
-    /// <b>This is where a live cancellation becomes an exception rather than a check between entries.</b> The
-    /// token is handed both to the guard and to <see cref="NativeRecycleRunner"/>, and each raises
-    /// <see cref="OperationCanceledException"/> from inside this call rather than between two of them. The
-    /// caller of this method sits inside a try in <see cref="Restore"/>, so that exception reaches a filter
-    /// that must not name it — which is why <see cref="Restore"/>'s filter says so, and why it is written
-    /// down here as well as there.
-    /// </para>
+    /// and it would be deleted with a file still inside.</item>
+    /// <item>One call for the whole list rather than one per file, so the put-back is the single writer it is
+    /// documented to be.</item>
+    /// <item>This is where a live cancellation becomes an exception rather than a check between entries: the
+    /// token goes both to the guard and to <see cref="NativeRecycleRunner"/>, and each raises
+    /// <see cref="OperationCanceledException"/> from inside this call.</item>
+    /// </list>
     /// </remarks>
     private static int? PutBack(
         List<RecycleTarget> leftBehind,
@@ -1411,27 +1252,16 @@ internal static class RestoreRunner
     /// among the entries and each list in the caller's own order.
     /// </returns>
     /// <remarks>
-    /// Keyed without regard to case, as the root itself is: Windows writes <c>X:\</c> and <c>x:\</c> for the
-    /// same volume, and the two spellings would otherwise have the same disk read twice under two policies.
-    /// The root is a span over the entry's own path and is only turned into a string when a volume is seen
-    /// for the first time — the alternative is one string per entry to hold a root that is three characters
-    /// long.
-    /// <para>
-    /// A position is taken here, once, rather than resolved later by asking an entry which index it is: an
-    /// entry answers for its own identity rather than for its place, and a hash of every <c>$I</c> path on a
-    /// bin of tens of thousands buys nothing a number taken once does not. It is also what keeps the answer
-    /// in the caller's order — an entry's outcome goes into the slot this number gave it, whatever order the
-    /// work finished in.
-    /// </para>
-    /// <para>
-    /// One volume holds every copy of one entry, because an entry's volume is a prefix of its own record path.
-    /// That is what lets the entries already answered be a per-volume set rather than a per-call one: two
-    /// equal entries are answered in the same volume group, and a volume group is one volume's own.
-    /// </para>
-    /// <para>
-    /// A dictionary enumerates in the order its keys were added and nothing here removes one, so the volumes
-    /// come out in the order the entries first named them.
-    /// </para>
+    /// <list type="bullet">
+    /// <item>Keyed without regard to case, as the root itself is: Windows writes <c>X:\</c> and <c>x:\</c> for
+    /// the same volume, and two spellings would read one disk twice under two policies.</item>
+    /// <item>A position is taken here, once, rather than resolved later by asking an entry which index it is.
+    /// It is what keeps the answer in the caller's order whatever order the work finished in.</item>
+    /// <item>One volume holds every copy of one entry, because an entry's volume is a prefix of its own record
+    /// path. That is what lets the entries already answered be a per-volume set rather than a per-call
+    /// one.</item>
+    /// <item>Nothing removes a key, so the volumes come out in the order the entries first named them.</item>
+    /// </list>
     /// </remarks>
     private static List<RestoreVolumeWork> GroupByVolume(
         IReadOnlyList<RecycleBinItem> items,

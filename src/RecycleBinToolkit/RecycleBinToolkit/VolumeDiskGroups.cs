@@ -26,20 +26,16 @@ internal sealed record VolumeDiskGroup(PhysicalDiskKey? Disk, List<int> Position
 /// split on.
 /// </summary>
 /// <remarks>
-/// The partition number the driver answers with is left out, and the key is the disk's device type and
+/// <list type="bullet">
+/// <item>The partition number the driver answers with is left out, and the key is the disk's device type and
 /// number rather than the volume itself: two partitions of one disk are the case this exists for, and a key
-/// carrying the partition would put every volume in a group of its own.
-/// <para>
-/// <b>Volumes that named no disk are one group, not one group each.</b> A share and a volume whose driver
-/// declines are both a volume that could not say where its bytes are, and either may be sharing a head with
-/// the other — so the grouping answers the conservative thing, which is that they move one after another.
-/// The alternative looks faster and is not measured, and it would be a guess in the direction of
-/// contention.
-/// </para>
-/// <para>
-/// That group names no disk and is appended last whatever order the volumes arrived in, so a caller
-/// comparing two runs sees the same shape either way.
-/// </para>
+/// carrying the partition would put every volume in a group of its own.</item>
+/// <item><b>Volumes that named no disk are one group, not one group each.</b> A share and a volume whose
+/// driver declines are both a volume that could not say where its bytes are, and either may share a head
+/// with the other, so the grouping answers the conservative thing: they move one after another.</item>
+/// <item>That group names no disk and is appended last whatever order the volumes arrived in, so a caller
+/// comparing two runs sees the same shape either way.</item>
+/// </list>
 /// </remarks>
 [SupportedOSPlatform("windows6.0.6000")]
 internal static class VolumeDiskGroups

@@ -41,7 +41,7 @@ internal static class RecycleBinVolumePolicy
             return RecycleBinAvailabilityReason.DisabledByPolicy;
         }
 
-        // Enabled is the one answer that asserts a fact, and this library does not assert what it could
+        // Enabled is the one answer that reports a confirmed state, and this library does not report what it could
         // not read.
         if (driveType == DriveType.Unknown)
         {

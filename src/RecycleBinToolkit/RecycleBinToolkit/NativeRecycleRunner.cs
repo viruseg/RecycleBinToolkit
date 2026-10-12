@@ -36,18 +36,14 @@ internal static class NativeRecycleRunner
     /// <param name="cancellationToken">Cancels the operation between paths.</param>
     /// <returns>The outcome of the batch.</returns>
     /// <remarks>
-    /// <b>One thread, deliberately.</b> Every record written and every payload moved here goes into a
-    /// single directory — <c>&lt;volume&gt;$RECYCLE.BIN\&lt;SID&gt;\</c> — and a directory is the one thing
-    /// a filesystem cannot take concurrent writers on. Measured on this machine over a three-thousand file
-    /// batch, recycling three thousand paths took 542 files per second on one thread and 189 on eight, on a
-    /// solid-state volume: two and a half times worse, and worse still at every step between. The same
-    /// batch read back through the same code gains four and a half times from eight threads, because reading
-    /// a record changes nothing. That is the difference this measurement is about, and it is why the
-    /// parallelism that <see cref="NativeBinLister"/> uses is absent here.
-    /// <para>
-    /// Retries are per path rather than per batch: a move that fails is a property of one path, and
-    /// retrying the others would repeat work that already succeeded.
-    /// </para>
+    /// <list type="bullet">
+    /// <item><b>One thread, deliberately.</b> Every record written and every payload moved here goes into one
+    /// directory, and a directory is the one thing a filesystem cannot take concurrent writers on. Measured
+    /// over a three-thousand file batch, eight threads finish two and a half times slower than one. The sweep
+    /// is in AGENTS.md.</item>
+    /// <item>Retries are per path rather than per batch: a move that fails is a property of one path, and
+    /// retrying the others would repeat work that already succeeded.</item>
+    /// </list>
     /// </remarks>
     internal static RecycleBinResult Run(
         IReadOnlyList<RecycleTarget> targets,
