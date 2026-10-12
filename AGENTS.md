@@ -67,12 +67,13 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 211 registered cases, of which four are load cases, so `--all` runs 207 of them. The rest is
+There are 216 registered cases, of which four are load cases, so `--all` runs 212 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
 cases that recycle one and runs the cases that are about a volume with no bin. On `D:`, which has a bin:
-**197 pass and 10 skip**, with nothing failing — measured by one `--all` on `D:`. The collision case has
-since gained the refusal a recycle cannot raise and was re-run on its own there; the counts are the run's.
-A volume with no bin and a share are both unmeasured
+**202 pass and 10 skip**, with nothing failing — measured by one `--all` on `D:`, and the same run on
+`E:`. On `C:` it is **201 pass and 11 skip**, the extra one being
+`RestoreSuite.TwoVolumesOnOneDiskAreBothAnswered`, which asks for a second volume on the run's own disk
+and finds none there. A volume with no bin and a share are both unmeasured
 here: measure before quoting either. `--all` prints the counts, so a count in a document that disagrees
 with them is the document being wrong.
 
@@ -222,15 +223,37 @@ volume, and nothing above should be read as implying one. A machine with one vol
 change at all and is the common case. Anyone quoting a speed-up here is quoting something that was not
 measured.
 
+**The listing's axis is the number of volumes, and the restore's and the empty's is the disk.** That is a
+difference and not an oversight, so keep it: reading changes nothing, so two partitions of one disk being
+walked at once contend for nothing, while moving and deleting are the work that contends for a head. Any
+proposal to put the listing on the disk axis, or the other two on the count, is a change to a measured
+figure and goes through a measurement first.
+
 **Not measured: the oversubscription.** With `MaxDegreeOfParallelism = volumeRoots.Count` at the volume level
 and `DegreeOfParallelism` up to eight inside `Preload`, four volumes asked for with `PreloadItemDetails` on
 can put thirty-two threads in flight. That the pool copes is the only evidence there is; it was not measured
 under that combination. It is the shape to measure before changing either figure.
 
-**Do not extend this to the empty.** `NativeBinEmptier` is still sequential across volumes, and unlike a
-listing, an empty deletes: running several over one machine is a different question with different answers
-about interleaving and about what a partial failure means. Changing it is its own piece of work with its own
-measurements.
+**The empty is now split by disk too, and this is where it stopped.** `NativeBinEmptier.Empty` groups
+volumes by the physical disk they are partitions of and runs the groups together, the volumes of one disk
+one after another, through `RunDisk` — the restore's answer, and a different one from the listing's above.
+Each volume writes a slot taken by its position in the argument, so `VolumesEmptied` and `Failures` come
+back in the order the caller passed the roots rather than the order the threads finished, which is the only
+thing a caller can observe about the order. `VolumeDiskGroups` is the one place the rule lives, shared with
+the restore; a second copy of "which volumes share a head" would be free to drift.
+
+**Not measured: the gain.** No figure for "an empty of several volumes before → after" exists, on either
+kind of volume, and nothing above should be read as implying one. The argument is that two volumes on two
+devices share neither a head nor a directory, so what parallelism removes is one device's wait behind
+another's — that is an argument, and it is not a number. Anyone quoting a speed-up here is quoting
+something that was not measured, exactly as for the listing above.
+
+**Inside one disk the empty is unchanged**, and that is a decision rather than an omission. `Remove` deletes
+payload first and record second, sequentially, over one directory — the same directory that cannot take
+concurrent writers, which is why the recycle path is single-threaded. Parallelising it needs its own
+measurement, and the nesting the empty now sits inside (one thread per disk, with `DegreeOfParallelism` up
+to eight under it for the orphan-`$I` measuring pass) is the same unmeasured combination the listing and
+the restore already have.
 
 ### What a read actually costs, and what does not
 

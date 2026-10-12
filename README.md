@@ -292,6 +292,11 @@ The counts are exact rather than measured: every entry's own record carries its 
 totals are summed from the records being deleted. That also means a record whose payload is already gone
 is removed and counted. Neither figure is ever negative.
 
+`VolumesEmptied` and `Failures` are in the order the volumes were covered, not the order the disks
+finished. When several volumes are covered at once — `volumeRoot` is `null`, so the call reaches every
+mounted Fixed or Removable volume — each volume is written independently and the result is assembled
+afterwards, so the order is the one a caller can rely on across runs.
+
 ### `GetStatusAsync`
 
 Whether the Recycle Bin is in use for one volume.
@@ -576,10 +581,10 @@ The outcome of an empty. Immutable.
 
 | Member | Type | Description |
 | --- | --- | --- |
-| `VolumesEmptied` | `IReadOnlyList<string>` | Volume roots covered, each with a trailing separator. |
+| `VolumesEmptied` | `IReadOnlyList<string>` | Volume roots covered, each with a trailing separator. In the order they were covered, not the order the work finished. |
 | `ItemsRemoved` | `long` | Entries that left the Recycle Bin. Measured, never negative. |
 | `BytesFreed` | `long` | Bytes they occupied. Measured, never negative. |
-| `Failures` | `IReadOnlyList<RecycleFailure>` | Volumes that could not be emptied or measured. |
+| `Failures` | `IReadOnlyList<RecycleFailure>` | Volumes that could not be emptied or measured. In the same order, one volume's failures together. |
 | `Elapsed` | `TimeSpan` | Wall-clock time the caller waited. |
 
 ### `RecycleBinRestoreResult`
@@ -1054,6 +1059,12 @@ charges per file rather than bandwidth. Turning the bytes into a path and a time
 tenth of a microsecond, two parts in a thousand of it. That is why reading is one loop rather than a
 pipeline: there is nothing to overlap.
 
+An empty of several volumes runs the disks together rather than one after another, because two volumes on
+two devices share neither a head nor a directory and the wait one device puts in front of the other is
+removed. **That gain is reasoned, not measured** — there is no before-and-after figure for it here, and
+none of the tables above is a substitute. The sweep inside one volume is unchanged, and stays in sequence
+over one directory for the same reason writing a bin does.
+
 **The version requirement is a refusal, not a warning.** Windows 10 build 14393 is the first build
 that reads a version 2 index record. An older build does not reject one — it reads it as something it
 cannot use, so the item appears in the bin and cannot be restored from it. `RecycleAsync` therefore
@@ -1080,7 +1091,7 @@ the engine, over whatever the entry point resolved
    ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
    ├─ NativeRecycleRunner     record first, then the move; retries are per path
    ├─ NativeBinLister         pairs from the walk, every volume at once; records only under PreloadItemDetails
-   └─ NativeBinEmptier        payload first, then the record, counted from the walk
+   └─ NativeBinEmptier        payload first, then the record, counted from the walk; one group of volumes per disk
 
 the restore engine, over the entries a listing handed back
    ├─ RestoreRunner           payload first, then the record; one answer per entry, in the caller's order; one mover pool per volume; a refused move asked again
@@ -1110,6 +1121,17 @@ volumes of one disk run one after another, because they are two directories shar
 is a loop rather than a number, so no figure inside it can widen the gap. Within one volume, entries are
 moved on that volume's own movers, and each starts moving as its record is read rather than after the
 last one.
+
+**An empty splits the same way, and for the same reason.** Volumes on different physical disks are emptied
+together; the volumes of one disk run one after another. What it reports does not follow the threads:
+`VolumesEmptied` and `Failures` come back in the order the roots were passed, because each volume writes
+a slot of its own. Inside one volume the sweep is unchanged — payload first, then the record, in sequence
+over one directory.
+
+**The listing splits on the number of volumes instead, and that is a different question.** Reading changes
+nothing about the directory it reads, so two partitions of one disk are walked at once without contending
+for anything. Moving and deleting are the work that contends for a head, which is why the restore and the
+empty ask which disk is behind each volume and the listing does not.
 
 **The per-volume bin is the unit.** Each volume's `$RECYCLE.BIN\<SID>\` is walked directly, so naming
 a volume selects which directories to read and to empty — never a filter over an enumeration that
@@ -1160,7 +1182,9 @@ Stated plainly, because these are properties of Windows rather than choices.
   behaviour is recorded here.
 - **Emptying a large Recycle Bin is slow, and that is file deletion.** Measured: emptying roughly
   13,600 accumulated entries took 216 s. There is no progress callback to report from and no way to
-  make it incremental; a caller that needs responsiveness should empty one volume at a time.
+  make it incremental; a caller that needs responsiveness should empty one volume at a time. Volumes on
+  different physical disks are emptied together, which removes the wait one disk put in front of another,
+  but that is per disk and not per volume — the partitions of one disk still take their turn.
 
 ---
 
@@ -1203,7 +1227,7 @@ clear for that drive; a volume with no such key is answered `Indeterminate` — 
 `NoRecycleBinAction.Throw`. The run asks the library once which kind of volume it was given, and each
 case that needs the other kind skips rather than fails.
 
-The suite is a console application with no external packages: 210 cases covering batch and single-path
+The suite is a console application with no external packages: 216 cases covering batch and single-path
 recycling, per-item failure reporting, selective retry against a self-inflicted transient lock, long
 paths with no limit, concurrent callers, directories, 10 MB files, volumes with no Recycle Bin, and a
 ten-cycle stress run asserting 100 % Recycle Bin delivery. Listing, emptying and status checking are
@@ -1211,14 +1235,14 @@ covered by their own suites. The default run writes only inside the directory it
 `--scratch`. On a volume with no Recycle Bin the cases that recycle there skip rather than fail, and
 the cases that are about such a volume run instead of skipping.
 
-**Of the 211 cases, `--all` runs 207.** Four are load cases that run only on request: the ten-cycle stress
+**Of the 216 cases, `--all` runs 212.** Four are load cases that run only on request: the ten-cycle stress
 run, and the three cases that each move the whole 94-file fixture set in one call.
 `--all` and `--filter` never run them — `--load` runs those four cases and nothing else. Nothing is
 covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
 and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
-The remainder is the volume's decision rather than a flag's: **197 pass and 10 skip** where there is a
-bin, with nothing failing, measured by one `--all` on `D:`. The collision case has since gained the
-refusal a recycle cannot raise and was re-run on its own there; the counts are the run's. A volume with no
+The remainder is the volume's decision rather than a flag's: **202 pass and 10 skip** where there is a
+bin, with nothing failing, measured by one `--all` on `D:`, and the same run on `E:`. On `C:` it is
+**201 pass and 11 skip**. A volume with no
 Recycle Bin and a share are both unmeasured
 here — measure before quoting either. `--all` prints its own counts, so a figure that disagrees with them
 is the figure being wrong.
