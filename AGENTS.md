@@ -507,6 +507,50 @@ they are allowed to sit behind a flag:
 | `FacadeSuite.BatchOfGeneratedFilesIsRecycled` | `WorkflowSuite.FiveTouchedFilesAreAllRecycled`, `EmptySuite.EmptyReportsWhatItFreed` |
 | `WorkflowSuite.ReadPartialAndAppendThenRecycle` | `WorkflowSuite.FiveTouchedFilesAreAllRecycled` |
 
+## What README.md is for
+
+`README.md` answers three questions: **what this is, why you would reach for it, and what it will do
+to you.** A reader arrives from a search for "how do I delete a file to the Recycle Bin in .NET" and
+leaves able to write a call. Anything that does not serve that trip does not belong in the file.
+
+**Belongs:**
+
+- Contracts: what a method does, what a parameter means in that call, what comes back, what raises.
+- Order and shape guarantees a caller has to code against — which list is ordered by what.
+- Limits that are properties of Windows rather than choices made here, because a caller has to know
+  them and can do something about them.
+- Worked examples.
+- The version requirement, stated where a caller looks for it: `Requirements` and the method that
+  refuses.
+
+**Does not belong:**
+
+- How anything is implemented: architecture, components, threads, `$I` and `$R`, `$RECYCLE.BIN`,
+  registry keys, SIDs.
+- Why an approach was chosen over the alternatives. That is a decision record, and this is not one.
+- Measurements, benchmarks and their interpretation. A performance figure is not a contract unless a
+  caller changes their code because of it.
+- Anything about this repository's tests — what is covered, what is not, how to run the suite.
+
+**The test for a borderline paragraph: could a caller write different code because of this?** If
+yes, it is in the README. If the answer is "they would understand the library better", it is here.
+
+**Nothing gets deleted to satisfy that.** A fact that leaves the README changes homes, and the three
+are:
+
+| Where | What goes there |
+| --- | --- |
+| `AGENTS.md` | The rationale, the measurement, the architecture, the reasoning |
+| A comment on the code | A decision that belongs to one function rather than to the library |
+| The test project | Anything about how the behaviour is witnessed |
+
+So removing a README section is a move, not a cut, and a move that cannot find a home is a signal
+that the section was answering a question the README was never for.
+
+**Removing a section breaks its anchors.** Every `](#anchor)` pointing into it has to go in the same
+change — a dead link in a document is a defect the same as a claim that no longer matches the code.
+Check with a grep for the removed heading before finishing.
+
 ## README.md and ReadmeExamples.cs are one thing
 
 `README.md` is the documentation. `tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs` holds the
@@ -531,6 +575,45 @@ something that no longer builds.
 When a signature changes, both files change — the tables in README.md, the example in the README, and
 the method in `ReadmeExamples.cs`. A README claim that no longer matches the code is a defect the same
 as a failing test.
+
+## What the XML documentation is for
+
+**A public member's documentation is read in a tooltip, by someone who has already written the line
+above it.** It is a contract and nothing else: what the member does, what each parameter means in
+this call, what comes back, what is raised. It is not a second copy of the README and it is not a
+decision record.
+
+- **`<summary>` is one sentence.** If the second sentence is a different fact rather than a
+  continuation, it usually belongs in `<returns>`, in the README, or nowhere.
+- **A default belongs in the summary**, not in a remarks block under it. `Defaults to 6, clamped to at
+  least 1` is one line a caller sees without expanding anything; a `/// <remarks>The default is 6.
+  /// </remarks>` is two tags they have to expand to read.
+- **`<param>` describes that parameter's role in that member.** It does not restate the parameter
+  type, and it does not re-describe `RecycleBinOptions` on all seven methods of `RecycleBin`. The
+  boilerplate "Retry, verification and error-handling settings. `null` means
+  `RecycleBinOptions.Default`. `ThrowOnError` decides whether a failure raises." is a description of
+  a type and belongs on the type. Where a parameter has nothing to add to its own signature, omit
+  the tag entirely rather than writing something that restates the declaration.
+- **`<returns>` says what the caller gets**, including the empty and sentinel cases: whether a list
+  is empty, whether `null` means "none", what a count is measured from rather than computed after.
+- **`<exception>` documents only the intended contract.** Say what state the member left the caller
+  in — the file is still where it was — rather than narrating the path that led there.
+- **`<remarks>` survives only for a caveat the caller needs at the call site**, and only if it fits in
+  a sentence or two. A method whose contract needs an essay is a method whose essay belongs in the
+  README.
+- **Device structure stays out.** `$I`, `$R`, `$RECYCLE.BIN`, the SID, `NukeOnDelete`, `FILE_ID_INFO`
+  and the version 2 record layout are how the bin is built, not what a caller does. The one exception
+  is a fact a caller would trip over — that a restored path may carry a trailing separator, so
+  `File.Exists` answers false of a directory — and that is stated as the trap, not as the layout.
+- **Never reference a test.** No `<summary>`, `<remarks>`, `<param>`, `<returns>` or `<exception>`
+  anywhere in `src/` may mention a suite, a case, a test run or this repository's own coverage. The
+  dependency is one-directional: tests reference the library, the library never references the tests.
+  A coverage claim has no home in library prose — put it in the test that would change if it stopped
+  being true. Check with a grep before finishing.
+
+**Internal and private members keep their comments.** They are not shown to a caller, they are the
+right home for a note to the next reader, and a `remarks` on one of them costs nothing. The rules
+above are about the surface a caller sees, not about the code's readability.
 
 ## Claims
 
