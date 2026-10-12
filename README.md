@@ -188,7 +188,7 @@ Recycles a batch. This overload **never throws** for a per-item failure.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `filePaths` | `IReadOnlyList<string?>` | Paths to recycle. Entries may be null or missing; each is reported as a failure without aborting the batch. Repeated paths are recycled once. |
-| `options` | `RecycleOptions?` | Retry settings. `null` means `RecycleOptions.Default`. `ThrowOnError` is on this type but **not read here**: the batch reports every per-item failure in `Failures` rather than raising, so setting it changes nothing on this overload. Use `RecycleAsync(string?, …)` if you want a single failure to raise. |
+| `options` | `RecycleOptions?` | Retry settings, plus `NoRecycleBinAction` for a path on a volume that cannot recycle it — a refused path arrives in `Failures` at stage `NoRecycleBinOnVolume` rather than raising. `null` means `RecycleOptions.Default`. `ThrowOnError` is on this type but **not read here**: the batch reports every per-item failure rather than raising, so setting it changes nothing on this overload. Use `RecycleAsync(string?, …)` if you want a single failure to raise. |
 | `cancellationToken` | `CancellationToken` | Cancels the scan that validates the batch and the work between paths. A cancelled batch stops part way and raises `OperationCanceledException` carrying no result: which files went is found by reading the bin. |
 
 **Returns** a `RecycleBinResult` describing every item.
