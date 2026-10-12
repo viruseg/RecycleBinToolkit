@@ -1,7 +1,6 @@
 # RecycleBinToolkit
 
-Move files and directories to the Windows Recycle Bin from .NET, with per-item diagnostics that
-tell you *why* an item failed — and read, restore, empty, and inspect the Recycle Bin itself.
+High-performance .NET library for direct interaction with the Windows Recycle Bin without WinAPI or Shell COM abstractions (SHFileOperation, IFileOperation).
 
 ```csharp
 using RecycleBinToolkit;
