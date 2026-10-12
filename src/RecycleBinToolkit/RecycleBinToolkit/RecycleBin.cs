@@ -382,7 +382,7 @@ public static class RecycleBin
             .ConfigureAwait(false);
     }
 
-/// <summary>
+    /// <summary>
     /// Reports whether the Recycle Bin is in use for a volume, and why.
     /// </summary>
     /// <param name="volumeRoot">Volume root to inspect, such as <c>"X:\\"</c>.</param>

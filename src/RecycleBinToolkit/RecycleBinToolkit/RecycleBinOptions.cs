@@ -8,81 +8,62 @@ namespace RecycleBinToolkit;
 /// type exposes only the ones that operation reads: <see cref="RecycleOptions"/>,
 /// <see cref="RestoreOptions"/> and <see cref="GetItemsOptions"/>. Out-of-range values are clamped rather than
 /// rejected, so an unvalidated instance cannot produce a zero-attempt or negative-delay loop.
+/// <para>
+/// A property's contract is on the derived type that exposes it, which is the member a caller hovers; what
+/// is left here is the storage and a line naming the engine that reads it.
+/// </para>
 /// </remarks>
 public abstract class RecycleBinOptions
 {
     internal RecycleBinOptions() { }
 
-    /// <summary>How many times an item is attempted before it is reported as a failure. Defaults to <c>6</c>, clamped to at least 1.</summary>
+    /// <summary>
+    /// Attempts allowed for one item. Read by <see cref="NativeRecycleRunner"/> and <see cref="RestoreRunner"/>,
+    /// which are the two retry loops.
+    /// </summary>
     internal int MaxAttempts { get; init; } = 6;
 
     /// <summary>
-    /// Delay before the first retry, doubling on every subsequent attempt. Defaults to <c>50</c>
-    /// milliseconds; negative values clamp to zero.
+    /// Backoff before the first retry, doubled by each round's reader: <see cref="NativeRecycleRunner"/> and
+    /// <see cref="RestoreRunner"/>.
     /// </summary>
     internal TimeSpan InitialRetryDelay { get; init; } = TimeSpan.FromMilliseconds(50);
 
     /// <summary>
-    /// Upper bound on the wall-clock time spent retrying the whole batch. Defaults to <c>30</c> seconds.
-    /// One budget for the call, not one per item or per volume: a backoff that does not fit what is left of
-    /// it ends the loop immediately rather than starting an over-budget round.
+    /// Budget for one whole call. Read once at the top of <see cref="NativeRecycleRunner"/> or
+    /// <see cref="RestoreRunner"/> to build a deadline, and not again per item.
     /// </summary>
     internal TimeSpan OverallTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// Whether a failure raises an exception instead of being reported through
-    /// <see cref="RecycleBinResult.Failures"/>. Defaults to <c>true</c>.
+    /// Whether a failure raises. Read only by
+    /// <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/>, and only on the
+    /// single-path overload: the batch reports its per-item failures as data however this is set.
     /// </summary>
     internal bool ThrowOnError { get; init; } = true;
 
     /// <summary>
-    /// What happens to a file whose volume cannot recycle it. Defaults to
-    /// <see cref="NoRecycleBinAction.Throw"/>, which refuses it and leaves the file in place.
-    /// <see cref="ThrowOnError"/> still decides whether the refusal raises or is returned through
-    /// <see cref="RecycleBinResult.Failures"/>.
+    /// What to do with a path on a volume that cannot recycle it. Read by <see cref="RecycleBatch"/>, and
+    /// nowhere else.
     /// </summary>
     internal NoRecycleBinAction NoRecycleBinAction { get; init; } = NoRecycleBinAction.Throw;
 
     /// <summary>
-    /// Whether a listing reads every entry's record up front instead of leaving each entry to read its own
-    /// on first use. Defaults to <c>false</c>, so a listing pays nothing for details nobody asks for.
+    /// Whether a listing reads every entry's record during the walk rather than leaving each entry to read
+    /// its own on first use. Read by <see cref="NativeBinLister"/>.
     /// </summary>
-    /// <remarks>
-    /// Turned on, the reads happen during the listing rather than one at a time from the caller's own loop,
-    /// and an entry whose record cannot be read is reported in <see cref="RecycleBinContents.Failures"/>
-    /// rather than being returned and raising later. A caller that reads every item's path pays the same
-    /// either way, only spread differently.
-    /// <para>
-    /// It says nothing about <see cref="RecycleBin.EmptyAsync"/>, which does not read records for entries
-    /// whose payload is present.
-    /// </para>
-    /// </remarks>
     internal bool PreloadItemDetails { get; init; }
 
     /// <summary>
-    /// What a restore does with a directory whose original path is already occupied. Defaults to
-    /// <see cref="RestoreDirectoryConflict.MergeSkip"/>, which merges and leaves what is already there as it
-    /// is — a file of the tree that does not fit goes back into the Recycle Bin as an entry of its own
-    /// rather than being lost with the payload it was in.
+    /// What to do with a directory whose original path is already occupied. Read by
+    /// <see cref="RestorePathPlanner"/> to answer that question, and by <see cref="RestoreRunner"/> when the
+    /// answer decides whether it refuses, whether it merges, and what a merge does.
     /// </summary>
-    /// <remarks>
-    /// It says nothing about <see cref="ThrowOnError"/>: a restore is a batch, so a conflict is data —
-    /// resolved ones in <see cref="RecycleBinRestoreResult.Conflicts"/>, and the ones
-    /// <see cref="RestoreDirectoryConflict.Error"/> refuses in <see cref="RecycleBinRestoreResult.Failures"/>
-    /// as well. No single item raises.
-    /// <para>
-    /// A merge reports a conflict per file it settled rather than per entry, and none of the three reaches a
-    /// failure stage <em>of its own</em>: a file of the tree the filesystem would not take, and a payload or
-    /// a record that would not go afterwards, are reported at
-    /// <see cref="RecycleFailureStage.RestoreFailed"/> like any other refused move.
-    /// </para>
-    /// </remarks>
     internal RestoreDirectoryConflict DirectoryConflict { get; init; } = RestoreDirectoryConflict.MergeSkip;
 
     /// <summary>
-    /// What a restore does with a file whose original path is already occupied. Defaults to
-    /// <see cref="RestoreFileConflict.Skip"/>, which leaves the file where the caller put it and leaves the
-    /// entry in the Recycle Bin.
+    /// What to do with a file whose original path is already occupied. Read by
+    /// <see cref="RestorePathPlanner"/> and <see cref="RestoreRunner"/>, as <see cref="DirectoryConflict"/> is.
     /// </summary>
     internal RestoreFileConflict FileConflict { get; init; } = RestoreFileConflict.Skip;
 
