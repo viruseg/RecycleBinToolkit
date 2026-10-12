@@ -142,7 +142,7 @@ internal static class RestoreSuite
     /// <para>
     /// Which volumes sit on which disk is a fact about this machine and nothing here can arrange it, so a
     /// machine without these three drives is a machine this case does not run on. What it asks about is
-    /// three named volumes, which is why <see cref="RequireVolumePresent"/> stands in for them. When they
+    /// three named volumes, which is why <see cref="VolumePresence.Require"/> stands in for them. When they
     /// are all here the assertions are the claim and they stand unweakened: a machine where <c>D:</c> and
     /// <c>E:</c> are not one disk fails this case rather than redefining it.
     /// </para>
@@ -152,9 +152,7 @@ internal static class RestoreSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        RequireVolumePresent('D');
-        RequireVolumePresent('E');
-        RequireVolumePresent('C');
+        VolumePresence.Require('D', 'E', 'C');
 
         // Data, not targets: nothing is created, recycled, moved or deleted on any of these paths, exactly as
         // the existing cases that put W:\ into a path predicate do.
@@ -203,9 +201,7 @@ internal static class RestoreSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        RequireVolumePresent('D');
-        RequireVolumePresent('E');
-        RequireVolumePresent('C');
+        VolumePresence.Require('D', 'E', 'C');
 
         var works = new List<RestoreVolumeWork>
         {
@@ -270,9 +266,7 @@ internal static class RestoreSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        RequireVolumePresent('D');
-        RequireVolumePresent('E');
-        RequireVolumePresent('C');
+        VolumePresence.Require('D', 'E', 'C');
 
         var groups = RestoreRunner.GroupByPhysicalDisk(
         [
@@ -2988,7 +2982,7 @@ internal static class RestoreSuite
     /// <para>
     /// <b>Neither letter is written into this file.</b> The first is the volume <c>--scratch</c> named and
     /// the second is a letter on the same physical disk, asked of the machine by
-    /// <see cref="RequireASecondVolumeOnTheRunVolume(out char, string)"/>. A case that named <c>D:</c> and
+    /// <see cref="VolumePresence.RequireASameDisk(out char, string)"/>. A case that named <c>D:</c> and
     /// <c>E:</c> would go red on any other volume — a removable drive and a share are named in
     /// <c>AGENTS.md</c> as first-class choices for <c>--scratch</c>, and a run on either is a run that must
     /// be green or skipped and never red for want of the right kind of disk.
@@ -3005,7 +2999,7 @@ internal static class RestoreSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        RequireASecondVolumeOnTheRunVolume(out var second, "two volumes sharing one disk for one group to hold");
+        VolumePresence.RequireASameDisk(out var second, "two volumes sharing one disk for one group to hold");
 
         var firstRoot = ScratchWorkspace.VolumeRoot;
         var secondRoot = second + ":" + Path.DirectorySeparatorChar;
@@ -3558,100 +3552,5 @@ internal static class RestoreSuite
                 _collected.Add((item, hResult));
             }
         }
-    }
-
-    /// <summary>
-    /// Ends the calling case as not run when <paramref name="letter"/> is not a volume this machine has.
-    /// </summary>
-    /// <remarks>
-    /// The volumes this case compares are named in the source, so what it needs is a fact about the machine
-    /// rather than anything the run can arrange — and a case that read a machine's partition layout as a
-    /// defect would be the repository's rule against asking a run to be the right kind of disk, with the
-    /// letters as the "right kind".
-    /// <para>
-    /// Presence is read from the root resolving rather than from <see cref="DriveInfo"/> alone, for the
-    /// reason <see cref="AbsentVolume.RequireAbsent"/> checks both ways: an enumeration omits roots Windows
-    /// still resolves, and a root that resolves is a volume whichever way the enumeration reads.
-    /// </para>
-    /// </remarks>
-    /// <param name="letter">The letter the case needs to be able to ask about.</param>
-    /// <exception cref="CheckSkippedException">
-    /// Nothing is mounted on <paramref name="letter"/>. The message names the volume and what the case
-    /// needed from it, and reads as a fact about this machine.
-    /// </exception>
-    private static void RequireVolumePresent(char letter)
-    {
-        var root = AbsentVolume.RootOf(letter);
-
-        if (!Directory.Exists(root))
-        {
-            Check.Skip(
-                $"{root} is not a volume on this machine. This case needs D:, E: and C: all present, "
-                + "to read which physical disk each one sits on");
-        }
-    }
-
-    /// <summary>
-    /// A letter naming a second volume on the same physical disk as the one <c>--scratch</c> named, or a skip.
-    /// </summary>
-    /// <param name="letter">Receives that letter, when this returns.</param>
-    /// <param name="because">
-    /// What the case needed a second volume for, as a noun phrase the skip line can carry: it completes
-    /// "This case needs ___".
-    /// </param>
-    /// <remarks>
-    /// Asked of the machine rather than written into the source, for the reason
-    /// <see cref="RequireVolumePresent"/> gives: a letter written into a case is one that goes red on every
-    /// volume but the one it was written for, and <c>AGENTS.md</c> makes every volume a legal answer to
-    /// <c>--scratch</c> — a removable drive and a share both named there as first-class choices. A run on
-    /// either must be green or skipped and never red for want of the right kind of disk.
-    /// <para>
-    /// The run's own letter is excluded by comparison rather than by arithmetic: <c>A:</c> has no
-    /// <c>Z:</c> beside it, and a run on <c>Z:</c> has no <c>Y:</c> behind it either. What the two must
-    /// share is a <see cref="PhysicalDiskKey"/>, so a machine with one volume per disk — and a run on a
-    /// share, which names no disk at all — is skipped rather than answered with a second volume that would
-    /// put the two in different groups and quietly change what the case is about.
-    /// </para>
-    /// </remarks>
-    /// <exception cref="CheckSkippedException">
-    /// The run's volume named no physical disk, or nothing else on this machine shares one with it.
-    /// </exception>
-    private static void RequireASecondVolumeOnTheRunVolume(out char letter, string because)
-    {
-        letter = default;
-
-        if (!PhysicalVolumeDisk.TryIdentify(ScratchWorkspace.VolumeRoot, out var disk))
-        {
-            Check.Skip(
-                $"{ScratchWorkspace.VolumeRoot} named no physical disk, so no second volume can be asked whether "
-                + $"it shares one. This case needs {because}");
-        }
-
-        // The run's own letter, read off the root rather than taken from --scratch on the command line.
-        // A share answers the branch above, so what reaches here is always a drive root.
-        var own = char.ToUpperInvariant(ScratchWorkspace.VolumeRoot[0]);
-
-        foreach (var drive in DriveInfo.GetDrives())
-        {
-            var name = drive.Name;
-
-            if (name.Length < 2 || !char.IsLetter(name[0]) || char.ToUpperInvariant(name[0]) == own)
-            {
-                continue;
-            }
-
-            var candidate = char.ToUpperInvariant(name[0]);
-
-            if (PhysicalVolumeDisk.TryIdentify(AbsentVolume.RootOf(candidate), out var found) && found == disk)
-            {
-                letter = candidate;
-
-                return;
-            }
-        }
-
-        Check.Skip(
-            $"{ScratchWorkspace.VolumeRoot} is the only volume on its physical disk on this machine, so there is "
-            + $"no second one for a group to hold. This case needs {because}");
     }
 }
