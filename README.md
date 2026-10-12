@@ -507,9 +507,9 @@ to read.
 
 **Match this field against your own paths without regard to case.** `OriginalPath` is the path as it
 was recorded, and the drive letter is written in whichever case Windows likes: an entry deleted from a
-volume the caller reached for as `e:\` comes back as `E:\…`. The library does not rewrite it. Windows
+volume the caller reached for as `x:\` comes back as `X:\…`. The library does not rewrite it. Windows
 paths are case-insensitive, so a caller comparing this field with a path it holds compares it that
-way — which is what makes `--scratch 'e:\'` and `--scratch 'E:\'` behave identically, and an ordinal
+way — which is what makes `--scratch 'x:\'` and `--scratch 'X:\'` behave identically, and an ordinal
 comparison of the same pair reports a correct listing as empty.
 
 > One original path can appear more than once. Deleting the same file twice leaves two entries with two
@@ -533,7 +533,7 @@ What one volume's Recycle Bin holds.
 
 | Member | Type | Description |
 | --- | --- | --- |
-| `VolumeRoot` | `string` | Volume root the entries were read from, such as `"E:\\"`. |
+| `VolumeRoot` | `string` | Volume root the entries were read from, such as `"X:\\"`. |
 | `Items` | `IReadOnlyList<RecycleBinItem>` | The entries that volume's bin holds, in the order its directory gave them. Empty for a volume whose bin is empty. |
 
 The grouping is what keeps a caller able to tell which disk an entry came from, which matters because the
@@ -1191,19 +1191,19 @@ Stated plainly, because these are properties of Windows rather than choices.
 ## Testing
 
 ```bash
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --all
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --all --exclude EmptySuite
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --filter NativeBinSuite
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --load
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --all
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --all --exclude EmptySuite
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --filter NativeBinSuite
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --load
 ```
 
-`--scratch <root>` is required and names the volume to test on. It has to be a volume root — `D:\` or
+`--scratch <root>` is required and names the volume to test on. It has to be a volume root — `X:\` or
 `\\server\share\`, or `//server/share` where the command line cannot carry two leading backslashes. A
 directory inside a volume is refused, and so is a bare drive letter, because both resolve against something
 other than the volume they name. Without the flag nothing runs and the exit code is 2: the suite writes
 files and removes directories, so the volume is yours to pick and not the runner's to guess.
 
-Inside the root the run creates `D:\{guid}` and works in `scratch` and `long` beneath it, then removes the
+Inside the root the run creates `X:\{guid}` and works in `scratch` and `long` beneath it, then removes the
 whole tree when it finishes. Nothing is derived from the repository, so no test writes inside the working
 copy, and no test acts on a path that did not come from `--scratch` — the volume comes from the flag and
 from there down. A drive letter or a share written into a case is data for a path predicate: it decides
@@ -1241,8 +1241,10 @@ run, and the three cases that each move the whole 94-file fixture set in one cal
 covered by them alone; the claims sit in ordinary cases too — `WorkflowSuite.FiveTouchedFilesAreAllRecycled`
 and `EmptySuite.EmptyReportsWhatItFreed` for the batch, `FacadeSuite.LargeFileIsRecycled` for the bytes.
 The remainder is the volume's decision rather than a flag's: **202 pass and 10 skip** where there is a
-bin, with nothing failing, measured by one `--all` on `D:`, and the same run on `E:`. On `C:` it is
-**201 pass and 11 skip**. A volume with no
+bin, with nothing failing, measured by one `--all` on such a volume and the same run on a second one. A
+volume **alone on its physical disk** is **197 pass and 15 skip**, also nothing failing — five cases ask
+the machine for a second volume on the same disk or for one on another, and a run on such a volume has
+neither, so each says it did not run. A volume with no
 Recycle Bin and a share are both unmeasured
 here — measure before quoting either. `--all` prints its own counts, so a figure that disagrees with them
 is the figure being wrong.

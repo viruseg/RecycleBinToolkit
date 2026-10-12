@@ -99,7 +99,7 @@ internal static class VolumeSuite
     /// The volume is pinned through <see cref="ScratchWorkspace.Root"/> rather than through the string handed
     /// to the inspection, because that string is the caller's own spelling while
     /// <see cref="RecycleBinVolumeState.Inspect"/> answers with the volume as the library spells it — and
-    /// <c>--scratch \\?\E:\</c> is a spelling this suite accepts. Both sides go through the same reduction
+    /// <c>--scratch \\?\X:\</c> is a spelling this suite accepts. Both sides go through the same reduction
     /// here, so an extended-length root compares equal instead of redding over a prefix that says nothing
     /// about the volume.
     /// </para>

@@ -967,8 +967,8 @@ internal static class NativeBinSuite
     /// other such volume rather than a group of its own.
     /// </summary>
     /// <remarks>
-    /// The partition number the driver answers with is left out of the key, which is the whole of why
-    /// <c>D:</c> and <c>E:</c> land together: a key carrying the partition would put every volume in a group
+    /// The partition number the driver answers with is left out of the key, which is the whole of why two
+    /// volumes on one disk land together: a key carrying the partition would put every volume in a group
     /// of its own, and the grouping would answer the same thing on a machine that has nothing to group.
     /// <para>
     /// The shares are the other half of the rule. Neither named a disk, so neither may be assumed to have
@@ -977,26 +977,37 @@ internal static class NativeBinSuite
     /// the roots arrived in, so a caller comparing two runs sees the same shape.
     /// </para>
     /// <para>
-    /// Presence is required rather than assumed for the drive letters, for the reason
-    /// <see cref="VolumePresence.Require"/> gives. It is not enough for the letters to exist, either: this
-    /// machine's layout is what puts <c>D:</c> and <c>E:</c> on one disk and <c>C:</c> on another, and that
-    /// is a fact to be asked about, not a fact to be written down.
+    /// The volumes are asked of the machine rather than written down, for the reason
+    /// <see cref="VolumePresence"/> gives: which volumes share a disk is a fact about the machine, and a
+    /// letter written into this case would assert one machine's partition layout rather than the rule.
+    /// <see cref="VolumePresence.RequireASameDisk"/> and <see cref="VolumePresence.RequireADifferentDisk"/>
+    /// each skip rather than fail when the machine cannot supply the shape the claim needs, so a run on a
+    /// machine with one volume per disk reports that it did not run here instead of going red over a
+    /// layout it never chose.
     /// </para>
     /// </remarks>
     private static Task VolumesAreGroupedByTheDiskTheyArePartitionsOf(TestContext context)
     {
-        VolumePresence.Require('D', 'E', 'C');
+        VolumePresence.RequireASameDisk(out var sameDisk, "two volumes sharing one physical disk");
+        VolumePresence.RequireADifferentDisk(out var otherDisk, "a volume on a physical disk of its own");
 
-        var groups = VolumeDiskGroups.Group([@"D:\", @"E:\", @"C:\", @"\\server\share\", @"\\other\share\"]);
+        var groups = VolumeDiskGroups.Group(
+        [
+            ScratchWorkspace.VolumeRoot,
+            AbsentVolume.RootOf(sameDisk),
+            AbsentVolume.RootOf(otherDisk),
+            @"\\server\share\",
+            @"\\other\share\"
+        ]);
 
-        Check.Equal(3, groups.Count, "two physical disks behind the drive letters, and one group for the shares");
+        Check.Equal(3, groups.Count, "two physical disks behind the volumes, and one group for the shares");
 
-        Check.Equal(2, groups[0].Positions.Count, "D: and E: are partitions of one disk and share a group");
+        Check.Equal(2, groups[0].Positions.Count, "the two volumes on one physical disk share a group");
         Check.Equal(0, groups[0].Positions[0], "a group keeps the order the roots arrived in");
         Check.Equal(1, groups[0].Positions[1], "and the second root is second in it");
         Check.True(groups[0].Disk is not null, "a group of volumes that named their disk names it");
 
-        Check.Equal(1, groups[1].Positions.Count, "C: is alone on the disk of its own");
+        Check.Equal(1, groups[1].Positions.Count, "the volume on the other disk is alone on it");
         Check.Equal(2, groups[1].Positions[0], "at the position it was passed at");
         Check.True(groups[1].Disk is not null, "and its group names that disk");
 
@@ -2266,10 +2277,10 @@ using var workspace = new ScratchWorkspace();
     /// </remarks>
     private static Task VolumeRootIsTheRecordsOwn(TestContext context)
     {
-        var local = new RecycleBinItem(@"E:\$RECYCLE.BIN\SID\$IABC123.bin", @"E:\$RECYCLE.BIN\SID\$RABC123.bin", 10, false);
+        var local = new RecycleBinItem(@"X:\$RECYCLE.BIN\SID\$IABC123.bin", @"X:\$RECYCLE.BIN\SID\$RABC123.bin", 10, false);
         var share = new RecycleBinItem(@"\\server\share\$RECYCLE.BIN\SID\$IABC123.bin", @"\\server\share\$RECYCLE.BIN\SID\$RABC123.bin", 10, false);
 
-        Check.Equal(@"E:\", local.VolumeRoot.ToString(), "a local entry's volume is the root of its record");
+        Check.Equal(@"X:\", local.VolumeRoot.ToString(), "a local entry's volume is the root of its record");
         Check.Equal(@"\\server\share", share.VolumeRoot.ToString(), "a share's volume is the share, without a trailing separator");
 
         return Task.CompletedTask;

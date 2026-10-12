@@ -364,7 +364,7 @@ internal static class RestoreRunner
     /// <remarks>
     /// <b>One, and that is what was measured.</b> No existing table says how many <c>MoveFile</c> calls a
     /// disk takes well, so none was borrowed from the reading figures; a restore was measured instead, on
-    /// <c>C:</c> (solid-state), <c>D:</c> and <c>E:</c> (mechanical), over 300 files and again over 2000:
+    /// one solid-state volume and two mechanical ones, over 300 files and again over 2000:
     ///
     /// <list type="bullet">
     /// <item><description>threads 1: 250 / 327 / 197 ms — the fastest answer on every volume</description></item>
@@ -391,9 +391,9 @@ internal static class RestoreRunner
     /// </para>
     /// <para>
     /// The one axis that <em>does</em> pay is volumes on different physical disks, and it pays there
-    /// because they are different directories: 300 files each on <c>C:</c> and <c>E:</c> restore in
-    /// 257 ms where the same two volumes one after another take 458 ms. The same two volumes on one
-    /// physical disk, <c>D:</c> and <c>E:</c>, take 482 ms — which is what running them one after another
+    /// because they are different directories: 300 files each on a solid-state volume and a mechanical one
+    /// restore in 257 ms where the same two volumes one after another take 458 ms. The two mechanical
+    /// volumes, on one physical disk, take 482 ms — which is what running them one after another
     /// costs, and what <see cref="RunDisk"/>'s loop exists to guarantee.
     /// </para>
     /// </remarks>
@@ -1413,7 +1413,7 @@ internal static class RestoreRunner
     /// among the entries and each list in the caller's own order.
     /// </returns>
     /// <remarks>
-    /// Keyed without regard to case, as the root itself is: Windows writes <c>E:\</c> and <c>e:\</c> for the
+    /// Keyed without regard to case, as the root itself is: Windows writes <c>X:\</c> and <c>x:\</c> for the
     /// same volume, and the two spellings would otherwise have the same disk read twice under two policies.
     /// The root is a span over the entry's own path and is only turned into a string when a volume is seen
     /// for the first time — the alternative is one string per entry to hold a root that is three characters

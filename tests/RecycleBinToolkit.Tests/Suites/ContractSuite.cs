@@ -236,7 +236,7 @@ internal static class ContractSuite
     /// <remarks>
     /// Volumes are read in parallel, so the grouping is what keeps a caller able to tell which disk an
     /// entry came from. A volume read with nothing in it keeps its place with an empty group rather than
-    /// dropping out: a caller that asked about <c>E:\</c> and found no group for it could not tell an empty
+    /// dropping out: a caller that asked about <c>X:\</c> and found no group for it could not tell an empty
     /// bin from a volume that was never reached, which is the same reason a root naming no volume is answered
     /// as a failure rather than as an empty result.
     /// </remarks>
@@ -250,7 +250,7 @@ internal static class ContractSuite
         var contents = new RecycleBinContents(
             [
                 new RecycleBinVolumeContents(@"W:\", populated),
-                new RecycleBinVolumeContents(@"E:\", [])
+                new RecycleBinVolumeContents(@"X:\", [])
             ],
             [],
             TimeSpan.Zero);
@@ -259,7 +259,7 @@ internal static class ContractSuite
         Check.Equal(@"W:\", contents.Items[0].VolumeRoot, "a group's volume root is the root it was read from");
         Check.Equal(1, contents.Items[0].Items.Count, "the populated volume keeps its entry");
         Check.Equal(0, contents.Items[1].Items.Count, "a volume read with nothing in it is an empty group rather than an absent one");
-        Check.Equal(@"E:\", contents.Items[1].VolumeRoot, "the empty group still names its volume");
+        Check.Equal(@"X:\", contents.Items[1].VolumeRoot, "the empty group still names its volume");
         Check.Equal(4096L, contents.TotalSize, "the total spans every volume's groups");
 
         return Task.CompletedTask;

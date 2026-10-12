@@ -9,9 +9,9 @@ framework.
 ```bash
 dotnet build src/RecycleBinToolkit/RecycleBinToolkit/RecycleBinToolkit.csproj
 dotnet build tests/RecycleBinToolkit.Tests/RecycleBinToolkit.Tests.csproj
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --all
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --filter NativeBinSuite
-dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch D:\ --load
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --all
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --filter NativeBinSuite
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --load
 ```
 
 Build the test project after any change to `tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs` —
@@ -21,7 +21,7 @@ test's doing — the empty itself. The section below is the whole rule.
 
 ## --scratch, and asking which volume
 
-`--scratch <root>` is required, and every run needs one. It names the **root of a volume** — `D:\`, or
+`--scratch <root>` is required, and every run needs one. It names the **root of a volume** — `X:\`, or
 `\\server\share\`, or the forward-slash spelling `//server/share` for a command line that cannot carry two
 leading backslashes. A directory inside a volume is refused, as is a bare drive letter: both resolve
 against something other than the volume they name. Without the flag the runner runs nothing and exits 2,
@@ -47,7 +47,7 @@ is not one either. A run whose disk was chosen for it put its writes and its rec
 the caller did not say, which is the one thing this flag exists to prevent — so the question is worth
 asking even when the answer looks obvious, and it is asked before the run, not after it fails.
 
-Inside the volume root the run claims `D:\{guid}` and takes `scratch` and `long` beneath it. The name is
+Inside the volume root the run claims `X:\{guid}` and takes `scratch` and `long` beneath it. The name is
 generated and checked against what is already there, because `Directory.CreateDirectory` reports success
 for a directory somebody else already had — a fixed name would let a case write into it and then delete it.
 Removal is of the claimed path only, at the end of the run. No test path is derived from the repository,
@@ -69,11 +69,18 @@ under the rule `--filter` is read under, so `--exclude --load` is a mistake rath
 
 There are 216 registered cases, of which four are load cases, so `--all` runs 212 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
-cases that recycle one and runs the cases that are about a volume with no bin. On `D:`, which has a bin:
-**202 pass and 10 skip**, with nothing failing — measured by one `--all` on `D:`, and the same run on
-`E:`. On `C:` it is **201 pass and 11 skip**, the extra one being
-`RestoreSuite.TwoVolumesOnOneDiskAreBothAnswered`, which asks for a second volume on the run's own disk
-and finds none there. A volume with no bin and a share are both unmeasured
+cases that recycle one and runs the cases that are about a volume with no bin. **202 pass and 10 skip**,
+with nothing failing, on a volume that has a bin — measured by one `--all` on such a volume and by the
+same run on a second one.
+
+**A volume alone on its physical disk is 197 pass and 15 skip**, also nothing failing. Five cases ask the
+machine for a second volume on the same disk or for one on another, through `VolumePresence`, and a run
+on such a volume has neither — so each says it did not run rather than going red over a layout it never
+chose. This is the whole of what `VolumePresence` is for: a letter written into a case asserts one
+machine's partition layout and is green on that machine and red everywhere else, which is the opposite
+of what a portable suite owes its caller.
+
+A volume with no bin and a share are both unmeasured
 here: measure before quoting either. `--all` prints the counts, so a count in a document that disagrees
 with them is the document being wrong.
 
@@ -91,13 +98,15 @@ thirty thousand opens — so the reading figures were not borrowed, and a restor
 
 Over 300 files, median of three, seconds are milliseconds:
 
-| movers per volume | `C:` (solid-state) | `D:` (mechanical) | `E:` (mechanical) |
+| movers per volume | solid-state volume | mechanical volume A | mechanical volume B |
 | --- | --- | --- | --- |
 | **1** | **250** | **327** | **197** |
 | 2 | 408 | 473 | 502 |
 | 4 | 1578 | 1678 | 1808 |
 | 8 | 1915 | 1784 | 1832 |
 | 16 | 1883 | 1642 | 1846 |
+
+A and B are two partitions of one physical disk; the solid-state column is a disk of its own.
 
 **One, and it is not a seek-penalty question.** It falls away monotonically to seven or nine times one
 thread, and the curve has the **same shape on the solid-state volume as on both mechanical ones**. A
@@ -107,22 +116,22 @@ are fighting over is not the head. It is the one directory every entry on a volu
 records for the writing side, reached from the deleting side, and it is why the answer is one figure for
 both kinds of drive rather than two.
 
-Confirmed not to be a small-batch artefact: 2,000 files on `C:` take 1,442 ms on one mover and 10,703 ms
-on four — the same ratio.
+Confirmed not to be a small-batch artefact: 2,000 files on the solid-state volume take 1,442 ms on one
+mover and 10,703 ms on four — the same ratio.
 
-**Volumes on different physical disks do pay, and it is the one axis that does.** 300 files on `C:` and
-300 on `E:` restore in **257 ms**, where the same two volumes one after another take **458 ms** — 1.78×
-— because they are different directories. The same two volumes sharing one physical disk, `D:` and `E:`,
-take **482 ms**, which is what running them one after another costs and what `RunDisk`'s loop exists to
-guarantee. So the rule is not "restore is single-threaded": it is single-threaded *within* a volume, and
-concurrent *across* disks.
+**Volumes on different physical disks do pay, and it is the one axis that does.** 300 files on the
+solid-state volume and 300 on a mechanical one restore in **257 ms**, where the same two volumes one
+after another take **458 ms** — 1.78× — because they are different directories. The two mechanical
+volumes, sharing one physical disk, take **482 ms**, which is what running them one after another costs
+and what `RunDisk`'s loop exists to guarantee. So the rule is not "restore is single-threaded": it is
+single-threaded *within* a volume, and concurrent *across* disks.
 
 **Read this before changing anything to do with how many threads the recycle uses.** The
-figures below were measured on this machine over batches of 3,000 items, and they are the reason the
-code looks the way it does. Parallelising more of it is not an improvement, and on this machine most of
+figures below were measured on one machine over batches of 3,000 items, and they are the reason the
+code looks the way it does. Parallelising more of it is not an improvement, and on that machine most of
 it is the opposite of one.
 
-| operation on `C:` (solid-state) | 1 thread | 2 | 4 | 8 |
+| operation on a solid-state volume | 1 thread | 2 | 4 | 8 |
 | --- | --- | --- | --- | --- |
 | read 3,000 records back | 291 ms | 140 ms | 96 ms | **64 ms** |
 | empty 3,000 entries | 1310 ms | 1248 ms | 1145 ms | **998 ms** |
@@ -147,8 +156,8 @@ whole of the change** — it used to get one thread, and it now gets up to eight
 
 | read N records back, warm cache | 1 thread | 4 | 8 | 16 | 32 |
 | --- | --- | --- | --- | --- | --- |
-| `E:` mechanical, 30,010 records | 1550 ms | 508 | 377 | **351** | 349 |
-| `C:` solid-state, 36,009 records | 1892 ms | 658 | 496 | **457** | 458 |
+| mechanical volume, 30,010 records | 1550 ms | 508 | 377 | **351** | 349 |
+| solid-state volume, 36,009 records | 1892 ms | 658 | 496 | **457** | 458 |
 
 `VolumeSeekPenalty.DegreeOfParallelism` answers one thread per core for a solid-state volume and two per
 core for a mechanical one, both capped at eight. A share is still one thread.
@@ -165,8 +174,8 @@ matters. Measured with the cache dropped before every pass and ten seconds of se
 
 | threads | 1 | 2 | 3 | 4 | 6 | 8 | 16 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `E:` mechanical, 30,010 records | 73.1 s | 23.7 s | 13.6 s | 12.4 s | 4.8 s | **7.7 s** | 9.6 s |
-| `C:` solid-state, 36,009 records | 92.0 s | 43.1 s | 28.1 s | 23.2 s | 18.0 s | **16.1 s** | 16.1 s |
+| mechanical volume, 30,010 records | 73.1 s | 23.7 s | 13.6 s | 12.4 s | 4.8 s | **7.7 s** | 9.6 s |
+| solid-state volume, 36,009 records | 92.0 s | 43.1 s | 28.1 s | 23.2 s | 18.0 s | **16.1 s** | 16.1 s |
 
 **The mechanical curve peaks at eight and then falls away** — three passes each averaged 7.7 s at eight
 against 9.6 s at sixteen, because each further request in flight is another seek for the head to
@@ -175,20 +184,20 @@ seven percent; it costs twenty percent on the path that runs every time. `Mechan
 eight on the cold evidence.
 
 **Removing the one-thread rule is where most of the gain came from**, and it holds cold: one thread on
-`E:` is 73 s against 7.7 s at eight, a factor of nine and a half. Measured end to end against the code as
-it stood, same session, alternating passes:
+the mechanical volume is 73 s against 7.7 s at eight, a factor of nine and a half. Measured end to end
+against the code as it stood, same session, alternating passes:
 
 | | cold, before → after | warm, before → after |
 | --- | --- | --- |
-| `E:` mechanical | 50.7 s → **7.9 s** | 1.650 s → **0.491 s** |
-| `C:` solid-state | 17.1 s → 16.7 s | 0.591 s → 0.548 s |
+| mechanical volume | 50.7 s → **7.9 s** | 1.650 s → **0.491 s** |
+| solid-state volume | 17.1 s → 16.7 s | 0.591 s → 0.548 s |
 
 **A result that is not reproduced here, and is worth knowing:** cold on the mechanical volume comes out
 **faster than cold on the solid-state one** — 7.7 s for 30,010 records against 16.1 s for 36,009 — and the
 two are read on the same eight threads, so it is not a difference in concurrency. A cold read of a small
-record is mostly metadata, and `C:` is the Windows system volume while `E:` is not, so background reads
-competing for `C:` is the obvious candidate. **That is a hypothesis and it has not been tested.** Anyone
-proposing an explanation for it should measure first.
+record is mostly metadata, and the solid-state volume was the Windows system volume while the mechanical
+one is not, so background reads competing with the system volume is the obvious candidate. **That is a
+hypothesis and it has not been tested.** Anyone proposing an explanation for it should measure first.
 
 **Do not read these as a licence to make the recycle path parallel.** Writing a bin and reading one are
 different work and the tables above are why they get different answers.
@@ -211,7 +220,7 @@ Settled:
   position in the list handed in, and the slots are flattened in that order once every walk is done. Two
   listings of the same machine are comparable and `Items[i]` is the volume that was asked about at `i`.
 - **A volume read with nothing in it keeps its group**, holding an empty list. This is also why the answer
-  is grouped at all: a caller that asked about `E:\` and found no group for it could not tell an empty bin
+  is grouped at all: a caller that asked about `X:\` and found no group for it could not tell an empty bin
   from a volume that was never reached.
 - **A single volume skips `Parallel.For` entirely.** One volume has nothing to be parallel with, and the
   caller has already asked for a thread of its own. That is the ordinary case — every listing a caller takes
@@ -259,7 +268,7 @@ the restore already have.
 
 Measured warm over 5,000 records, one thread, on both volumes:
 
-| | `E:` mechanical | `C:` solid-state |
+| | mechanical volume | solid-state volume |
 | --- | --- | --- |
 | `File.Exists` (metadata only) | 26 µs | 26 µs |
 | open and close | 32 µs | 32 µs |
@@ -281,7 +290,7 @@ Splitting the reads from the parsing — across a `System.Threading.Channels` ch
 `BlockingCollection` pipeline over dedicated threads — was built and measured on both volumes, and
 **lost to one `Parallel.For` loop in every configuration**:
 
-| `E:` mechanical, 30,010 records | time |
+| mechanical volume, 30,010 records | time |
 | --- | --- |
 | one `Parallel.For`, 16 threads | **351 ms** |
 | channel, 16 readers + 1 parser | 395 ms |
@@ -289,9 +298,9 @@ Splitting the reads from the parsing — across a `System.Threading.Channels` ch
 | `BlockingCollection` pipeline, in the library | 598–641 ms |
 | overlapped async reads, 16 × 2 | 599 ms |
 
-On `C:` the same comparison was 420 ms for the loop against 426 ms for the channel. There is nothing to
-overlap when the parse is two parts in a thousand of the work; the queue and the extra threads cost more
-than they save.
+On the solid-state volume the same comparison was 420 ms for the loop against 426 ms for the channel.
+There is nothing to overlap when the parse is two parts in a thousand of the work; the queue and the
+extra threads cost more than they save.
 
 **A caveat that produced a wrong number once.** An earlier sweep appeared to show the channel winning by
 8 %, and it was an artefact: the channel variant used a `CreateFileW` P/Invoke while the loop used
@@ -306,7 +315,7 @@ work to the completion port and wait to be told it finished.
 Two measurements that are worth not re-deriving:
 
 - **The same operation is faster on an SSD by about nothing.** Recycling 3,000 files ran at 616 files/s
-  on `E:` (mechanical) and 625 on `C:` (solid-state) — the cost is filesystem round trips, not bandwidth.
+  on a mechanical volume and 625 on a solid-state one — the cost is filesystem round trips, not bandwidth.
   Four-kilobyte files recycled at 583 and 662, within the run-to-run spread, so the file size is not
   part of the cost either.
 - **A recycle costs three round trips per path**: one `FileInfo` query in validation, one
@@ -348,7 +357,7 @@ once would have paid anyway — and it has not been weighed against anything eit
 ## What the tests may touch
 
 No file a test creates is ever outside the working directory `--scratch` names. No test acts on a path it
-did not derive from there: `--scratch` names the volume, the run claims `D:\{guid}` inside it, and every
+did not derive from there: `--scratch` names the volume, the run claims `X:\{guid}` inside it, and every
 case writes beneath that. A drive letter or a share written into a case is data for a path predicate —
 `NormalizeVolumeRoot(@"W:\")` decides what a string means and touches nothing — and no case creates,
 recycles, empties or deletes anything on such a path. `ScratchDirectory.Claim(parent)` refuses any parent

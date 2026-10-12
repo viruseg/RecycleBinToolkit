@@ -266,9 +266,9 @@ internal sealed class ScratchDirectory
     /// </summary>
     /// <remarks>
     /// The comparison is over resolved paths, not over the text a caller passed. <c>..</c> would otherwise
-    /// pass a prefix test and still leave the run's directory — <c>E:\{guid}\..\elsewhere</c> begins with
-    /// <c>E:\{guid}\</c> and resolves to <c>E:\elsewhere</c> — and a correct parent written with forward
-    /// slashes would be refused, because <c>E:/{guid}/</c> and <c>E:\{guid}\</c> are the same directory
+    /// pass a prefix test and still leave the run's directory — <c>X:\{guid}\..\elsewhere</c> begins with
+    /// <c>X:\{guid}\</c> and resolves to <c>X:\elsewhere</c> — and a correct parent written with forward
+    /// slashes would be refused, because <c>X:/{guid}/</c> and <c>X:\{guid}\</c> are the same directory
     /// spelled two ways. The normalized form is what is returned, so the directory created is the one that
     /// was checked rather than a re-parse of the text.
     /// <para>

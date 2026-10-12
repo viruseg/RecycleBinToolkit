@@ -139,9 +139,9 @@ internal static class RestorePathPlanner
         ArgumentNullException.ThrowIfNull(destinationPath);
 
         // A path spelled with a trailing separator names a directory, and the name composed below goes beside it
-        // rather than after the separator — which would make "D:\pics\" answer "D:\pics\ (1)", the name of a
+        // rather than after the separator — which would make "X:\pics\" answer "X:\pics\ (1)", the name of a
         // directory called " (1)". TrimEndingDirectorySeparator takes one separator off and leaves a root
-        // alone, so "D:\" and "\\server\share\" are still themselves; it is called until it stops shortening,
+        // alone, so "X:\" and "\\server\share\" are still themselves; it is called until it stops shortening,
         // because a path spelled with two separators would otherwise keep one and answer just as wrongly.
         var trimmed = destinationPath;
         var shorter = Path.TrimEndingDirectorySeparator(trimmed);

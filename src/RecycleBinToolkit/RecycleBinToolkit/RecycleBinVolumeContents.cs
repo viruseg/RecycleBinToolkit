@@ -14,7 +14,7 @@ public sealed class RecycleBinVolumeContents
 {
     /// <summary>Creates the group for one volume.</summary>
     /// <param name="volumeRoot">
-    /// Volume root the entries were read from, such as <c>"E:\\"</c>.
+    /// Volume root the entries were read from, such as <c>"X:\\"</c>.
     /// </param>
     /// <param name="items">
     /// The entries that volume's bin holds, in the order its directory gave them. Empty when the volume has
@@ -30,7 +30,7 @@ public sealed class RecycleBinVolumeContents
         Items = items;
     }
 
-    /// <summary>Volume root these entries were read from, such as <c>"E:\\"</c>.</summary>
+    /// <summary>Volume root these entries were read from, such as <c>"X:\\"</c>.</summary>
     public string VolumeRoot { get; }
 
     /// <summary>The entries that volume's bin holds. Empty for a volume whose bin is empty.</summary>

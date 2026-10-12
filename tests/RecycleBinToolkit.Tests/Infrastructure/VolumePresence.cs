@@ -18,41 +18,6 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 internal static class VolumePresence
 {
     /// <summary>
-    /// Every named letter names a volume on this machine, or the case is skipped.
-    /// </summary>
-    /// <param name="letters">Drive letters the case needs, read only as letters — nothing is created.</param>
-    /// <exception cref="CheckSkippedException">
-    /// One of the letters is not a volume on this machine.
-    /// </exception>
-    /// <remarks>
-    /// The volumes these cases compare are named in the source, so what they need is a fact about the
-    /// machine rather than anything the run can arrange — and a case that read a machine's partition layout
-    /// as a defect would be the repository's rule against asking a run to be the right kind of disk, with the
-    /// letters as the "right kind".
-    /// <para>
-    /// Presence is read from the root resolving rather than from <see cref="DriveInfo"/> alone, for the
-    /// reason <see cref="AbsentVolume.RequireAbsent"/> checks both ways: an enumeration omits roots Windows
-    /// still resolves, and a root that resolves is a volume whichever way the enumeration reads.
-    /// </para>
-    /// </remarks>
-    internal static void Require(params char[] letters)
-    {
-        ArgumentNullException.ThrowIfNull(letters);
-
-        foreach (var letter in letters)
-        {
-            var root = AbsentVolume.RootOf(letter);
-
-            if (!Directory.Exists(root))
-            {
-                Check.Skip(
-                    $"{root} is not a volume on this machine. This case needs {string.Join(", ", letters)} all present, "
-                    + "to read which physical disk each one sits on");
-            }
-        }
-    }
-
-    /// <summary>
     /// A letter naming a second volume on the same physical disk as the one <c>--scratch</c> named, or a skip.
     /// </summary>
     /// <param name="letter">Receives that letter, when this returns.</param>
@@ -64,7 +29,8 @@ internal static class VolumePresence
     /// The run's volume named no physical disk, or nothing else on this machine shares one with it.
     /// </exception>
     /// <remarks>
-    /// Asked of the machine rather than written into the source, for the reason <see cref="Require"/> gives.
+    /// Asked of the machine rather than written into the source, which is what this whole file is for:
+    /// a letter written into a case is one that goes red on every volume but the one it was written for.
     /// <para>
     /// The run's own letter is excluded by comparison rather than by arithmetic: <c>A:</c> has no
     /// <c>Z:</c> beside it, and a run on <c>Z:</c> has no <c>Y:</c> behind it either. What the two must

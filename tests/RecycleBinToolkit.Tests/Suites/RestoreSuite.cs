@@ -131,20 +131,19 @@ internal static class RestoreSuite
     /// sharing a key cannot be.
     /// </summary>
     /// <remarks>
-    /// The drive letters are data and nothing is created, recycled, moved or deleted on any of them, exactly
-    /// as the cases that put <c>W:\</c> into a path predicate do. The answer comes from the driver through
-    /// the volume's own device, so a volume whose driver declines leaves nothing to assert about it here.
+    /// The volumes are asked of the machine rather than written down, for the reason
+    /// <see cref="VolumePresence"/> gives: which volumes share a physical disk is a fact about the machine,
+    /// and a letter written into this case would assert one machine's partition layout rather than the rule.
     /// <para>
-    /// <c>C:</c> is asserted against rather than <c>D:</c> alone because the claim that matters is the
-    /// asymmetry: the key is not a per-volume identity, or the two names would differ for a reason that has
-    /// nothing to do with where the bytes are.
+    /// The question is asked of three volumes rather than of two named ones, because the claim that matters
+    /// is the asymmetry: the key is not a per-volume identity, or the two volumes on one disk would answer
+    /// differently for a reason that has nothing to do with where the bytes are.
     /// </para>
     /// <para>
-    /// Which volumes sit on which disk is a fact about this machine and nothing here can arrange it, so a
-    /// machine without these three drives is a machine this case does not run on. What it asks about is
-    /// three named volumes, which is why <see cref="VolumePresence.Require"/> stands in for them. When they
-    /// are all here the assertions are the claim and they stand unweakened: a machine where <c>D:</c> and
-    /// <c>E:</c> are not one disk fails this case rather than redefining it.
+    /// Nothing here is created, recycled, moved or deleted. The roots are data, and the answer comes from
+    /// the driver through each volume's own device — so a volume whose driver declines leaves nothing to
+    /// assert about it here, and the guards skip rather than fail when the machine cannot supply a second
+    /// volume or a second disk.
     /// </para>
     /// </remarks>
     private static Task VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot(TestContext context)
@@ -152,16 +151,19 @@ internal static class RestoreSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        VolumePresence.Require('D', 'E', 'C');
+        VolumePresence.RequireASameDisk(out var sameDisk, "two volumes sharing one physical disk to compare keys of");
+        VolumePresence.RequireADifferentDisk(out var otherDisk, "a third volume on a disk of its own to compare against");
 
-        // Data, not targets: nothing is created, recycled, moved or deleted on any of these paths, exactly as
-        // the existing cases that put W:\ into a path predicate do.
-        Check.True(PhysicalVolumeDisk.TryIdentify(@"D:\", out var d), "D: answered which disk it sits on");
-        Check.True(PhysicalVolumeDisk.TryIdentify(@"E:\", out var e), "E: answered");
-        Check.True(PhysicalVolumeDisk.TryIdentify(@"C:\", out var c), "C: answered");
+        var own = ScratchWorkspace.VolumeRoot;
+        var shared = AbsentVolume.RootOf(sameDisk);
+        var other = AbsentVolume.RootOf(otherDisk);
 
-        Check.Equal(d, e, "D: and E: are one physical disk, so they must key the same");
-        Check.True(d != c, "C: is a different physical disk, so it must not");
+        Check.True(PhysicalVolumeDisk.TryIdentify(own, out var mine), $"{own} answered which disk it sits on");
+        Check.True(PhysicalVolumeDisk.TryIdentify(shared, out var second), $"{shared} answered");
+        Check.True(PhysicalVolumeDisk.TryIdentify(other, out var third), $"{other} answered");
+
+        Check.Equal(mine, second, "two volumes of one physical disk must key the same");
+        Check.True(mine != third, "a volume on another physical disk must not");
 
         Check.False(PhysicalVolumeDisk.TryIdentify(@"\\server\share\", out _), "a share has no local volume device and must not answer");
 
@@ -181,9 +183,8 @@ internal static class RestoreSuite
     /// land in one group, that a third on another lands in a second, and that the groups carry the volumes
     /// rather than a count of them.
     /// <para>
-    /// The same three drives are required, for the same reason and by the same guard: a machine without
-    /// <c>D:</c>, <c>E:</c> and <c>C:</c> is a machine this case does not run on, and one where <c>D:</c> and
-    /// <c>E:</c> are not one disk fails the case rather than redefining it.
+    /// The volumes come from <see cref="VolumePresence"/> for the reason its own remarks give, and skip
+    /// rather than fail when the machine has nothing to pair or nothing to separate.
     /// </para>
     /// <para>
     /// Nothing here is created, recycled, moved or deleted. The roots are data — the grouping asks each one
@@ -201,19 +202,20 @@ internal static class RestoreSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        VolumePresence.Require('D', 'E', 'C');
+        VolumePresence.RequireASameDisk(out var sameDisk, "two volumes sharing one physical disk to put in one group");
+        VolumePresence.RequireADifferentDisk(out var otherDisk, "a third volume on a disk of its own for a second group");
 
         var works = new List<RestoreVolumeWork>
         {
-            new(@"D:\", []),
-            new(@"E:\", []),
-            new(@"C:\", [])
+            new(ScratchWorkspace.VolumeRoot, []),
+            new(AbsentVolume.RootOf(sameDisk), []),
+            new(AbsentVolume.RootOf(otherDisk), [])
         };
 
         var groups = RestoreRunner.GroupByPhysicalDisk(works);
 
         Check.Equal(2, groups.Count, "two physical disks behind three volumes");
-        Check.True(groups.Any(group => group.Volumes.Count == 2), "D: and E: are in one group");
+        Check.Equal(2, groups[0].Volumes.Count, "and the two volumes sharing a disk are both in the first group");
 
         var withUnknown = RestoreRunner.GroupByPhysicalDisk(
         [
@@ -248,11 +250,10 @@ internal static class RestoreSuite
     /// volume's own figure.
     /// </para>
     /// <para>
-    /// The three volumes named are the same three
-    /// <c>VolumesOnOneDiskShareOneKeyAndAnotherDiskDoesNot</c> reads the keys of, and the same guard stands
-    /// in for them: which disk a letter sits on is a fact about this machine. Nothing is created, recycled,
-    /// moved or deleted here — a pipeline is opened and never fed, and opening one asks the driver which
-    /// disk a volume is on and allocates a queue.
+    /// The volumes come from <see cref="VolumePresence"/>, for the reason its own remarks give, and skip
+    /// rather than fail when the machine has nothing to pair or nothing to separate. Nothing is created,
+    /// recycled, moved or deleted here — a pipeline is opened and never fed, and opening one asks the
+    /// driver which disk a volume is on and allocates a queue.
     /// </para>
     /// <para>
     /// The two channels and the two answered sets are compared by reference rather than by equality,
@@ -266,30 +267,35 @@ internal static class RestoreSuite
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
 
-        VolumePresence.Require('D', 'E', 'C');
+        VolumePresence.RequireASameDisk(out var sameDisk, "two volumes sharing one physical disk to open pools for");
+        VolumePresence.RequireADifferentDisk(out var otherDisk, "a volume on a disk of its own, to reach past one group");
+
+        var own = ScratchWorkspace.VolumeRoot;
+        var shared = AbsentVolume.RootOf(sameDisk);
+        var other = AbsentVolume.RootOf(otherDisk);
 
         var groups = RestoreRunner.GroupByPhysicalDisk(
         [
-            new RestoreVolumeWork(@"D:\", []),
-            new RestoreVolumeWork(@"E:\", []),
-            new RestoreVolumeWork(@"C:\", [])
+            new RestoreVolumeWork(own, []),
+            new RestoreVolumeWork(shared, []),
+            new RestoreVolumeWork(other, [])
         ]);
 
         Check.Equal(2, groups.Count, "two physical disks behind three volumes");
 
         // Two volumes on one disk. The figure is one today, so this says the pool is one per volume and
         // not per disk or per call — a pool per disk would be one the second volume found already running.
-        var shared = RestoreRunner.OpenVolumes(groups[0]);
+        var onOneDisk = RestoreRunner.OpenVolumes(groups[0]);
 
-        Check.Equal(2, shared.Count, "a disk opens one pool per volume rather than one for the disk");
-        Check.Equal(@"D:\", shared[0].Volume.VolumeRoot, "the first volume of the group gets the first pool");
-        Check.Equal(@"E:\", shared[1].Volume.VolumeRoot, "and the second gets the second, in the order they were named");
+        Check.Equal(2, onOneDisk.Count, "a disk opens one pool per volume rather than one for the disk");
+        Check.Equal(own, onOneDisk[0].Volume.VolumeRoot, "the first volume of the group gets the first pool");
+        Check.Equal(shared, onOneDisk[1].Volume.VolumeRoot, "and the second gets the second, in the order they were named");
 
-        Check.NotEqual(shared[0].Work, shared[1].Work, "no two volumes of one disk share a channel");
-        Check.NotEqual(shared[0].Settled, shared[1].Settled, "or the record of the entries they have answered");
-        Check.NotEqual(shared[0].PutBack, shared[1].PutBack, "or the guard a merge writes its put-back behind");
+        Check.NotEqual(onOneDisk[0].Work, onOneDisk[1].Work, "no two volumes of one disk share a channel");
+        Check.NotEqual(onOneDisk[0].Settled, onOneDisk[1].Settled, "or the record of the entries they have answered");
+        Check.NotEqual(onOneDisk[0].PutBack, onOneDisk[1].PutBack, "or the guard a merge writes its put-back behind");
 
-        foreach (var pipeline in shared)
+        foreach (var pipeline in onOneDisk)
         {
             Check.Equal(
                 RestoreRunner.MoveDegree(pipeline.Volume.VolumeRoot),
@@ -298,15 +304,15 @@ internal static class RestoreSuite
         }
 
         // And a volume of another disk, so that the claim reaches past one group.
-        var other = RestoreRunner.OpenVolumes(groups[1]);
+        var onAnother = RestoreRunner.OpenVolumes(groups[1]);
 
-        Check.Equal(1, other.Count, "a disk holding one volume opens one pool");
-        Check.Equal(@"C:\", other[0].Volume.VolumeRoot, "for that volume");
+        Check.Equal(1, onAnother.Count, "a disk holding one volume opens one pool");
+        Check.Equal(other, onAnother[0].Volume.VolumeRoot, "for that volume");
 
-        foreach (var pipeline in shared)
+        foreach (var pipeline in onOneDisk)
         {
-            Check.NotEqual(pipeline.Work, other[0].Work, $"{pipeline.Volume.VolumeRoot} shares no channel with the other disk's volume");
-            Check.NotEqual(pipeline.Settled, other[0].Settled, "nor the entries it has answered");
+            Check.NotEqual(pipeline.Work, onAnother[0].Work, $"{pipeline.Volume.VolumeRoot} shares no channel with the other disk's volume");
+            Check.NotEqual(pipeline.Settled, onAnother[0].Settled, "nor the entries it has answered");
         }
 
         workspace.Dispose();
@@ -2963,7 +2969,7 @@ internal static class RestoreSuite
     /// The two entries are built rather than made, and their records are paths that are not there, so the
     /// answer for each is a failure carrying the filesystem's own code. <b>Nothing is created, moved or
     /// deleted, and the one filesystem act is a read of a name that is not there</b> — under the scratch
-    /// root for the first entry, and under <c>E:\</c> for the second, because a run may only work on the one
+    /// root for the first entry, and under <c>X:\</c> for the second, because a run may only work on the one
     /// volume <c>--scratch</c> named and a second volume's root is the only other thing it can name. That is
     /// the same act <c>AnEntryWhoseRecordCannotBeReadIsAFailureAndNotAThrow</c> performs.
     /// </para>
@@ -2982,8 +2988,8 @@ internal static class RestoreSuite
     /// <para>
     /// <b>Neither letter is written into this file.</b> The first is the volume <c>--scratch</c> named and
     /// the second is a letter on the same physical disk, asked of the machine by
-    /// <see cref="VolumePresence.RequireASameDisk(out char, string)"/>. A case that named <c>D:</c> and
-    /// <c>E:</c> would go red on any other volume — a removable drive and a share are named in
+    /// <see cref="VolumePresence.RequireASameDisk(out char, string)"/>. A case that named two drive letters
+    /// of its own would go red on any other volume — a removable drive and a share are named in
     /// <c>AGENTS.md</c> as first-class choices for <c>--scratch</c>, and a run on either is a run that must
     /// be green or skipped and never red for want of the right kind of disk.
     /// </para>

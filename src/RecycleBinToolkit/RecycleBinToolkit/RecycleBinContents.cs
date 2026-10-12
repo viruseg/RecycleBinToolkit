@@ -45,7 +45,7 @@ public sealed class RecycleBinContents
     /// came from: the order does not depend on which volume's walk finished first.
     /// <para>
     /// A volume read with nothing in it keeps its place rather than dropping out, because a caller that
-    /// asked about <c>E:\</c> and found no group for it could not tell an empty bin from a volume that was
+    /// asked about <c>X:\</c> and found no group for it could not tell an empty bin from a volume that was
     /// never reached — the same reason a root naming no volume is answered as a failure rather than as an
     /// empty result.
     /// </para>

@@ -95,7 +95,7 @@ internal static class ItemDetailLoader
     /// The entries still waiting for a record, gathered under the root of the volume each one lives on.
     /// </summary>
     /// <remarks>
-    /// Keyed without regard to case, as the root itself is: Windows writes <c>E:\</c> and <c>e:\</c> for the
+    /// Keyed without regard to case, as the root itself is: Windows writes <c>X:\</c> and <c>x:\</c> for the
     /// same volume and would otherwise have the same disk read twice under two degrees of parallelism.
     /// <para>
     /// One pass, and a second entry on the same volume costs a span comparison rather than a dictionary probe.

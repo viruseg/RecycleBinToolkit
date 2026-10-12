@@ -49,7 +49,7 @@ internal sealed class TestRunner
         if (!TryParseScratchRoot(args, out var scratchRoot, out var scratchProblem))
         {
             Console.Error.WriteLine(
-                "--scratch takes the root of a volume to test on, such as --scratch D:\\ or --scratch \\\\server\\share\\. It is " +
+                "--scratch takes the root of a volume to test on, such as --scratch X:\\ or --scratch \\\\server\\share\\. It is " +
                 "required rather than defaulted, because every case writes files and removes directories: a run that guessed the " +
                 "volume would be a run whose cleanup nobody chose. The suite creates a directory of its own inside the root you " +
                 "name, so the path has to be the volume root and not a directory in it. A command line that cannot carry two " +
