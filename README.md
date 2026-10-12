@@ -55,19 +55,19 @@ The API is annotated `[SupportedOSPlatform("windows6.0.6000")]`, so calling it f
 cross-platform target produces an analyzer warning unless you guard with
 `OperatingSystem.IsWindows()`.
 
-**The version requirement is a refusal, not a warning.** Build 14393 is the first that reads a
-version 2 index record. An older build does not reject one — it reads it as something it cannot
-use, so the item appears in the bin and cannot be restored from it. `RecycleAsync` therefore throws
+**What "version 2" means.** Windows keeps a small record beside every deleted item — where it came from,
+how large it was, when it went — and that record has two formats. The older one holds a path of at most
+260 characters; version 2, introduced in build 14393, holds a path of any length. This library always
+writes version 2, and that is where the OS requirement above comes from.
+
+**The version requirement is a refusal, not a warning.** An older build does not reject a version 2
+record — it reads it as something it cannot use, so the item appears in the bin and cannot be
+restored from it. `RecycleAsync` therefore throws
 `RecycleBinNativeBackendUnavailableException` (a `PlatformNotSupportedException`) before it touches
 anything, and `ThrowOnError` does **not** suppress it: nothing failed, so there is nothing to
 report as data. `GetItemsAsync`, `RestoreAsync` and `EmptyAsync` are not gated — reading version 1
 records is supported as well as writing version 2, and emptying parses nothing — so a machine too
 old to *write* can still *read* and *clear* at full speed.
-
-There is no stable version yet and no compatibility promise, so the public surface may still change
-between builds. Two members are worth knowing up front: `RecycleBinContents.TotalSize` is derived when
-the listing is constructed rather than settable afterwards, and the `Elapsed` on every result is the
-time the caller waited, including queueing behind other work.
 
 ## Installation
 
