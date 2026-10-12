@@ -158,7 +158,7 @@ Recycles a single file or directory.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `filePath` | `string?` | Path of the file or directory. |
-| `options` | `RecycleOptions?` | Retry, verification and error-handling settings. `null` means `RecycleOptions.Default`. |
+| `options` | `RecycleOptions?` | Retry and error-handling settings. `null` means `RecycleOptions.Default`. |
 | `cancellationToken` | `CancellationToken` | Cancels the scan that validates the path and the work itself. |
 
 **Returns** `true` when the path is gone from disk, whether it was recycled or removed permanently
@@ -325,9 +325,9 @@ never blocks inside the bin.
 
 ### `RecycleBinOptions`
 
-The parent of the three types below, and the storage the engine reads. It is neither constructible nor
-derivable outside the library, so a caller's options value is always one of the three and always carries
-only the properties that call honours.
+The parent of the three types below. It is neither constructible nor derivable outside the library, so a
+caller's options value is always one of the three and always carries only the properties that call
+honours.
 
 ### `RecycleOptions`
 
@@ -340,7 +340,7 @@ a production default, so `RecycleOptions.Default` is always a valid argument.
 | `MaxAttempts` | `int` | `6` | Attempts per item before it is reported as failed. Clamped to at least 1. |
 | `InitialRetryDelay` | `TimeSpan` | `50ms` | Delay before the first retry; it doubles each attempt, with up to 20 % jitter. Negative values clamp to zero. |
 | `OverallTimeout` | `TimeSpan` | `30s` | Upper bound on wall-clock time spent retrying the batch. A backoff that does not fit the remaining budget ends the loop immediately rather than starting an over-budget round. |
-| `ThrowOnError` | `bool` | `true` | Whether a failure raises instead of being returned. |
+| `ThrowOnError` | `bool` | `true` | Whether a single-path failure raises instead of returning `false`. On the batch overload the property is not read. |
 | `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. |
 
 ```csharp
@@ -486,7 +486,7 @@ What to do with a path on a volume that cannot recycle it.
 
 | Value | Effect |
 | --- | --- |
-| `Throw` | Default. The path is refused, the file stays where it is, and nothing is attempted. Raises only when `ThrowOnError` is also on. |
+| `Throw` | Default. A path whose volume cannot recycle it is refused and left in place. Raises only on `RecycleAsync(string?, …)` and only when `ThrowOnError` is on; the batch overload reports it in `Failures`. |
 | `AllowIndeterminate` | The path is recycled even though the volume's answer was not `Enabled` — the answer was `Indeterminate` or `NoRecycleBinOnVolume`. A Recycle Bin is created for that volume and the file lands in it, so the volume gains one it did not have. |
 | `DeletePermanently` | The file is removed for good by the library itself and listed in `PermanentlyDeletedPaths`, never in `RecycledPaths`. A file system that refuses reports `PermanentDeleteFailed` and leaves the file in place. |
 

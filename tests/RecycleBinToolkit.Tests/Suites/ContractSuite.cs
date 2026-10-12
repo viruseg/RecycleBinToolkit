@@ -532,9 +532,10 @@ internal static class ContractSuite
     /// assembly's compile-time access, reports an internal property as absent.
     /// </summary>
     /// <remarks>
-    /// The second assertion compares names rather than counts, so a ninth knob added to the base and
-    /// forgotten on the forwarders is a failure rather than a pass with a longer list, and so is a rename
-    /// that leaves the count at eight.
+    /// The second assertion compares the union of what the three types expose against the base's properties
+    /// by name, so a ninth knob added to the base and left off every one of them is a failure rather than a
+    /// pass with a longer list, and so is a rename that leaves the counts equal. It says nothing about a
+    /// fourth type: these three are named here, and one added later is not measured until it is written here.
     /// </remarks>
     private static Task OptionsTypesExposeOnlyWhatTheirOperationReads(TestContext context)
     {
@@ -556,7 +557,11 @@ internal static class ContractSuite
                     .OrderBy(name => name, StringComparer.Ordinal));
 
             Check.Equal(names, actual, $"{type.Name} exposes only what its operation reads");
-            foreach (var name in names.Split(','))
+
+            // From what reflection reported rather than from the literal the check above compared it
+            // against: the union has to be the real surface of the type, not a second copy of the
+            // expectation, or the next assertion restates the first one.
+            foreach (var name in actual.Split(','))
             {
                 exposed.Add(name);
             }

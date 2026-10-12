@@ -67,13 +67,13 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 216 registered cases, of which four are load cases, so `--all` runs 212 of them. The rest is
+There are 217 registered cases, of which four are load cases, so `--all` runs 213 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
-cases that recycle one and runs the cases that are about a volume with no bin. **202 pass and 10 skip**,
+cases that recycle one and runs the cases that are about a volume with no bin. **203 pass and 10 skip**,
 with nothing failing, on a volume that has a bin — measured by one `--all` on such a volume and by the
 same run on a second one.
 
-**A volume alone on its physical disk is 197 pass and 15 skip**, also nothing failing. Five cases ask the
+**A volume alone on its physical disk is 198 pass and 15 skip**, also nothing failing. Five cases ask the
 machine for a second volume on the same disk or for one on another, through `VolumePresence`, and a run
 on such a volume has neither — so each says it did not run rather than going red over a layout it never
 chose. This is the whole of what `VolumePresence` is for: a letter written into a case asserts one
