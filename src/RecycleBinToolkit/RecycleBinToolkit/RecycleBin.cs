@@ -39,6 +39,10 @@ public static class RecycleBin
     /// The path names its volume by GUID and <see cref="RecycleOptions.ThrowOnError"/> is on. Nothing was
     /// attempted; address the same location by drive letter or mount point instead.
     /// </exception>
+    /// <exception cref="PathTooLongException">
+    /// The Recycle Bin cannot record this path and <see cref="RecycleOptions.ThrowOnError"/> is on. Nothing
+    /// was moved and the file is untouched; see <see cref="RecycleOptions.LongPathFailureAction"/>.
+    /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
     /// </exception>

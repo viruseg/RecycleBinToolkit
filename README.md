@@ -441,6 +441,11 @@ order:
 One path that cannot be recorded never costs the caller the rest of the batch: the other paths are
 still recycled.
 
+A short name comes first, because it is the only answer that leaves the file alone. It has one
+consequence worth knowing: the record names the short name, so restoring that entry later puts the file
+back under it. The directory is the one it always was; the file's own name is the volume's short form
+of it.
+
 ### `NoRecycleBinAction`
 
 What to do with a path on a volume that cannot recycle it.

@@ -29,6 +29,7 @@ internal static class LongPathSuite
         new TestCase("LongPathSuite." + nameof(ThrowPolicyObeysTheGlobalSwitch), ThrowPolicyObeysTheGlobalSwitch),
         new TestCase("LongPathSuite." + nameof(DeletePermanentlyReportsEveryLongPathItHandled), DeletePermanentlyReportsEveryLongPathItHandled),
         new TestCase("LongPathSuite." + nameof(AVersionOneEntryRestoresToItsRecordedPath), AVersionOneEntryRestoresToItsRecordedPath),
+        new TestCase("LongPathSuite." + nameof(ARefusedStagingRenameIsAskedForAgain), ARefusedStagingRenameIsAskedForAgain),
     ];
 
     /// <summary>Characters the record in use can name.</summary>
@@ -314,6 +315,50 @@ internal static class LongPathSuite
         finally
         {
             IndexFormat.ForceVersionOne = false;
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A rename can lose a race with the indexer or antivirus, and that is the one failure here which is a
+    /// property of the machine's moment rather than of the path. It has to be asked for again.
+    /// </summary>
+    /// <remarks>
+    /// The hold is deterministic: a file open without a delete share cannot be renamed, so the move fails
+    /// on every round. What is pinned is that more than one round happened, which the outcome alone cannot
+    /// show — a path refused on the first attempt and a path refused after exhausting them look the same.
+    /// </remarks>
+    private static async Task ARefusedStagingRenameIsAskedForAgain(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the attempt to be measured against");
+
+        var path = CreateDeepFile(Capacity + 50);
+        var options = new RecycleOptions { LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle };
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var result = await RecycleBin.RecycleAsync([path], options, context.CancellationToken).ConfigureAwait(false);
+
+                Check.False(result.Succeeded, "a rename that cannot be made does not recycle the item");
+                Check.True(result.FirstFailure is not null, "and is reported as a failure");
+            }
+
+            Check.True(
+                NativeRecycleRunner.StageAttemptsMade > 1,
+                $"the rename was asked for more than once before the path was given up on ({NativeRecycleRunner.StageAttemptsMade} attempts)");
+
+            Check.True(File.Exists(path), "and the item is where the caller left it");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+            RemoveStagingDirectories();
         }
 
         workspace.Dispose();

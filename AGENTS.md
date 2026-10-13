@@ -145,9 +145,20 @@ at. The whole route is therefore inside `SettleOverLongPaths`, which returns imm
 **What a restore's put-back records, and why no policy reaches it.** `RestoreRunner` recycles internally
 when a merge cannot place a file. It records the path the entry was deleted from, not the place inside
 `$RECYCLE.BIN` where the payload is lying — that is what `RecycleTarget.RecordPath` is for. A restore puts
-an item where its record says, and `RestoreOptions` carries no destination of its own, so on a version 1
-machine the put-back's path is a path some version 1 record already holds, and every such record fits.
-`LongPathFailureAction` is therefore on `RecycleOptions` and nowhere else.
+an item where its record says, and `RestoreOptions` carries no destination of its own. So
+`LongPathFailureAction` is on `RecycleOptions` and nowhere else.
+
+**Where that reasoning stops, and what is there instead.** The put-back's path is *not* one a record
+already holds. `RestoreRunner.WalkInto` builds it as `Path.Combine(destination, childName)`, where the
+destination is the directory entry's own recorded path and the child name is new — so it is longer than
+anything in the bin whenever the directory's own recorded path is anywhere near the limit. Under version 1
+the alias route is tried first and usually answers; where the volume has no short names, the path is
+refused at `LongPathNotRecyclable`, `PutBack` maps that to `RestoreFailed`, and the merge reports the
+whole entry failed. Nothing is lost — the payload stays in `$RECYCLE.BIN` — but the restore reports a
+failure it would not have reported on version 2, after spending the attempt budget. `RestoreOptions` does
+not carry a `LongPathFailureAction` because there is no caller-visible way to make that entry land
+somewhere else: the caller's answer to a refused restore is to raise the conflict policy, which stops the
+merge before a leftover exists.
 
 **Record first, then the move.** A crash between the two leaves the caller's file exactly where it
 was and an index with no payload — litter the next empty collects. The other order leaves data that

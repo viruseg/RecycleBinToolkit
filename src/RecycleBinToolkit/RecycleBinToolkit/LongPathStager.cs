@@ -38,6 +38,9 @@ internal sealed class LongPathStager : IDisposable
 
     private bool _released;
 
+    /// <summary>How many staging renames this instance has been asked to make, successful or not.</summary>
+    internal int Attempts { get; private set; }
+
     /// <summary>
     /// Generates a directory name that is not expected to be taken. The random part makes a clash with
     /// anything the user already keeps on that volume implausible.
@@ -60,6 +63,8 @@ internal sealed class LongPathStager : IDisposable
     internal string? TryStageOnce(string fullPath)
     {
         ObjectDisposedException.ThrowIf(_released, this);
+
+        Attempts++;
 
         var volumeRoot = Path.GetPathRoot(fullPath);
         if (volumeRoot is null)

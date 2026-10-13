@@ -70,7 +70,8 @@ internal readonly struct RecycleTarget
     /// <remarks>
     /// For a path the record cannot hold, when the volume offers a short name that fits. The two diverge
     /// here in the one way they do not elsewhere: the item stays where it was and only the recorded
-    /// spelling changes, so a restore puts it back at the alias, which is the same file at the same place.
+    /// spelling changes. A restore therefore puts it back at the alias — the same directory, reached by
+    /// the volume's short form of the path, which may be a short form of the file's own name.
     /// </remarks>
     internal RecycleTarget WithRecordPath(string recordPath) =>
         new(InputPath, FullPath, Attributes, Size, recordPath);

@@ -20,6 +20,16 @@ internal static class NativeRecycleRunner
     private const int PathTooLong = unchecked((int)0x800700CE);
 
     /// <summary>
+    /// How many times a staging rename is asked for before the path is given up on. Staging is the only
+    /// step here that can lose a race with another process holding the file, so it is the only step that
+    /// needs more than one.
+    /// </summary>
+    private const int StageAttempts = 4;
+
+    /// <summary>Wait between staging rounds, paid once for the batch rather than once per path.</summary>
+    private static readonly TimeSpan StageRetryDelay = TimeSpan.FromMilliseconds(60);
+
+    /// <summary>
     /// How far a delay is randomised, as a fraction of itself. Stops a batch of locked files from retrying
     /// in lockstep with every other batch on the machine.
     /// </summary>
@@ -75,12 +85,17 @@ internal static class NativeRecycleRunner
 
         using var stager = new LongPathStager();
 
+        // Asked once for the whole operation, and threaded from here rather than read again per item. It is a
+        // property of the machine and of nothing in the batch, and a second read of a value a test can
+        // change mid-operation is exactly the read that must not happen.
+        var version = IndexFormat.VersionForWriting;
+
         // A record with a fixed path field cannot name a path past its length, and no retry changes that.
         // Settled once, before the rounds, because it is a property of the record and not of any path.
         pending = SettleOverLongPaths(
             collapsed,
             options,
-            IndexFormat.VersionForWriting,
+            version,
             stager,
             staged,
             stagedPaths,
@@ -121,7 +136,7 @@ internal static class NativeRecycleRunner
                     // what a case provoking it needs to see.
                     if (!FaultAfterStaging || !stagedPaths.Contains(target.InputPath))
                     {
-                        moved = TryRecycle(target, bins, cancellationToken, out failure);
+                        moved = TryRecycle(target, bins, version, cancellationToken, out failure);
                     }
 
                     if (moved)
@@ -155,6 +170,7 @@ internal static class NativeRecycleRunner
         {
             PutBackUnrecycled(staged, recycled);
             leftovers = stager.Release();
+            StageAttemptsMade = stager.Attempts;
         }
 
         // The whole batch went, which is the outcome nearly every batch has. Nothing is left to report and
@@ -223,10 +239,14 @@ internal static class NativeRecycleRunner
     {
         if (version != IndexFormat.Legacy)
         {
-            return [.. targets];
+            // The batch itself, not a copy. The caller only ever replaces the reference, never mutates what
+            // it holds, and on the format every path fits there is nothing to decide — so the copy would
+            // be N structs per operation spent to learn that.
+            return targets as List<RecycleTarget> ?? [.. targets];
         }
 
         var pending = new List<RecycleTarget>(targets.Count);
+        List<RecycleTarget>? awaitingStaging = null;
 
         foreach (var target in targets)
         {
@@ -238,6 +258,15 @@ internal static class NativeRecycleRunner
                 continue;
             }
 
+            // First, because it is free and because it is the only answer that keeps the file intact: the
+            // item does not move, only the spelling in the record changes. Nothing else on this list
+            // destroys anything or relocates it, so nothing else may run before it has been asked.
+            if (TryTakeAlias(target, out var aliased))
+            {
+                pending.Add(aliased);
+                continue;
+            }
+
             if (options.LongPathFailureAction == LongPathFailureAction.DeletePermanently)
             {
                 if (PermanentDeleter.TryDelete(target, permanentlyDeleted, out var refused))
@@ -245,36 +274,24 @@ internal static class NativeRecycleRunner
                     continue;
                 }
 
-                // The file system gave a reason of its own, so report that rather than blaming the length.
-                if (refused != 0)
-                {
-                    failuresByPath[target.InputPath] = new RecycleFailure(
-                        target.InputPath,
-                        refused,
-                        0,
-                        RecycleFailureStage.PermanentDeleteFailed);
+                // The file system gave a reason, so report that rather than blaming the length. A delete
+                // that silently did nothing has no reason to carry, and reporting it as too long would
+                // send an integrator looking at the one thing that was not the problem.
+                failuresByPath[target.InputPath] = new RecycleFailure(
+                    target.InputPath,
+                    refused,
+                    0,
+                    RecycleFailureStage.PermanentDeleteFailed);
 
-                    continue;
-                }
-            }
-
-            // Tried after the delete the caller asked for and before the refusal they did not, because the
-            // alias is free: the file does not move, and the record names a path the caller can restore from.
-            // The caller never learns it happened unless they look, which is what makes it the right first
-            // answer — it is also the only one that changes nothing.
-            if (TryTakeAlias(target, out var aliased))
-            {
-                pending.Add(aliased);
                 continue;
             }
 
             // The last answer, and the only one that moves anything. Both spellings follow the item: the
             // record names the staging path because the original is what would not fit, and a restore
             // puts the item back there.
-            if (options.LongPathFailureAction == LongPathFailureAction.ShortenPathAndRecycle
-                && TryStageWithBatchRetries(target, stager, staged, stagedPaths, out var stagedTarget))
+            if (options.LongPathFailureAction == LongPathFailureAction.ShortenPathAndRecycle)
             {
-                pending.Add(stagedTarget);
+                (awaitingStaging ??= []).Add(target);
                 continue;
             }
 
@@ -285,35 +302,70 @@ internal static class NativeRecycleRunner
                 RecycleFailureStage.LongPathNotRecyclable);
         }
 
+        if (awaitingStaging is not null)
+        {
+            StageWithBatchRetries(awaitingStaging, pending, stager, staged, stagedPaths, failuresByPath);
+        }
+
         return pending;
     }
 
     /// <summary>
-    /// Stages one path, and returns whether it got there.
+    /// Stages a batch, giving every one of its paths an attempt before any of them waits.
     /// </summary>
     /// <remarks>
-    /// One attempt per call. The caller gives a whole batch one attempt each before any of them waits, so
-    /// that a contended batch pays the backoff once rather than once per item.
+    /// A rename that loses a race with the indexer or antivirus is worth asking again, and it is the one
+    /// failure in this class that is a property of the machine's moment rather than of the path. Retrying
+    /// per path would make a contended batch pay the whole backoff once per item; giving the batch one
+    /// attempt each first turns that into a single backoff at the same cost to every individual path.
+    /// <para>
+    /// What is left after the last round is reported as too long, which is the best answer available to a
+    /// caller who asked for this policy and is what the pre-existing failure said. It is the one place
+    /// where the reported reason can be less specific than the cause.
+    /// </para>
     /// </remarks>
-    private static bool TryStageWithBatchRetries(
-        RecycleTarget target,
+    private static void StageWithBatchRetries(
+        List<RecycleTarget> awaitingStaging,
+        List<RecycleTarget> pending,
         LongPathStager stager,
         List<StagedTarget> staged,
         HashSet<string> stagedPaths,
-        out RecycleTarget stagedTarget)
+        Dictionary<string, RecycleFailure> failuresByPath)
     {
-        var stagedPath = stager.TryStageOnce(target.FullPath);
-
-        if (stagedPath is null)
+        for (var attempt = 1; attempt <= StageAttempts && awaitingStaging.Count > 0; attempt++)
         {
-            stagedTarget = default;
-            return false;
+            if (attempt > 1)
+            {
+                Thread.Sleep(StageRetryDelay);
+            }
+
+            var stillWaiting = new List<RecycleTarget>(awaitingStaging.Count);
+
+            foreach (var target in awaitingStaging)
+            {
+                if (stager.TryStageOnce(target.FullPath) is not string stagedPath)
+                {
+                    stillWaiting.Add(target);
+                    continue;
+                }
+
+                var stagedTarget = target.WithStagedPath(stagedPath);
+                staged.Add(new StagedTarget(stagedTarget, target.FullPath));
+                stagedPaths.Add(target.InputPath);
+                pending.Add(stagedTarget);
+            }
+
+            awaitingStaging = stillWaiting;
         }
 
-        stagedTarget = target.WithStagedPath(stagedPath);
-        staged.Add(new StagedTarget(stagedTarget, target.FullPath));
-        stagedPaths.Add(target.InputPath);
-        return true;
+        foreach (var target in awaitingStaging)
+        {
+            failuresByPath[target.InputPath] = new RecycleFailure(
+                target.InputPath,
+                PathTooLong,
+                0,
+                RecycleFailureStage.LongPathNotRecyclable);
+        }
     }
 
     /// <summary>
@@ -359,6 +411,15 @@ internal static class NativeRecycleRunner
     internal static bool FaultBeforePutBack { get; set; }
 
     /// <summary>
+    /// How many staging renames the last operation asked for, successful or not.
+    /// </summary>
+    /// <remarks>
+    /// Read by a case that pins the retry rounds: a rename refused outright has to have been asked for more
+    /// than once, and that is not observable from the outcome, which is the same either way.
+    /// </remarks>
+    internal static int StageAttemptsMade { get; private set; }
+
+    /// <summary>
     /// Replaces a target's recorded path with the volume's short name for it, when it has one that fits.
     /// </summary>
     /// <remarks>
@@ -389,7 +450,7 @@ internal static class NativeRecycleRunner
     /// order leaves data that is gone and recorded nowhere, which is the one outcome a Recycle Bin exists to
     /// prevent.
     /// </remarks>
-    private static bool TryRecycle(RecycleTarget target, Dictionary<string, (string Path, BinStemSequencer Stems)> bins, CancellationToken cancellationToken, out RecycleFailure? failure)
+    private static bool TryRecycle(RecycleTarget target, Dictionary<string, (string Path, BinStemSequencer Stems)> bins, int version, CancellationToken cancellationToken, out RecycleFailure? failure)
     {
         var root = Path.GetPathRoot(target.FullPath);
 
@@ -405,10 +466,6 @@ internal static class NativeRecycleRunner
             bin = (binDirectory, new BinStemSequencer(binDirectory, cancellationToken));
             bins.Add(root, bin);
         }
-
-        // Asked once for the whole operation rather than per item, because it is a property of the
-        // machine and of nothing in the batch.
-        var version = IndexFormat.VersionForWriting;
 
         var isDirectory = target.IsDirectory;
         var extension = Path.GetExtension(target.FullPath);
