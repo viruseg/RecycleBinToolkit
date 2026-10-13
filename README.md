@@ -4,6 +4,8 @@ A high-performance .NET library for the Windows Recycle Bin: move files and dire
 what is in it, restore entries, empty it, and report the outcome of every item. It reads and writes the
 Recycle Bin's own files — no `SHFileOperation`, no `IFileOperation`, no COM.
 
+[![NuGet](https://img.shields.io/nuget/v/RecycleBinToolkit.svg)](https://www.nuget.org/packages/RecycleBinToolkit) [![NuGet](https://img.shields.io/nuget/dt/RecycleBinToolkit.svg)](https://www.nuget.org/packages/RecycleBinToolkit)
+
 ```csharp
 using RecycleBinToolkit;
 
