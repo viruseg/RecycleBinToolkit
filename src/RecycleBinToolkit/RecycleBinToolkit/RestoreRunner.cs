@@ -1119,7 +1119,10 @@ internal static class RestoreRunner
 
         try
         {
-            recycled = NativeRecycleRunner.Run(leftBehind, options, cancellationToken);
+            // No sink: these are files of the caller's that the merge could not put back, and they are lying inside
+            // the Recycle Bin rather than anywhere in the caller's list. Reporting them would push the
+            // reports' own index past the count the caller is holding, for items they never asked about.
+            recycled = NativeRecycleRunner.Run(leftBehind, sink: null, options, cancellationToken);
         }
         finally
         {

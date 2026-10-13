@@ -62,7 +62,8 @@ public sealed class RestoreOptions : RecycleBinOptions
 
     /// <summary>
     /// Called once per entry handed to the operation, on a thread of its own, so the restore does not wait
-    /// for it. Defaults to <see langword="null"/>, which reports nothing and costs nothing.
+    /// for it. Two reports are never delivered at once, and never on the thread that called the operation.
+    /// Defaults to <see langword="null"/>, which reports nothing and costs nothing.
     /// </summary>
     /// <remarks>
     /// A file a merge could not put back is not reported: the caller never handed it over, so it has no

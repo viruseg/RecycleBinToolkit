@@ -39,16 +39,17 @@ internal static class RecycleBatch
     internal static RecycleBinResult Run(
         IReadOnlyList<string?> filePaths,
         RecycleBinOptions options,
+        ProgressSink? sink,
         CancellationToken cancellationToken)
     {
-        var (targets, gateFailures, permanentlyDeleted) = BuildTargets(filePaths, options, cancellationToken);
+        var (targets, gateFailures, permanentlyDeleted) = BuildTargets(filePaths, options, sink, cancellationToken);
 
         if (targets.Count == 0)
         {
             return RecycleBinResult.Create([], permanentlyDeleted, gateFailures, TimeSpan.Zero);
         }
 
-        var result = NativeRecycleRunner.Run(targets, options, cancellationToken);
+        var result = NativeRecycleRunner.Run(targets, sink, options, cancellationToken);
 
         if (gateFailures.Count == 0 && permanentlyDeleted.Count == 0)
         {
@@ -67,6 +68,7 @@ internal static class RecycleBatch
     private static (List<RecycleTarget> Targets, List<RecycleFailure> Failures, List<string> PermanentlyDeleted) BuildTargets(
         IReadOnlyList<string?> filePaths,
         RecycleBinOptions options,
+        ProgressSink? sink,
         CancellationToken cancellationToken)
     {
         var targets = new List<RecycleTarget>(filePaths.Count);
@@ -93,6 +95,7 @@ internal static class RecycleBatch
             else
             {
                 failures.Add(failure);
+                RecycleBinOptions.Report(sink, RecycleStatus.Refused, filePaths[i] ?? string.Empty, failure);
             }
         }
 
@@ -102,7 +105,7 @@ internal static class RecycleBatch
         // loop would be checking once for the whole batch anyway.
         cancellationToken.ThrowIfCancellationRequested();
 
-        RefuseVolumesThatCannotRecycle(targets, failures, permanentlyDeleted, options);
+        RefuseVolumesThatCannotRecycle(targets, failures, permanentlyDeleted, options, sink);
 
         return (targets, failures, permanentlyDeleted);
     }
@@ -141,11 +144,13 @@ internal static class RecycleBatch
     /// recycle on the caller's behalf. Empty under either other action.
     /// </param>
     /// <param name="options">Carries the caller's choice for a volume that cannot recycle.</param>
+    /// <param name="sink">Where each refusal is reported, or <see langword="null"/> when nobody asked.</param>
     private static void RefuseVolumesThatCannotRecycle(
         List<RecycleTarget> targets,
         List<RecycleFailure> failures,
         List<string> permanentlyDeleted,
-        RecycleBinOptions options)
+        RecycleBinOptions options,
+        ProgressSink? sink)
     {
         if (targets.Count == 0)
         {
@@ -186,7 +191,7 @@ internal static class RecycleBatch
                 if (DeletesPermanentlyHere(status.Reason, options.NoRecycleBinAction))
                 {
                     deleted ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    RemoveOutright(group, deleted, permanentlyDeleted, failures);
+                    RemoveOutright(group, deleted, permanentlyDeleted, failures, sink);
                 }
 
                 continue;
@@ -204,14 +209,22 @@ internal static class RecycleBatch
                 // who listed a path twice see two failures for one file.
                 if (!(refused ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase)).Add(target.FullPath))
                 {
+                    // Reported even though no failure is recorded, because the caller handed over two paths
+                    // and is owed two reports. This is the first of the two places a repeated path is
+                    // dropped; hooking only the second would leave one report for two inputs on a batch
+                    // that repeats a path on a refusing volume.
+                    RecycleBinOptions.Report(sink, RecycleStatus.Refused, target.InputPath, failure: null);
                     continue;
                 }
 
-                failures.Add(new RecycleFailure(
+                var failure = new RecycleFailure(
                     target.InputPath,
                     hResult,
                     attempts: 0,
-                    RecycleFailureStage.NoRecycleBinOnVolume));
+                    RecycleFailureStage.NoRecycleBinOnVolume);
+
+                failures.Add(failure);
+                RecycleBinOptions.Report(sink, RecycleStatus.Refused, target.InputPath, failure);
             }
         }
 
@@ -259,21 +272,27 @@ internal static class RecycleBatch
     /// </param>
     /// <param name="permanentlyDeleted">Receives the caller's own spelling of each path confirmed gone.</param>
     /// <param name="failures">Receives one failure per path the file system refused to remove.</param>
+    /// <param name="sink">Where each removal and refusal is reported, or <see langword="null"/> when nobody asked.</param>
     private static void RemoveOutright(
         List<RecycleTarget> group,
         HashSet<string> removed,
         List<string> permanentlyDeleted,
-        List<RecycleFailure> failures)
+        List<RecycleFailure> failures,
+        ProgressSink? sink)
     {
         foreach (var target in group)
         {
             if (!removed.Add(target.FullPath))
             {
+                // The same second drop the gate has, for the same reason: two paths in, two reports out,
+                // and a repeated path is not a failure today and this does not make it one.
+                RecycleBinOptions.Report(sink, RecycleStatus.Refused, target.InputPath, failure: null);
                 continue;
             }
 
             if (PermanentDeleter.TryDelete(target, permanentlyDeleted, out var hResult))
             {
+                RecycleBinOptions.Report(sink, RecycleStatus.DeletedPermanently, target.InputPath, failure: null);
                 continue;
             }
 
@@ -281,7 +300,10 @@ internal static class RecycleBatch
             // path to go. Saying so is the whole answer available, and saying it as PermanentDeleteFailed
             // keeps the reason the caller gave visible rather than blaming the volume they were never
             // asked about.
-            failures.Add(new RecycleFailure(target.InputPath, hResult, attempts: 0, RecycleFailureStage.PermanentDeleteFailed));
+            var failure = new RecycleFailure(target.InputPath, hResult, attempts: 0, RecycleFailureStage.PermanentDeleteFailed);
+
+            failures.Add(failure);
+            RecycleBinOptions.Report(sink, RecycleStatus.Failed, target.InputPath, failure);
         }
     }
 

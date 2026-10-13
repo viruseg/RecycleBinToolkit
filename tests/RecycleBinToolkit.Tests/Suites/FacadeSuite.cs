@@ -1050,7 +1050,8 @@ internal static class FacadeSuite
     /// </summary>
     /// <remarks>
     /// The parameter stays the base type because the method being called takes the base type: this mirrors
-    /// <c>RecycleBatch.BuildTargets</c>'s own signature rather than the public one's.
+    /// <c>RecycleBatch.BuildTargets</c>'s own signature rather than the public one's. No progress sink,
+    /// because nothing here is about what is reported.
     /// </remarks>
     private static void BuildTargets(
         IReadOnlyList<string?> filePaths,
@@ -1062,7 +1063,7 @@ internal static class FacadeSuite
 
         try
         {
-            build.Invoke(null, [filePaths, options, cancellationToken]);
+            build.Invoke(null, [filePaths, options, null, cancellationToken]);
         }
         catch (TargetInvocationException wrapped) when (wrapped.InnerException is not null)
         {

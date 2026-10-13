@@ -47,6 +47,10 @@ internal static class NativeRecycleRunner
     /// nothing.
     /// </param>
     /// <param name="cancellationToken">Cancels the operation between paths.</param>
+    /// <param name="sink">
+    /// Where each path's outcome is reported as it is decided, or <see langword="null"/> for a run whose
+    /// reports nobody asked for.
+    /// </param>
     /// <returns>The outcome of the batch.</returns>
     /// <remarks>
     /// <list type="bullet">
@@ -60,6 +64,7 @@ internal static class NativeRecycleRunner
     /// </remarks>
     internal static RecycleBinResult Run(
         IReadOnlyList<RecycleTarget> targets,
+        ProgressSink? sink,
         RecycleBinOptions options,
         CancellationToken cancellationToken)
     {
@@ -76,6 +81,7 @@ internal static class NativeRecycleRunner
         }
 
         var collapsed = RecycleTarget.CollapseEquivalent(targets);
+        ReportDroppedDuplicates(targets, collapsed, sink);
         var pending = collapsed;
         var recycled = new List<string>(collapsed.Count);
         var failuresByPath = new Dictionary<string, RecycleFailure>(collapsed.Count, StringComparer.OrdinalIgnoreCase);
@@ -95,6 +101,7 @@ internal static class NativeRecycleRunner
         pending = SettleOverLongPaths(
             collapsed,
             options,
+            sink,
             version,
             stager,
             staged,
@@ -142,6 +149,11 @@ internal static class NativeRecycleRunner
                     if (moved)
                     {
                         recycled.Add(target.InputPath);
+
+                        // Here and not in the result-assembly pass below, because a batch whose every path
+                        // succeeds takes that pass's early return and would otherwise hand the caller its
+                        // whole batch of reports at once, in one lump, after the last move.
+                        RecycleBinOptions.Report(sink, RecycleStatus.Recycled, target.InputPath, failure: null);
                         continue;
                     }
 
@@ -182,6 +194,20 @@ internal static class NativeRecycleRunner
             return RecycleBinResult.Create(recycled, permanentlyDeleted, [], stopwatch.Elapsed, leftovers);
         }
 
+        // A path's outcome is not known until the loop has stopped retrying it, so the paths that gave up
+        // are reported here rather than where they moved. This is the only place the number of reports and
+        // the shape of the result agree.
+        foreach (var target in pending)
+        {
+            RecycleBinOptions.Report(
+                sink,
+                RecycleStatus.Failed,
+                target.InputPath,
+                failuresByPath.TryGetValue(target.InputPath, out var reason)
+                    ? reason
+                    : new RecycleFailure(target.InputPath, 0, options.MaxAttempts, RecycleFailureStage.Performing));
+        }
+
         // A path that gave up with no verdict of its own is one the loop stopped before it could record, and
         // the round it stopped on is the one it is reported at. Held as a set rather than found by scanning
         // the pending list: the scan compares RecycleTarget structs field by field, and asking N of them
@@ -214,6 +240,37 @@ internal static class NativeRecycleRunner
     }
 
     /// <summary>
+    /// Reports every path the engine's own de-duplication dropped, so a caller who listed one twice is told
+    /// about both.
+    /// </summary>
+    /// <remarks>
+    /// The second of the two places a repeated path goes. The volume gate drops one before this point and
+    /// reports it there, which is why both places have to be hooked rather than only this one.
+    /// </remarks>
+    private static void ReportDroppedDuplicates(
+        IReadOnlyList<RecycleTarget> targets,
+        IReadOnlyList<RecycleTarget> collapsed,
+        ProgressSink? sink)
+    {
+        if (sink is null || targets.Count == collapsed.Count)
+        {
+            return;
+        }
+
+        // The same test RecycleTarget.CollapseEquivalent applies, in the same order: a path already seen is
+        // the one that goes. Anything else and a repeated path would be reported under the wrong spelling.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var target in targets)
+        {
+            if (!seen.Add(target.FullPath))
+            {
+                RecycleBinOptions.Report(sink, RecycleStatus.Refused, target.InputPath, failure: null);
+            }
+        }
+    }
+
+    /// <summary>
     /// Takes out of the batch every path the record in use cannot name, and applies the caller's policy to
     /// it.
     /// </summary>
@@ -230,6 +287,7 @@ internal static class NativeRecycleRunner
     private static List<RecycleTarget> SettleOverLongPaths(
         IReadOnlyList<RecycleTarget> targets,
         RecycleBinOptions options,
+        ProgressSink? sink,
         int version,
         LongPathStager stager,
         List<StagedTarget> staged,
@@ -271,6 +329,7 @@ internal static class NativeRecycleRunner
             {
                 if (PermanentDeleter.TryDelete(target, permanentlyDeleted, out var refused))
                 {
+                    RecycleBinOptions.Report(sink, RecycleStatus.DeletedPermanently, target.InputPath, failure: null);
                     continue;
                 }
 
@@ -282,6 +341,14 @@ internal static class NativeRecycleRunner
                     refused,
                     0,
                     RecycleFailureStage.PermanentDeleteFailed);
+
+                // A delete that was attempted and refused. The length is what brought the path here; it is
+                // not what stopped the removal, and a caller told otherwise looks at the wrong thing.
+                RecycleBinOptions.Report(
+                    sink,
+                    RecycleStatus.Failed,
+                    target.InputPath,
+                    failuresByPath[target.InputPath]);
 
                 continue;
             }
@@ -300,6 +367,14 @@ internal static class NativeRecycleRunner
                 PathTooLong,
                 0,
                 RecycleFailureStage.LongPathNotRecyclable);
+
+            // Refused rather than failed because nothing was attempted: the file is where the caller left
+            // it, and the only answer is that the record could not name it.
+            RecycleBinOptions.Report(
+                sink,
+                RecycleStatus.Refused,
+                target.InputPath,
+                failuresByPath[target.InputPath]);
         }
 
         if (awaitingStaging is not null)

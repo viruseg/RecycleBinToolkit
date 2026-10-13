@@ -11,7 +11,8 @@ public sealed class EmptyOptions : RecycleBinOptions
 
     /// <summary>
     /// Called once per entry the empty went after, on a thread of its own, so the empty does not wait for
-    /// it. Defaults to <see langword="null"/>, which reports nothing and costs nothing.
+    /// it. Two reports are never delivered at once, and never on the thread that called the operation.
+    /// Defaults to <see langword="null"/>, which reports nothing and costs nothing.
     /// </summary>
     /// <remarks>
     /// Setting this makes the empty read every volume's bin one extra time, to know how many entries to

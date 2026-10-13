@@ -128,6 +128,19 @@ public abstract class RecycleBinOptions
         _running?.CompleteAsync(wait) ?? Task.CompletedTask;
 
     /// <summary>
+    /// Queues one report about a recycled path, or does nothing at all when nobody asked for reports.
+    /// </summary>
+    internal static void Report(ProgressSink? sink, RecycleStatus status, string path, RecycleFailure? failure)
+    {
+        if (sink is null)
+        {
+            return;
+        }
+
+        sink.Report(new RecycleProgress(sink.NextIndex(), sink.Count, status, path, sink.Elapsed, failure));
+    }
+
+    /// <summary>
     /// Returns a copy with out-of-range values clamped into a usable range.
     /// </summary>
     // Every property is named here, because a property this initialiser does not mention is not clamped

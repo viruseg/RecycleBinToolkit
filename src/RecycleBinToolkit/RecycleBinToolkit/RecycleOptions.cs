@@ -75,7 +75,8 @@ public sealed class RecycleOptions : RecycleBinOptions
 
     /// <summary>
     /// Called once per path handed to the operation, on a thread of its own, so the operation does not wait
-    /// for it. Defaults to <see langword="null"/>, which reports nothing and costs nothing.
+    /// for it. Two reports are never delivered at once, and never on the thread that called the operation.
+    /// Defaults to <see langword="null"/>, which reports nothing and costs nothing.
     /// </summary>
     /// <remarks>
     /// Every path in the batch is reported, including one that was refused, repeated, or named nothing.

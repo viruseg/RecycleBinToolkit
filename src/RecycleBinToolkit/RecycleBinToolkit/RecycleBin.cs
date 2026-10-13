@@ -114,14 +114,28 @@ public static class RecycleBin
 
         var effective = options ?? RecycleOptions.Default;
 
+        // Armed here and not in the single-path overload, which forwards to this one: a sink built on the
+        // way in and a second one on the way through would leave half the queue unwatched.
+        var sink = effective.ArmProgress();
+        sink?.SetCount(filePaths.Count);
+
         // Validating a batch is one filesystem probe per path, and it is slow enough that running it inline
         // would be the caller's own time: an async method runs everything before its first await on the
         // thread that called it, so a caller on a UI thread would be frozen for the whole scan and a
         // caller holding a lock would hold it. Hopping to the pool first costs a scheduling round trip
         // and buys back the caller's thread.
-        return await Task
-            .Run(() => RecycleBatch.Run(filePaths, effective, cancellationToken), cancellationToken)
-            .ConfigureAwait(false);
+        try
+        {
+            return await Task
+                .Run(() => RecycleBatch.Run(filePaths, effective, sink, cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            // On the cancellation path too, and that is the whole point of it: a caller who asked to wait
+            // would otherwise wait on a reader nobody ever tells to stop.
+            await effective.FinishProgressAsync(effective.WaitForProgressCallbacks).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
