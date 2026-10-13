@@ -23,6 +23,38 @@ namespace RecycleBinToolkit;
 internal static class NativeBinEmptier
 {
     /// <summary>
+    /// How many times the bins have been read only to count what was in them. A test reads this to tell a
+    /// caller who asked for reports from one who did not.
+    /// </summary>
+    internal static int CountPasses;
+
+    /// <summary>
+    /// How many entries the named volumes' bins hold between them.
+    /// </summary>
+    /// <param name="volumeRoots">Volume roots, each normalised with a trailing separator.</param>
+    /// <param name="cancellationToken">Cancels the walk between entries.</param>
+    /// <remarks>
+    /// A second read of every bin directory, and the reason an empty with a progress handler is slower than
+    /// one without. It exists only for a caller who asked to be told how far along the sweep is, and a caller
+    /// who did not never reaches here.
+    /// </remarks>
+    internal static int CountEntries(IReadOnlyList<string> volumeRoots, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(volumeRoots);
+
+        Interlocked.Increment(ref CountPasses);
+
+        var total = 0;
+
+        foreach (var volumeRoot in volumeRoots)
+        {
+            total += NativeBinEntries.CountRecords(NativeBinLayout.BinDirectory(volumeRoot), cancellationToken);
+        }
+
+        return total;
+    }
+
+    /// <summary>
     /// Removes everything from the named volumes and reports what went.
     /// </summary>
     /// <param name="volumeRoots">Volume roots to empty, each normalised with a trailing separator.</param>
@@ -30,12 +62,16 @@ internal static class NativeBinEmptier
     /// Cancels the sweep between entries: the entry it is in the middle of is finished and the next is
     /// not begun.
     /// </param>
+    /// <param name="sink">
+    /// Where each entry is reported as it goes, or <see langword="null"/> for an empty nobody is watching.
+    /// </param>
     /// <returns>
     /// Every volume whose bin directory existed, the exact number of entries removed, their exact total
     /// size, and one failure per entry that would not go.
     /// </returns>
     internal static RecycleBinEmptyResult Empty(
         IReadOnlyList<string> volumeRoots,
+        ProgressSink? sink,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(volumeRoots);
@@ -51,7 +87,7 @@ internal static class NativeBinEmptier
         // run this on, and a Parallel.For over a single index would nest another one inside it for no work.
         if (disks.Count == 1)
         {
-            RunDisk(disks[0], volumeRoots, outcomes, cancellationToken);
+            RunDisk(disks[0], volumeRoots, outcomes, sink, cancellationToken);
         }
         else if (disks.Count > 1)
         {
@@ -65,7 +101,7 @@ internal static class NativeBinEmptier
                     MaxDegreeOfParallelism = disks.Count,
                     CancellationToken = cancellationToken
                 },
-                index => RunDisk(disks[index], volumeRoots, outcomes, cancellationToken));
+                index => RunDisk(disks[index], volumeRoots, outcomes, sink, cancellationToken));
         }
 
         return Flatten(volumeRoots, outcomes);
@@ -84,13 +120,14 @@ internal static class NativeBinEmptier
         VolumeDiskGroup disk,
         IReadOnlyList<string> volumeRoots,
         VolumeOutcome[] outcomes,
+        ProgressSink? sink,
         CancellationToken cancellationToken)
     {
         foreach (var position in disk.Positions)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            outcomes[position] = EmptyVolume(volumeRoots[position], cancellationToken);
+            outcomes[position] = EmptyVolume(volumeRoots[position], sink, cancellationToken);
         }
     }
 
@@ -129,6 +166,7 @@ internal static class NativeBinEmptier
 
     private static VolumeOutcome EmptyVolume(
         string volumeRoot,
+        ProgressSink? sink,
         CancellationToken cancellationToken)
     {
         var binDirectory = NativeBinLayout.BinDirectory(volumeRoot);
@@ -187,7 +225,7 @@ internal static class NativeBinEmptier
         Parallel.ForEach(needy, options, index => sizes[index] = SizeOfRecord(records[index].IndexPath!));
 
         var failures = new List<RecycleFailure>();
-        Remove(records, sizes, failures, cancellationToken);
+        Remove(records, sizes, failures, sink, cancellationToken);
 
         // A volume is named as emptied only when nothing on it was left behind: a caller reading
         // VolumesEmptied is asking whether that volume is empty now, and a bin that kept a locked entry
@@ -234,6 +272,7 @@ internal static class NativeBinEmptier
         List<NativeBinEntry> records,
         long[] sizes,
         List<RecycleFailure> failures,
+        ProgressSink? sink,
         CancellationToken cancellationToken)
     {
         for (var i = 0; i < records.Count; i++)
@@ -253,6 +292,8 @@ internal static class NativeBinEmptier
                 }
 
                 File.Delete(indexPath);
+
+                Report(sink, EmptyStatus.Removed);
             }
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
             {
@@ -262,6 +303,7 @@ internal static class NativeBinEmptier
                 // would report a removal as a problem for every entry a concurrent empty had already taken.
                 TryDeleteIndex(indexPath);
                 sizes[i] = -1;
+                Report(sink, EmptyStatus.Removed);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
@@ -270,8 +312,28 @@ internal static class NativeBinEmptier
                 // whole empty.
                 failures.Add(new RecycleFailure(indexPath, ex.HResult, 1, RecycleFailureStage.Enumeration));
                 sizes[i] = -1;
+                Report(sink, EmptyStatus.Failed);
             }
         }
+    }
+
+    /// <summary>
+    /// Reports one entry as out of the bin or still in it.
+    /// </summary>
+    /// <remarks>
+    /// Removed says the entry is out, which is not the question <c>ItemsRemoved</c> answers: an entry whose
+    /// size could not be worked out leaves the bin without being counted, and an entry another process had
+    /// already taken is counted as neither. A progress display is asking whether the bin is shrinking, which
+    /// is what this says.
+    /// </remarks>
+    private static void Report(ProgressSink? sink, EmptyStatus status)
+    {
+        if (sink is null)
+        {
+            return;
+        }
+
+        sink.Report(new EmptyProgress(sink.NextIndex(), sink.Count, status, sink.Elapsed));
     }
 
     /// <summary>

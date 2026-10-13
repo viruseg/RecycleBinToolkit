@@ -29,6 +29,9 @@ internal static class ProgressSuite
         new TestCase("ProgressSuite." + nameof(ACancelledCallStillFinishesItsQueue), ACancelledCallStillFinishesItsQueue),
         new TestCase("ProgressSuite." + nameof(EveryRestoredEntryReportsOnce), EveryRestoredEntryReportsOnce),
         new TestCase("ProgressSuite." + nameof(AMergesPutBackIsNotReported), AMergesPutBackIsNotReported),
+        new TestCase("ProgressSuite." + nameof(AnEmptyReportsOneEventPerRecord), AnEmptyReportsOneEventPerRecord),
+        new TestCase("ProgressSuite." + nameof(AnEmptyDoesNotCountWhenNobodyIsListening), AnEmptyDoesNotCountWhenNobodyIsListening),
+        new TestCase("ProgressSuite." + nameof(AnUnresolvableRootStillFinishesItsQueue), AnUnresolvableRootStillFinishesItsQueue),
     ];
 
     /// <summary>
@@ -662,6 +665,124 @@ internal static class ProgressSuite
         Check.Equal(1, events[0].Count, "against a count of the entries handed over, not of the files involved");
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An empty knows nothing about what it is going to remove until it has read the bin, so the total a
+    /// progress display divides by costs one walk of every volume first. Every entry it then goes after is
+    /// reported, against that total.
+    /// </summary>
+    private static async Task AnEmptyReportsOneEventPerRecord(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("entries for the empty to remove");
+
+        var files = workspace.CreateRandomFiles(5, 4096);
+        var recycled = await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.True(recycled.Succeeded, $"the files reached the bin (first failure: {recycled.FirstFailure?.Stage})");
+
+        var reported = new List<EmptyProgress>();
+        var options = new EmptyOptions
+        {
+            OnItemProcessed = progress =>
+            {
+                lock (reported)
+                {
+                    reported.Add(progress);
+                }
+            },
+            WaitForProgressCallbacks = true,
+        };
+
+        var emptied = await RecycleBin
+            .EmptyAsync(ScratchWorkspace.VolumeRoot, options, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var events = Snapshot(reported);
+
+        // Measured against the empty's own figures and not against this case's five files: the volume's
+        // bin holds whatever else the run left there, and the contract is about the entries the empty went
+        // after rather than about this case.
+        Check.Equal(
+            emptied.ItemsRemoved,
+            events.Count(progress => progress.Status == EmptyStatus.Removed),
+            $"one report per entry that left the bin (removed {emptied.ItemsRemoved})");
+        Check.Equal(
+            emptied.Failures.Count,
+            events.Count(progress => progress.Status == EmptyStatus.Failed),
+            $"and one per entry that did not ({string.Join(", ", emptied.Failures.Select(f => f.Stage))})");
+        Check.Equal(emptied.ItemsRemoved + emptied.Failures.Count, events.Count, "and no other report at all");
+
+        var swept = events.Count;
+        Check.True(events.All(progress => progress.Count == swept), "every report carries the total counted before the sweep");
+        Check.Equal(
+            string.Join(", ", Enumerable.Range(1, swept)),
+            string.Join(", ", events.Select(progress => progress.Index).Order()),
+            "numbered once each");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The count is a second walk of every bin directory, and a caller who asked for no reports must not
+    /// pay for it: on a bin of thirteen thousand entries that walk is not a rounding error.
+    /// </summary>
+    private static async Task AnEmptyDoesNotCountWhenNobodyIsListening(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("entries for the empty to remove");
+
+        var files = workspace.CreateRandomFiles(3, 4096);
+        await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+
+        var before = NativeBinEmptier.CountPasses;
+
+        await RecycleBin
+            .EmptyAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(before, NativeBinEmptier.CountPasses, "an empty nobody is listening to counts nothing");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A root that names no volume is answered for without the sweep, and the answer still has to close the
+    /// queue: a caller who asked to wait would otherwise wait on a reader nobody ever tells to stop.
+    /// </summary>
+    private static async Task AnUnresolvableRootStillFinishesItsQueue(TestContext context)
+    {
+        var reported = new List<EmptyProgress>();
+        var options = new EmptyOptions
+        {
+            OnItemProcessed = progress =>
+            {
+                lock (reported)
+                {
+                    reported.Add(progress);
+                }
+            },
+            WaitForProgressCallbacks = true,
+        };
+
+        var before = NativeBinEmptier.CountPasses;
+
+        var call = RecycleBin.EmptyAsync(string.Empty, options, context.CancellationToken);
+        var finished = await Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds(30))).ConfigureAwait(false);
+
+        Check.True(ReferenceEquals(finished, call), "the call returns rather than waiting on a reader nobody would close");
+
+        var result = await call.ConfigureAwait(false);
+
+        Check.Equal(1, result.Failures.Count, "and answers that nothing was a volume root");
+        Check.Equal(before, NativeBinEmptier.CountPasses, "without reading anything to count");
+        Check.Equal(0, Snapshot(reported).Count, "nothing is reported for a sweep that never happened");
     }
 
     private static void Report(ProgressSink sink, string path)

@@ -234,10 +234,45 @@ public static class RecycleBin
         string? volumeRoot = null,
         CancellationToken cancellationToken = default)
     {
+        return await EmptyAsync(volumeRoot, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Empties the Recycle Bin, reporting each entry as it goes.</summary>
+    /// <remarks>
+    /// The first parameter has no default here, where the other overload's does, so that
+    /// <c>EmptyAsync(volumeRoot)</c> keeps resolving to the overload that has always answered it. Both
+    /// forms applicable is a call with one argument, and a call with one argument has no way for the
+    /// compiler to choose.
+    /// </remarks>
+    /// <param name="volumeRoot">
+    /// Volume root to empty, such as <c>"X:\"</c>, or <see langword="null"/> for every mounted volume
+    /// that can hold a Recycle Bin. A path inside a volume is not a volume root and is reported in
+    /// <see cref="RecycleBinEmptyResult.Failures"/>.
+    /// </param>
+    /// <param name="options">
+    /// <see langword="null"/> means <see cref="EmptyOptions.Default"/>. Setting
+    /// <see cref="EmptyOptions.OnItemProcessed"/> makes the empty read every volume's bin once more, to know
+    /// how many entries to report against.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// Cancels the sweep between entries. A cancellation part way through raises: the caller gets no
+    /// result, and what was removed is found by reading the bin.
+    /// </param>
+    /// <returns>What was removed and what could not be reached.</returns>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before the work started.
+    /// </exception>
+    public static async Task<RecycleBinEmptyResult> EmptyAsync(
+        string? volumeRoot,
+        EmptyOptions? options,
+        CancellationToken cancellationToken = default)
+    {
         if (cancellationToken.IsCancellationRequested)
         {
             return await Task.FromCanceled<RecycleBinEmptyResult>(cancellationToken).ConfigureAwait(false);
         }
+
+        var effective = options ?? EmptyOptions.Default;
 
         var targets = RecycleBinVolumeSet.Resolve(volumeRoot);
         if (targets is null)
@@ -254,9 +289,25 @@ public static class RecycleBin
         // as the empty itself.
         var stopwatch = Stopwatch.StartNew();
 
-        var emptied = await Task
-            .Run(() => NativeBinEmptier.Empty(targets, cancellationToken), cancellationToken)
-            .ConfigureAwait(false);
+        var emptied = await Task.Run(async () =>
+        {
+            // Armed here rather than in the prologue because the total is only known once the bins have
+            // been read, and reading them must not happen on the thread that called the method.
+            var sink = effective.ArmProgress();
+            sink?.SetCount(NativeBinEmptier.CountEntries(targets, cancellationToken));
+
+            try
+            {
+                return NativeBinEmptier.Empty(targets, sink, cancellationToken);
+            }
+            finally
+            {
+                // Finished before the result is stamped rather than after: the sink's clock starts when the
+                // caller assigned the handler, so EmptyProgress.Elapsed and RecycleBinEmptyResult.Elapsed
+                // measure one span only while the queue is closed inside this task.
+                await effective.FinishProgressAsync(effective.WaitForProgressCallbacks).ConfigureAwait(false);
+            }
+        }, cancellationToken).ConfigureAwait(false);
 
         return emptied with { Elapsed = stopwatch.Elapsed };
     }

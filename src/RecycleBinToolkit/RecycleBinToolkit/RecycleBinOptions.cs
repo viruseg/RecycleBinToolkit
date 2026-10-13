@@ -81,7 +81,7 @@ public abstract class RecycleBinOptions
     /// The queue behind a caller's progress handler. Read by
     /// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleOptions?, CancellationToken)"/>,
     /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/>
-    /// and <see cref="RecycleBin.EmptyAsync(string?, CancellationToken)"/>, and nowhere else.
+    /// and <see cref="RecycleBin.EmptyAsync(string?, EmptyOptions?, CancellationToken)"/>, and nowhere else.
     /// </summary>
     internal ProgressSink? OnItemProcessed { get; init; }
 

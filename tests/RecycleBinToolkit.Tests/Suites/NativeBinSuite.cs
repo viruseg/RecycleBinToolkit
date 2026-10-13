@@ -1723,7 +1723,7 @@ internal static class NativeBinSuite
         await RecycleBin.EmptyAsync(secondRoot, context.CancellationToken).ConfigureAwait(false);
         await RecycleBin.EmptyAsync(firstRoot, context.CancellationToken).ConfigureAwait(false);
 
-        var emptied = NativeBinEmptier.Empty([secondRoot, firstRoot], context.CancellationToken);
+        var emptied = NativeBinEmptier.Empty([secondRoot, firstRoot], sink: null, context.CancellationToken);
 
         Check.Equal(2, emptied.VolumesEmptied.Count, $"both volumes are reported empty (got {string.Join(", ", emptied.VolumesEmptied)})");
         Check.Equal(secondRoot, emptied.VolumesEmptied[0], "the one named first is reported first");
@@ -1754,7 +1754,7 @@ internal static class NativeBinSuite
 
         await RecycleBin.RecycleAsync(files, RecycleOptions.Default, cancellationToken: context.CancellationToken).ConfigureAwait(false);
 
-        var emptied = NativeBinEmptier.Empty([ScratchWorkspace.VolumeRoot, ScratchWorkspace.VolumeRoot], context.CancellationToken);
+        var emptied = NativeBinEmptier.Empty([ScratchWorkspace.VolumeRoot, ScratchWorkspace.VolumeRoot], sink: null, context.CancellationToken);
 
         Check.Equal(0, emptied.Failures.Count, $"nothing failed ({string.Join("; ", emptied.Failures.Select(f => f.Path))})");
         Check.Equal(3, emptied.ItemsRemoved, "the three entries are counted once, by the pass that removed them");
@@ -1800,7 +1800,7 @@ internal static class NativeBinSuite
         await cancelling.CancelAsync().ConfigureAwait(false);
 
         var thrown = Check.Throws<OperationCanceledException>(
-            () => NativeBinEmptier.Empty([AbsentVolume.RootOf(second), ScratchWorkspace.VolumeRoot], cancelling.Token),
+            () => NativeBinEmptier.Empty([AbsentVolume.RootOf(second), ScratchWorkspace.VolumeRoot], sink: null, cancelling.Token),
             "an empty whose token is already cancelled raises rather than spreading the loop's exception over an aggregate");
 
         Check.Equal(cancelling.Token, thrown.CancellationToken, "carrying the token the caller cancelled, unwrapped");
@@ -1888,7 +1888,7 @@ internal static class NativeBinSuite
     /// </remarks>
     private static Task NativeEmptyOfNoVolumesIsAnEmptyResult(TestContext context)
     {
-        var emptied = NativeBinEmptier.Empty([], context.CancellationToken);
+        var emptied = NativeBinEmptier.Empty([], sink: null, context.CancellationToken);
 
         Check.Equal(0, emptied.ItemsRemoved, "nothing was removed, because nothing was named");
         Check.Equal(0, emptied.BytesFreed, "and nothing was freed");
@@ -2647,7 +2647,7 @@ using var workspace = new ScratchWorkspace();
         NativeIndexFile.Write(orphanIndex, ScratchWorkspace.Root + "\\orphan.bin", orphanSize, deleted, IndexFormat.Current);
 
         var result = await Task
-            .Run(() => NativeBinEmptier.Empty([root], context.CancellationToken), context.CancellationToken)
+            .Run(() => NativeBinEmptier.Empty([root], sink: null, context.CancellationToken), context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.Equal(0, result.Failures.Count, $"nothing fails (got {result.Failures.Count})");
@@ -2698,7 +2698,7 @@ using var workspace = new ScratchWorkspace();
             "the enumeration does not take a directory for a record");
 
         var result = await Task
-            .Run(() => NativeBinEmptier.Empty([root], context.CancellationToken), context.CancellationToken)
+            .Run(() => NativeBinEmptier.Empty([root], sink: null, context.CancellationToken), context.CancellationToken)
             .ConfigureAwait(false);
 
         Check.Equal(0, result.Failures.Count, $"the decoy costs the caller nothing (got {result.Failures.Count})");

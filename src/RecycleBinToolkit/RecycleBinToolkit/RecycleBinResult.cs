@@ -22,7 +22,7 @@ public enum RecycleFailureStage
 
     /// <summary>
     /// An entry in the Recycle Bin could not be read or removed. Reachable only from
-    /// <see cref="RecycleBin.GetItemsAsync"/> and <see cref="RecycleBin.EmptyAsync"/>.
+    /// <see cref="RecycleBin.GetItemsAsync"/> and <see cref="RecycleBin.EmptyAsync(string?, EmptyOptions?, CancellationToken)"/>.
     /// </summary>
     Enumeration = 6,
 

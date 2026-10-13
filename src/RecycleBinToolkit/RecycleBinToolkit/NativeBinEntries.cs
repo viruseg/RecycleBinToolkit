@@ -129,6 +129,66 @@ internal static class NativeBinEntries
     }
 
     /// <summary>
+    /// Counts the entries a bin directory holds that have a record to delete.
+    /// </summary>
+    /// <param name="binDirectory">The volume's bin directory for this user.</param>
+    /// <param name="cancellationToken">Cancels the walk between entries.</param>
+    /// <returns>
+    /// How many there are, or <c>0</c> where the directory is not there — which is an empty bin, and an empty
+    /// bin holds nothing.
+    /// </returns>
+    /// <remarks>
+    /// Not a call to <see cref="Collect"/> with the result thrown away: that builds a dictionary per half and
+    /// a list per entry, and nothing here pairs anything. The same name test as the collection's, so which
+    /// names count as half an entry stays written once.
+    /// </remarks>
+    internal static int CountRecords(string binDirectory, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(binDirectory);
+
+        if (!Directory.Exists(binDirectory))
+        {
+            return 0;
+        }
+
+        var count = 0;
+
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = false,
+            AttributesToSkip = 0,
+            ReturnSpecialDirectories = false,
+            IgnoreInaccessible = true
+        };
+
+        var enumerable = new FileSystemEnumerable<bool>(
+            binDirectory,
+            (ref FileSystemEntry entry) =>
+            {
+                if (TryReadHalf(entry.FileName, out var marker) && marker == IndexMarker)
+                {
+                    count++;
+                }
+
+                return true;
+            },
+            options)
+        {
+            // The directory test is what Collect applies and what a counting-only walk has to apply too: a
+            // directory named $I is litter that is not an entry, and counting it would put the total a
+            // progress display divides by above the number of entries actually swept.
+            ShouldIncludePredicate = static (ref FileSystemEntry entry) => IsEntry(ref entry)
+        };
+
+        foreach (var _ in enumerable)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        return count;
+    }
+
+    /// <summary>
     /// Whether a directory entry is one half of a Recycle Bin entry.
     /// </summary>
     /// <remarks>

@@ -1,6 +1,6 @@
 namespace RecycleBinToolkit;
 
-/// <summary>Settings for <see cref="RecycleBin.EmptyAsync(string?, CancellationToken)"/>.</summary>
+/// <summary>Settings for <see cref="RecycleBin.EmptyAsync(string?, EmptyOptions?, CancellationToken)"/>.</summary>
 /// <remarks>
 /// <see langword="null"/> means <see cref="Default"/>.
 /// </remarks>
