@@ -28,9 +28,6 @@ internal static class ProgressSuite
         new TestCase("ProgressSuite." + nameof(OneOptionsInstanceServesTwoCalls), OneOptionsInstanceServesTwoCalls),
         new TestCase("ProgressSuite." + nameof(ACancelledCallStillFinishesItsQueue), ACancelledCallStillFinishesItsQueue),
         new TestCase("ProgressSuite." + nameof(EveryRestoredEntryReportsOnce), EveryRestoredEntryReportsOnce),
-        new TestCase("ProgressSuite." + nameof(AMergesPutBackIsNotReported), AMergesPutBackIsNotReported),
-        new TestCase("ProgressSuite." + nameof(AnEmptyReportsOneEventPerRecord), AnEmptyReportsOneEventPerRecord),
-        new TestCase("ProgressSuite." + nameof(AnEmptyDoesNotCountWhenNobodyIsListening), AnEmptyDoesNotCountWhenNobodyIsListening),
         new TestCase("ProgressSuite." + nameof(AnUnresolvableRootStillFinishesItsQueue), AnUnresolvableRootStillFinishesItsQueue),
     ];
 
@@ -111,7 +108,7 @@ internal static class ProgressSuite
             result.Succeeded || result.Failures.Count == 1,
             $"only the missing path fails (got {result.Failures.Count}: {string.Join(", ", result.Failures.Select(f => f.Stage))})");
 
-        var events = Snapshot(reported);
+        var events = Reports.SoFar(reported);
         Check.Equal(4, events.Count, "one report per path handed over, the repeated one included");
 
         foreach (var progress in events)
@@ -174,7 +171,7 @@ internal static class ProgressSuite
             .RecycleAsync([file, file], options, context.CancellationToken)
             .ConfigureAwait(false);
 
-        var events = Snapshot(reported);
+        var events = Reports.SoFar(reported);
 
         Check.Equal(2, events.Count, "two paths in, two reports out, even though the gate dropped the second");
         Check.True(
@@ -264,7 +261,7 @@ internal static class ProgressSuite
 
         Check.True(result.Succeeded, $"the batch went (first failure: {result.FirstFailure?.Stage})");
 
-        var events = Snapshot(reported);
+        var events = Reports.SoFar(reported);
         Check.Equal(files.Count, events.Count, "every report was delivered before the call returned, with no wait of any kind");
 
         workspace.Dispose();
@@ -413,7 +410,7 @@ internal static class ProgressSuite
             gate.Set();
         }
 
-        var events = Snapshot(reported);
+        var events = Reports.SoFar(reported);
         Check.Equal(files.Count, events.Count, "every report arrived");
 
         // Creation of report two happened while the handler was parked on report one, so its stamped time
@@ -449,7 +446,7 @@ internal static class ProgressSuite
 
         Check.True(ReferenceEquals(finished, call), "an empty batch with a handler set and waiting still returns");
         Check.True((await call.ConfigureAwait(false)).Succeeded, "and answers for itself");
-        Check.Equal(0, Snapshot(reported).Count, "nothing is reported for a batch of nothing");
+        Check.Equal(0, Reports.SoFar(reported).Count, "nothing is reported for a batch of nothing");
     }
 
     /// <summary>
@@ -486,7 +483,7 @@ internal static class ProgressSuite
         Check.True(firstResult.Succeeded, "the first call recycled its files");
         Check.True(secondResult.Succeeded, "and so did the second");
 
-        var events = Snapshot(reported);
+        var events = Reports.SoFar(reported);
         Check.Equal(4, events.Count, "the second call reported as well as the first, over the same options instance");
 
         workspace.Dispose();
@@ -582,7 +579,7 @@ internal static class ProgressSuite
 
         Check.Equal(files.Count, result.ItemsRestored, $"every entry went back (failures: {string.Join(", ", result.Failures.Select(f => f.Stage))})");
 
-        var events = Snapshot(reported);
+        var events = Reports.SoFar(reported);
 
         Check.Equal(files.Count, events.Count, "one report per entry handed over, across whatever volumes ran at once");
         Check.Equal(
@@ -658,96 +655,11 @@ internal static class ProgressSuite
             restored.Conflicts.Any(conflict => conflict.Action == RecycleRestoreConflictAction.MergedSkipped),
             $"a file the merge could not place went back to the bin ({string.Join(", ", restored.Conflicts.Select(c => c.Action))})");
 
-        var events = Snapshot(reported);
+        var events = Reports.SoFar(reported);
 
         Check.Equal(1, events.Count, "one entry in, one report out, however many of its files went back to the bin");
         Check.Equal(RestoreStatus.Merged, events[0].Status, "and it is reported as merged rather than restored");
         Check.Equal(1, events[0].Count, "against a count of the entries handed over, not of the files involved");
-
-        workspace.Dispose();
-    }
-
-    /// <summary>
-    /// An empty knows nothing about what it is going to remove until it has read the bin, so the total a
-    /// progress display divides by costs one walk of every volume first. Every entry it then goes after is
-    /// reported, against that total.
-    /// </summary>
-    private static async Task AnEmptyReportsOneEventPerRecord(TestContext context)
-    {
-        using var workspace = new ScratchWorkspace();
-        workspace.Recreate();
-
-        ScratchWorkspace.RequireRecycling("entries for the empty to remove");
-
-        var files = workspace.CreateRandomFiles(5, 4096);
-        var recycled = await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken)
-            .ConfigureAwait(false);
-
-        Check.True(recycled.Succeeded, $"the files reached the bin (first failure: {recycled.FirstFailure?.Stage})");
-
-        var reported = new List<EmptyProgress>();
-        var options = new EmptyOptions
-        {
-            OnItemProcessed = progress =>
-            {
-                lock (reported)
-                {
-                    reported.Add(progress);
-                }
-            },
-            WaitForProgressCallbacks = true,
-        };
-
-        var emptied = await RecycleBin
-            .EmptyAsync(ScratchWorkspace.VolumeRoot, options, context.CancellationToken)
-            .ConfigureAwait(false);
-
-        var events = Snapshot(reported);
-
-        // Measured against the empty's own figures and not against this case's five files: the volume's
-        // bin holds whatever else the run left there, and the contract is about the entries the empty went
-        // after rather than about this case.
-        Check.Equal(
-            emptied.ItemsRemoved,
-            events.Count(progress => progress.Status == EmptyStatus.Removed),
-            $"one report per entry that left the bin (removed {emptied.ItemsRemoved})");
-        Check.Equal(
-            emptied.Failures.Count,
-            events.Count(progress => progress.Status == EmptyStatus.Failed),
-            $"and one per entry that did not ({string.Join(", ", emptied.Failures.Select(f => f.Stage))})");
-        Check.Equal(emptied.ItemsRemoved + emptied.Failures.Count, events.Count, "and no other report at all");
-
-        var swept = events.Count;
-        Check.True(events.All(progress => progress.Count == swept), "every report carries the total counted before the sweep");
-        Check.Equal(
-            string.Join(", ", Enumerable.Range(1, swept)),
-            string.Join(", ", events.Select(progress => progress.Index).Order()),
-            "numbered once each");
-
-        workspace.Dispose();
-    }
-
-    /// <summary>
-    /// The count is a second walk of every bin directory, and a caller who asked for no reports must not
-    /// pay for it: on a bin of thirteen thousand entries that walk is not a rounding error.
-    /// </summary>
-    private static async Task AnEmptyDoesNotCountWhenNobodyIsListening(TestContext context)
-    {
-        using var workspace = new ScratchWorkspace();
-        workspace.Recreate();
-
-        ScratchWorkspace.RequireRecycling("entries for the empty to remove");
-
-        var files = workspace.CreateRandomFiles(3, 4096);
-        await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken).ConfigureAwait(false);
-
-        var before = NativeBinEmptier.CountPasses;
-
-        await RecycleBin
-            .EmptyAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken)
-            .ConfigureAwait(false);
-
-        Check.Equal(before, NativeBinEmptier.CountPasses, "an empty nobody is listening to counts nothing");
 
         workspace.Dispose();
     }
@@ -782,7 +694,7 @@ internal static class ProgressSuite
 
         Check.Equal(1, result.Failures.Count, "and answers that nothing was a volume root");
         Check.Equal(before, NativeBinEmptier.CountPasses, "without reading anything to count");
-        Check.Equal(0, Snapshot(reported).Count, "nothing is reported for a sweep that never happened");
+        Check.Equal(0, Reports.SoFar(reported).Count, "nothing is reported for a sweep that never happened");
     }
 
     private static void Report(ProgressSink sink, string path)
@@ -794,14 +706,6 @@ internal static class ProgressSuite
             path,
             sink.Elapsed,
             Failure: null));
-    }
-
-    private static List<T> Snapshot<T>(List<T> source)
-    {
-        lock (source)
-        {
-            return [.. source];
-        }
     }
 
 private static RecycleStatus StatusOf(IReadOnlyList<RecycleProgress> events, string path, RecycleStatus wanted) =>

@@ -26,6 +26,11 @@ internal static class EmptySuite
         new TestCase("EmptySuite." + nameof(AnEmptyPathIsNotAVolumeToEmpty), AnEmptyPathIsNotAVolumeToEmpty),
         new TestCase("EmptySuite." + nameof(AForwardSlashSpellingIsTheVolumeToEmpty), AForwardSlashSpellingIsTheVolumeToEmpty),
         new TestCase("EmptySuite." + nameof(NamingOneVolumeEmptiesThatVolume), NamingOneVolumeEmptiesThatVolume),
+        // Progress reporting on the empty, here rather than in ProgressSuite because these two empty the
+        // bin, and --exclude takes one substring: a run that must not empty the Recycle Bin says
+        // --exclude EmptySuite, which is only that run's meaning while every such case lives under this name.
+        new TestCase("EmptySuite." + nameof(AnEmptyReportsOneEventPerRecord), AnEmptyReportsOneEventPerRecord),
+        new TestCase("EmptySuite." + nameof(AnEmptyDoesNotCountWhenNobodyIsListening), AnEmptyDoesNotCountWhenNobodyIsListening),
     ];
 
     /// <summary>
@@ -445,5 +450,89 @@ internal static class EmptySuite
         Check.Equal(0, emptied.ItemsRemoved, "an absent volume removes nothing");
         Check.Equal(0, emptied.BytesFreed, "an absent volume frees nothing");
         Check.True(emptied.Failures.Count > 0, $"the absent volume is reported rather than swallowed (got {emptied.Failures.Count} failure(s))");
+}
+    /// <summary>
+    /// An empty knows nothing about what it is going to remove until it has read the bin, so the total a
+    /// progress display divides by costs one walk of every volume first. Every entry it then goes after is
+    /// reported, against that total.
+    /// </summary>
+    private static async Task AnEmptyReportsOneEventPerRecord(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("entries for the empty to remove");
+
+        var files = workspace.CreateRandomFiles(5, 4096);
+        var recycled = await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.True(recycled.Succeeded, $"the files reached the bin (first failure: {recycled.FirstFailure?.Stage})");
+
+        var reported = new List<EmptyProgress>();
+        var options = new EmptyOptions
+        {
+            OnItemProcessed = progress =>
+            {
+                lock (reported)
+                {
+                    reported.Add(progress);
+                }
+            },
+            WaitForProgressCallbacks = true,
+        };
+
+        var emptied = await RecycleBin
+            .EmptyAsync(ScratchWorkspace.VolumeRoot, options, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var events = Reports.SoFar(reported);
+
+        // Measured against the empty's own figures and not against this case's five files: the volume's
+        // bin holds whatever else the run left there, and the contract is about the entries the empty went
+        // after rather than about this case.
+        Check.Equal(
+            emptied.ItemsRemoved,
+            events.Count(progress => progress.Status == EmptyStatus.Removed),
+            $"one report per entry that left the bin (removed {emptied.ItemsRemoved})");
+        Check.Equal(
+            emptied.Failures.Count,
+            events.Count(progress => progress.Status == EmptyStatus.Failed),
+            $"and one per entry that did not ({string.Join(", ", emptied.Failures.Select(f => f.Stage))})");
+        Check.Equal(emptied.ItemsRemoved + emptied.Failures.Count, events.Count, "and no other report at all");
+
+        var swept = events.Count;
+        Check.True(events.All(progress => progress.Count == swept), "every report carries the total counted before the sweep");
+        Check.Equal(
+            string.Join(", ", Enumerable.Range(1, swept)),
+            string.Join(", ", events.Select(progress => progress.Index).Order()),
+            "numbered once each");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The count is a second walk of every bin directory, and a caller who asked for no reports must not
+    /// pay for it: on a bin of thirteen thousand entries that walk is not a rounding error.
+    /// </summary>
+    private static async Task AnEmptyDoesNotCountWhenNobodyIsListening(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("entries for the empty to remove");
+
+        var files = workspace.CreateRandomFiles(3, 4096);
+        await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken).ConfigureAwait(false);
+
+        var before = NativeBinEmptier.CountPasses;
+
+        await RecycleBin
+            .EmptyAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(before, NativeBinEmptier.CountPasses, "an empty nobody is listening to counts nothing");
+
+        workspace.Dispose();
     }
 }

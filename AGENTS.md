@@ -67,17 +67,21 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 242 registered cases, of which four are load cases, so `--all` runs 238 of them. The rest is
+There are 260 registered cases, of which four are load cases, so `--all` runs 256 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
-cases that recycle one and runs the cases that are about a volume with no bin. **226 pass and 12 skip**,
+cases that recycle one and runs the cases that are about a volume with no bin. **243 pass and 13 skip**,
 with nothing failing, on a volume that has a bin — measured by one `--all` on `D:\` on 2026-10-13.
 
-Two of the twelve skips are the 8.3 cases: `D:\` has short-name generation off, so `GetShortPathName`
+Two of the thirteen skips are the 8.3 cases: `D:\` has short-name generation off, so `GetShortPathName`
 returns nothing for any path there and the alias route has no fixture to run against. What is measured
 on `D:\` is the fall-through — an alias that is absent goes to the caller's policy, which
 `NativeBinSuite.ThrowRefusesThePathAndLeavesItInPlace` witnesses. What is **not** measured on `D:\` is
 the success branch: that a path whose alias fits is recycled with the alias in its record. Enabling
 short names needs administrator rights, so nobody should read that route as proven from a run here.
+
+A thirteenth is `ProgressSuite.ARepeatedPathOnARefusingVolumeStillReports`, and it is skipped here for
+the same reason as the ones a bin-less volume skips: it needs a volume with no Recycle Bin, which `D:\`
+does not have. It runs on one that does.
 
 **A volume alone on its physical disk is 198 pass and 15 skip**, also nothing failing. Five cases ask the
 machine for a second volume on the same disk or for one on another, through `VolumePresence`, and a run
@@ -94,9 +98,11 @@ A volume with no bin and a share are both unmeasured
 here: measure before quoting either. `--all` prints the counts, so a count in a document that disagrees
 with them is the document being wrong.
 
-A run that must not empty the bin says `--exclude EmptySuite`; that drops its eleven cases, so the counts
-it prints are eleven lower than a plain `--all` and a document must not quote one run's figures as the
-other's.
+A run that must not empty the bin says `--exclude EmptySuite`; that drops its thirteen cases, so the counts
+it prints are thirteen lower than a plain `--all` and a document must not quote one run's figures as the
+other's. `--exclude` takes one substring, so a case that empties the bin has to live under that name and
+not merely somewhere this document says it does — which is why the two `ProgressSuite` cases that empty it
+are registered as `EmptySuite` cases instead.
 
 ## How it works
 
@@ -124,6 +130,9 @@ the restore engine, over the entries a listing handed back
 
 RecycleBinContents.LoadItemDetails  warms a listing after the fact
   └─ ItemDetailLoader        one volume at a time, at that volume's own degree of parallelism
+
+across the three operations, beside the engines and not inside any of them
+   └─ ProgressSink          one unbounded queue and one thread, for the caller's OnItemProcessed
 ```
 
 **The record version follows the machine, and the caller has no say.** There are two formats. Version 2
@@ -166,6 +175,17 @@ is gone and recorded nowhere, which is the one outcome a Recycle Bin exists to p
 
 **Retries are per path, not per batch.** A move that fails is a property of one path, and retrying
 the others would repeat work that already succeeded. Only the items that failed are retried.
+
+**A caller's progress handler is never on the engine's thread.** A caller who asked to be told what is
+happening must not be able to hold up what is happening: a Recycle Bin is one directory per volume, and
+a handler running beside the work would contend on it with the work. So `ProgressSink` is an unbounded
+queue drained by a thread of its own, the engine only ever writes to it, and no producer waits. The one
+wait a caller can have is the one they ask for by setting `WaitForProgressCallbacks`. What is promised is
+that two reports are never delivered at once and neither lands on the thread that made the call — not that
+they arrive on one particular thread, which an `async` reader does not promise and a case measured at three
+different ones. `Elapsed` is stamped when the report is made rather than when it is delivered for the same
+reason: a slow handler must not make the next item look slow. **No figure was taken for any of this**, so
+nothing here claims one.
 
 **The per-volume bin is the unit.** Each volume's `$RECYCLE.BIN\<SID>\` is walked directly, so naming
 a volume selects which directories to read and to empty — never a filter over an enumeration that
