@@ -38,9 +38,25 @@ internal static class RecycleBinThrowHelper
     [DoesNotReturn]
     internal static void ThrowVolumeNotAddressableByGuid(RecycleFailure failure) =>
         throw new NotSupportedException(
-            $"'{failure.Path}' names its volume by GUID, which this library cannot measure, empty or " +
+$"'{failure.Path}' names its volume by GUID, which this library cannot measure, empty or " +
             "report against, so it was refused before anything was asked. Address the same location by drive " +
-"letter or mount point instead, such as \"X:\\path\".");
+            "letter or mount point instead, such as \"X:\\path\".");
+
+    /// <summary>
+    /// Reports a path the Recycle Bin's index record cannot name.
+    /// </summary>
+    /// <remarks>
+    /// Its own exception type rather than the general failure, because a caller meeting this can do
+    /// something about it: a shorter path, a different name for one of its directories, or
+    /// <see cref="LongPathFailureAction"/> set to something other than <see cref="LongPathFailureAction.Throw"/>.
+    /// Nothing was moved and the file is where it was.
+    /// </remarks>
+    [DoesNotReturn]
+    internal static void ThrowPathTooLong(RecycleFailure failure) =>
+        throw new PathTooLongException(
+            $"'{failure.Path}' cannot be recorded in the Recycle Bin on this machine, because its index record has a fixed-size " +
+            $"path field. The file was left in place. Set LongPathFailureAction to DeletePermanently to remove it instead, " +
+            "or move it somewhere shorter.");
 }
 
 /// <summary>

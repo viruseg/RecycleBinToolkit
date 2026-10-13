@@ -16,6 +16,9 @@ internal static class NativeRecycleRunner
     /// <summary>Longest wait that can be expressed as a <see cref="TimeSpan"/> from milliseconds.</summary>
     private const double MaxWaitableMilliseconds = (double)int.MaxValue;
 
+    /// <summary>Win32 <c>ERROR_FILENAME_EXCED_RANGE</c>: the name is longer than the system will take.</summary>
+    private const int PathTooLong = unchecked((int)0x800700CE);
+
     /// <summary>
     /// How far a delay is randomised, as a fraction of itself. Stops a batch of locked files from retrying
     /// in lockstep with every other batch on the machine.
@@ -66,6 +69,11 @@ internal static class NativeRecycleRunner
         var pending = collapsed;
         var recycled = new List<string>(collapsed.Count);
         var failuresByPath = new Dictionary<string, RecycleFailure>(collapsed.Count, StringComparer.OrdinalIgnoreCase);
+        var permanentlyDeleted = new List<string>();
+
+        // A record with a fixed path field cannot name a path past its length, and no retry changes that.
+        // Settled once, before the rounds, because it is a property of the record and not of any path.
+        pending = SettleOverLongPaths(collapsed, options, IndexFormat.VersionForWriting, permanentlyDeleted, failuresByPath);
 
         // One bin directory per volume, created at most once for the whole operation, and one sequencer of
         // names beside it for the same reason: twenty thousand paths on one volume need the directory made
@@ -118,7 +126,7 @@ internal static class NativeRecycleRunner
         // decided. Each of those paths is long and compared case-insensitively, which is why it shows up.
         if (failuresByPath.Count == 0 && pending.Count == 0)
         {
-            return RecycleBinResult.Create(recycled, [], [], stopwatch.Elapsed);
+            return RecycleBinResult.Create(recycled, permanentlyDeleted, [], stopwatch.Elapsed);
         }
 
         // A path that gave up with no verdict of its own is one the loop stopped before it could record, and
@@ -149,7 +157,75 @@ internal static class NativeRecycleRunner
             }
         }
 
-        return RecycleBinResult.Create(recycled, [], reported, stopwatch.Elapsed);
+        return RecycleBinResult.Create(recycled, permanentlyDeleted, reported, stopwatch.Elapsed);
+    }
+
+    /// <summary>
+    /// Takes out of the batch every path the record in use cannot name, and applies the caller's policy to
+    /// it.
+    /// </summary>
+    /// <remarks>
+    /// Done before the rounds rather than inside them, because no attempt changes the outcome: the record's
+    /// path field is a fixed number of bytes and the path is the path. Retrying a path that cannot be
+    /// recorded would spend the caller's whole backoff to arrive at the same refusal six times.
+    /// <para>
+    /// Version 2 has a counted path and is left entirely alone. Every path a version 2 machine can move is
+    /// a path its record can name, so running this over it would cost a length comparison per item and
+    /// change nothing.
+    /// </para>
+    /// </remarks>
+    private static List<RecycleTarget> SettleOverLongPaths(
+        IReadOnlyList<RecycleTarget> targets,
+        RecycleBinOptions options,
+        int version,
+        List<string> permanentlyDeleted,
+        Dictionary<string, RecycleFailure> failuresByPath)
+    {
+        if (version != IndexFormat.Legacy)
+        {
+            return [.. targets];
+        }
+
+        var pending = new List<RecycleTarget>(targets.Count);
+
+        foreach (var target in targets)
+        {
+            // RecordPath rather than FullPath: the prefix is a .NET convenience the record never carries,
+            // so it is the recorded spelling whose length decides this.
+            if (target.RecordPath.Length <= NativeIndexFile.LegacyPathCapacity)
+            {
+                pending.Add(target);
+                continue;
+            }
+
+            if (options.LongPathFailureAction == LongPathFailureAction.DeletePermanently)
+            {
+                if (PermanentDeleter.TryDelete(target, permanentlyDeleted, out var refused))
+                {
+                    continue;
+                }
+
+                // The file system gave a reason of its own, so report that rather than blaming the length.
+                if (refused != 0)
+                {
+                    failuresByPath[target.InputPath] = new RecycleFailure(
+                        target.InputPath,
+                        refused,
+                        0,
+                        RecycleFailureStage.PermanentDeleteFailed);
+
+                    continue;
+                }
+            }
+
+            failuresByPath[target.InputPath] = new RecycleFailure(
+                target.InputPath,
+                PathTooLong,
+                0,
+                RecycleFailureStage.LongPathNotRecyclable);
+        }
+
+        return pending;
     }
 
     /// <summary>

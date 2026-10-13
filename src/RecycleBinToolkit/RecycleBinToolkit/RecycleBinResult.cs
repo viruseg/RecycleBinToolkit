@@ -64,7 +64,19 @@ public enum RecycleFailureStage
     /// <see cref="RestoreFileConflict.Replace"/>, which takes the occupant's place, and a <c>Merge*</c> value
     /// against a destination holding a file, which fails rather than settling anything.
     /// </remarks>
-    RestoreConflictRefused = 11
+    RestoreConflictRefused = 11,
+
+    /// <summary>
+    /// A path the Recycle Bin's index record cannot name, offered and refused. Nothing was moved:
+    /// <see cref="RecycleFailure.Attempts"/> is <c>0</c> and the file is untouched.
+    /// </summary>
+    /// <remarks>
+    /// Reachable only where the record in use has a fixed-size path field. Where
+    /// <see cref="LongPathFailureAction.DeletePermanently"/> was set the path is removed instead, and a
+    /// refusal from the file system under it arrives as <see cref="PermanentDeleteFailed"/> rather than
+    /// blamed on the length.
+    /// </remarks>
+    LongPathNotRecyclable = 12
 }
 
 /// <summary>One item that was not handled.</summary>

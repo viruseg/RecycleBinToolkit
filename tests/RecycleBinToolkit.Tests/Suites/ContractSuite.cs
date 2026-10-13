@@ -389,10 +389,11 @@ internal static class ContractSuite
         Check.Equal(9, (int)RecycleFailureStage.VolumeGuidPathNotAddressable, "VolumeGuidPathNotAddressable takes number 9");
         Check.Equal(10, (int)RecycleFailureStage.RestoreFailed, "RestoreFailed takes number 10, past every stage that existed before a restore");
         Check.Equal(11, (int)RecycleFailureStage.RestoreConflictRefused, "RestoreConflictRefused takes number 11, after it");
+        Check.Equal(12, (int)RecycleFailureStage.LongPathNotRecyclable, "LongPathNotRecyclable takes number 12, past every stage that existed before it");
         Check.Equal(
-            8,
+            9,
             Enum.GetValues<RecycleFailureStage>().Length,
-            "eight stages survive, so a new stage that reuses a gap is caught here rather than in a caller's persisted value");
+            "nine stages survive, so a new stage that reuses a gap is caught here rather than in a caller's persisted value");
 
         return Task.CompletedTask;
     }
@@ -541,7 +542,7 @@ internal static class ContractSuite
     {
         var expected = new Dictionary<Type, string>
         {
-            [typeof(RecycleOptions)] = "InitialRetryDelay,MaxAttempts,NoRecycleBinAction,OverallTimeout,ThrowOnError",
+            [typeof(RecycleOptions)] = "InitialRetryDelay,LongPathFailureAction,MaxAttempts,NoRecycleBinAction,OverallTimeout,ThrowOnError",
             [typeof(RestoreOptions)] = "DirectoryConflict,FileConflict,InitialRetryDelay,MaxAttempts,OverallTimeout",
             [typeof(GetItemsOptions)] = "PreloadItemDetails",
         };

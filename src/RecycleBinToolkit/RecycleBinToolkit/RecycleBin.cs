@@ -141,6 +141,10 @@ public static class RecycleBin
                 RecycleBinThrowHelper.ThrowFileNotFound(failure.Path);
                 break;
 
+            case RecycleFailureStage.LongPathNotRecyclable:
+                RecycleBinThrowHelper.ThrowPathTooLong(failure);
+                break;
+
             default:
                 RecycleBinThrowHelper.ThrowRecycleFailed(failure);
                 break;

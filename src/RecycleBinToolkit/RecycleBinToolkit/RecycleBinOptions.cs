@@ -49,6 +49,16 @@ public abstract class RecycleBinOptions
     internal NoRecycleBinAction NoRecycleBinAction { get; init; } = NoRecycleBinAction.Throw;
 
     /// <summary>
+    /// What to do with a path the index record this machine's Shell reads cannot name. Defaults to
+    /// <see cref="LongPathFailureAction.Throw"/>, which refuses it and leaves the file in place.
+    /// </summary>
+    /// <remarks>
+    /// Reachable only where the record in use has a fixed path field, which on Windows is the older of the
+    /// two formats. Read by <see cref="NativeRecycleRunner"/>, and nowhere else.
+    /// </remarks>
+    internal LongPathFailureAction LongPathFailureAction { get; init; } = LongPathFailureAction.Throw;
+
+    /// <summary>
     /// Whether a listing reads every entry's record during the walk rather than leaving each entry to read
     /// its own on first use. Read by <see cref="NativeBinLister"/>.
     /// </summary>
@@ -80,6 +90,7 @@ public abstract class RecycleBinOptions
         OverallTimeout = ClampTimeout(OverallTimeout),
         ThrowOnError = ThrowOnError,
         NoRecycleBinAction = NoRecycleBinAction,
+        LongPathFailureAction = LongPathFailureAction,
         PreloadItemDetails = PreloadItemDetails,
         DirectoryConflict = DirectoryConflict,
         FileConflict = FileConflict

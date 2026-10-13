@@ -7,9 +7,12 @@ namespace RecycleBinToolkit;
 /// gone.
 /// </summary>
 /// <remarks>
-/// Reached from one place only, under <see cref="NoRecycleBinAction.DeletePermanently"/>: a path on a volume
-/// this library will not recycle on the caller's behalf, which the caller has said may go for good.
-/// </remarks>
+    /// Two routes share this one. A path on a volume this library will not recycle on the caller's behalf,
+    /// which the caller has said may go for good under <see cref="NoRecycleBinAction.DeletePermanently"/>;
+    /// and a path the Recycle Bin's index record cannot name, which the caller has said the same way under
+    /// <see cref="LongPathFailureAction.DeletePermanently"/>. Both are the caller asking for the outcome,
+    /// and neither is this class's decision to reach.
+    /// </remarks>
 internal static class PermanentDeleter
 {
     /// <summary>

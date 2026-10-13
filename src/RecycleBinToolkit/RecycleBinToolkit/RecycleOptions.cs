@@ -57,4 +57,22 @@ public sealed class RecycleOptions : RecycleBinOptions
         get => base.NoRecycleBinAction;
         init => base.NoRecycleBinAction = value;
     }
+
+    /// <summary>
+    /// What happens to a path the Recycle Bin's index record cannot name. Defaults to
+    /// <see cref="LongPathFailureAction.Throw"/>, which refuses it and leaves the file untouched.
+    /// </summary>
+    /// <remarks>
+    /// Set <see cref="LongPathFailureAction.DeletePermanently"/> to remove it instead, in which case the
+    /// path also appears in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
+    /// <para>
+    /// A path only arrives here where the record in use has a fixed-size path field, so on a machine whose
+    /// Recycle Bin can name any path Windows can, this setting changes nothing.
+    /// </para>
+    /// </remarks>
+    public new LongPathFailureAction LongPathFailureAction
+    {
+        get => base.LongPathFailureAction;
+        init => base.LongPathFailureAction = value;
+    }
 }

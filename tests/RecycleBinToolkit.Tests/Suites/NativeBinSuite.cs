@@ -45,6 +45,11 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(VersionOneCapacityCountsCodeUnitsNotBytes), VersionOneCapacityCountsCodeUnitsNotBytes),
         new TestCase("NativeBinSuite." + nameof(AnOverLongPathUnderVersionOneIsNeverTruncated), AnOverLongPathUnderVersionOneIsNeverTruncated),
         new TestCase("NativeBinSuite." + nameof(VersionOneRecordLandsInTheBin), VersionOneRecordLandsInTheBin),
+        new TestCase("NativeBinSuite." + nameof(ThrowRefusesThePathAndLeavesItInPlace), ThrowRefusesThePathAndLeavesItInPlace),
+        new TestCase("NativeBinSuite." + nameof(ThrowObeysTheGlobalSwitch), ThrowObeysTheGlobalSwitch),
+        new TestCase("NativeBinSuite." + nameof(DeletePermanentlyRemovesTheFileAndReportsIt), DeletePermanentlyRemovesTheFileAndReportsIt),
+        new TestCase("NativeBinSuite." + nameof(DeletePermanentlyRemovesALongDirectoryToo), DeletePermanentlyRemovesALongDirectoryToo),
+        new TestCase("NativeBinSuite." + nameof(ARefusedLongPathDoesNotCostTheRestOfTheBatch), ARefusedLongPathDoesNotCostTheRestOfTheBatch),
         new TestCase("NativeBinSuite." + nameof(NativeRecycleReportsALockedFileAndLeavesNoIndexRecord), NativeRecycleReportsALockedFileAndLeavesNoIndexRecord),
         new TestCase("NativeBinSuite." + nameof(TheDetectedVersionMatchesTheBoundary), TheDetectedVersionMatchesTheBoundary),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderReadsAVersionOneRecord), NativeIndexReaderReadsAVersionOneRecord),
@@ -468,6 +473,191 @@ internal static class NativeBinSuite
         }
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The default answer to a path the record cannot name is to refuse it and leave the file where it was.
+    /// A path that is not recycled is not a silent loss, and the caller is told which stage refused it.
+    /// </summary>
+    private static async Task ThrowRefusesThePathAndLeavesItInPlace(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the refusal to be measured against");
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var path = CreateDeepFile(NativeIndexFile.LegacyPathCapacity + 50);
+
+            var result = await RecycleBin.RecycleAsync([path], RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+
+            Check.False(result.Succeeded, "a path the record cannot name is not reported as recycled");
+
+            var failure = result.FirstFailure;
+            Check.NotNull(failure, "and is reported as a failure");
+            Check.Equal(RecycleFailureStage.LongPathNotRecyclable, failure.Stage, "at the stage that says the length is the obstacle");
+            Check.Equal(unchecked((int)0x800700CE), failure.HResult, "carrying the code for a name past what the system will take");
+            Check.Equal(0, failure.Attempts, "and nothing was attempted");
+            Check.True(File.Exists(path), "the file is exactly where the caller left it");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The global switch has the last word on whether a refusal raises. Turned off, the refusal is data on
+    /// the result rather than an exception out of the call.
+    /// </summary>
+    private static async Task ThrowObeysTheGlobalSwitch(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the refusal to be measured against");
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var path = CreateDeepFile(NativeIndexFile.LegacyPathCapacity + 50);
+
+            await Check.ThrowsAsync<PathTooLongException>(
+                () => RecycleBin.RecycleAsync(path, RecycleOptions.Default, context.CancellationToken),
+                "the single-path overload raises on a path the record cannot name, by default");
+
+            var quiet = new RecycleOptions { ThrowOnError = false };
+
+            Check.False(
+                await RecycleBin.RecycleAsync(path, quiet, context.CancellationToken).ConfigureAwait(false),
+                "and answers false instead when the caller turned throwing off");
+
+            Check.True(File.Exists(path), "either way the file is untouched");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The caller can say a path may go for good instead of being refused. The path has to reach
+    /// <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> either way, because an outcome the caller
+    /// did not ask to hear about is the one outcome they cannot act on.
+    /// </summary>
+    private static async Task DeletePermanentlyRemovesTheFileAndReportsIt(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the refusal to be measured against");
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var path = CreateDeepFile(NativeIndexFile.LegacyPathCapacity + 50);
+            var options = new RecycleOptions { LongPathFailureAction = LongPathFailureAction.DeletePermanently };
+
+            var result = await RecycleBin.RecycleAsync([path], options, context.CancellationToken).ConfigureAwait(false);
+
+            Check.True(result.Succeeded, $"the file is gone (first failure: {Describe(result.FirstFailure)})");
+            Check.False(File.Exists(path), "and is gone from disk rather than refused");
+            Check.Equal(1, result.PermanentlyDeletedPaths.Count, "and is named as permanently deleted");
+            Check.Equal(path, result.PermanentlyDeletedPaths[0], "by the path the caller passed");
+            Check.Equal(0, result.RecycledPaths.Count, "and is not also reported as recycled");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A directory is removed by its own call. Asking for the wrong one reports an access problem rather
+    /// than the fact that the thing is a directory, so this is where that would show.
+    /// </summary>
+    private static async Task DeletePermanentlyRemovesALongDirectoryToo(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        var longRoot = ScratchWorkspace.RecreateLongDirectoryRoot();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the refusal to be measured against");
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var directory = BuildDeepDirectory(longRoot, NativeIndexFile.LegacyPathCapacity + 50);
+            var options = new RecycleOptions { LongPathFailureAction = LongPathFailureAction.DeletePermanently };
+
+            var result = await RecycleBin.RecycleAsync([directory], options, context.CancellationToken).ConfigureAwait(false);
+
+            Check.True(result.Succeeded, $"the directory is gone (first failure: {Describe(result.FirstFailure)})");
+            Check.False(Directory.Exists(directory), "and is gone from disk");
+            Check.Equal(1, result.PermanentlyDeletedPaths.Count, "and is named as permanently deleted");
+            Check.Equal(directory, result.PermanentlyDeletedPaths[0], "by the path the caller passed");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// One path the record cannot name must not cost the caller the rest of the batch. The paths that fit
+    /// are recycled and only the one that does not is refused.
+    /// </summary>
+    private static async Task ARefusedLongPathDoesNotCostTheRestOfTheBatch(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the refusal to be measured against");
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var fitting = CreateFile("batch-fits");
+            var overLong = CreateDeepFile(NativeIndexFile.LegacyPathCapacity + 50);
+
+            var result = await RecycleBin.RecycleAsync([overLong, fitting], RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+
+            Check.Equal(1, result.RecycledPaths.Count, "the path that fits is recycled");
+            Check.Equal(fitting, result.RecycledPaths[0], "by the path the caller passed");
+            Check.False(File.Exists(fitting), "and is gone from disk");
+            Check.Equal(1, result.Failures.Count, "and only the path that does not fit is refused");
+            Check.Equal(overLong, result.Failures[0].Path, "and it is named as itself");
+            Check.Equal(RecycleFailureStage.LongPathNotRecyclable, result.Failures[0].Stage, "at the stage that says the length is the obstacle");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A directory whose whole path is at least <paramref name="minimumLength"/> characters, built as a
+    /// chain because one component cannot exceed 255.
+    /// </summary>
+    private static string BuildDeepDirectory(string root, int minimumLength)
+    {
+        var directory = root;
+        var component = new string('d', 118);
+
+        while (directory.Length + 120 < minimumLength)
+        {
+            var deeper = Path.Combine(directory, component + directory.Length);
+            Directory.CreateDirectory(deeper);
+            directory = deeper;
+        }
+
+        return directory;
     }
 
     /// <summary>
