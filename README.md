@@ -670,8 +670,8 @@ The outcome of a status check. Immutable.
 | `DisabledByUserPreference` | This volume is set to delete immediately instead of recycling. The user can change it. |
 | `UnsupportedVolumeType` | The volume type has no Recycle Bin at all. |
 | `VolumeNotFound` | The volume is not mounted, or the path given is not a volume root. |
-| `NoRecycleBinOnVolume` | The volume exists and its type supports a Recycle Bin, but no bin was ever recorded for it. No longer produced — an unconfigured volume answers `Indeterminate` — and kept for contract stability. |
-| `Indeterminate` | The volume exists but the answer could not be established. Deliberately not `Enabled`. |
+| `NoRecycleBinOnVolume` | The volume exists and its type supports a Recycle Bin, but no bin was ever recorded for it. No longer produced — an unconfigured volume answers `Indeterminate`. |
+| `Indeterminate` | The volume exists but the answer could not be established. |
 
 `Enabled` is the only value that reports a confirmed state. A volume Windows has never configured a bin
 for is answered `Indeterminate`, because there is no setting for it either way.

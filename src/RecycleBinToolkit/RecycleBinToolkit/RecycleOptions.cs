@@ -37,10 +37,7 @@ public sealed class RecycleOptions : RecycleBinOptions
     }
 
     /// <summary>
-    /// Whether a failure raises rather than returning <see langword="false"/>. Defaults to <c>true</c>. Read
-    /// only by <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/>: the batch
-    /// overload reports its per-item failures through <see cref="RecycleBinResult.Failures"/> however this is
-    /// set.
+    /// Whether a failure raises rather than returning <see langword="false"/>. Defaults to <c>true</c>.
     /// </summary>
     public new bool ThrowOnError
     {

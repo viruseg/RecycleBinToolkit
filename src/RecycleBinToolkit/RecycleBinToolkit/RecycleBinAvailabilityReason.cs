@@ -27,13 +27,13 @@ public enum RecycleBinAvailabilityReason
 
     /// <summary>
     /// The volume supports a Recycle Bin, but none was ever recorded for it. No longer produced: an
-    /// unconfigured volume answers <see cref="Indeterminate"/>. Kept for contract stability.
+    /// unconfigured volume answers <see cref="Indeterminate"/>.
     /// </summary>
     NoRecycleBinOnVolume = 5,
 
     /// <summary>
     /// The volume exists, but configuration could not confirm it — either its type could not be read, or
-    /// nothing was recorded for it. Deliberately not <see cref="Enabled"/>.
+    /// nothing was recorded for it.
     /// </summary>
     Indeterminate = 6,
 }
