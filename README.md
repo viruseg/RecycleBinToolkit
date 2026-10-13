@@ -29,8 +29,10 @@ Every item is moved, reported and retried on its own:
   worked again.
 - The batch overload of `RecycleAsync` and both overloads of `RestoreAsync` report a per-item failure as
   data and raise nothing for it.
-- A permanent delete happens only where `NoRecycleBinAction.DeletePermanently` asks for one, and is
-  reported in `PermanentlyDeletedPaths`.
+- A permanent delete happens only where `NoRecycleBinAction.DeletePermanently` or
+  `LongPathFailureAction.DeletePermanently` asks for one, and is reported in `PermanentlyDeletedPaths`.
+- A path the Recycle Bin cannot record is either refused with the file left in place, or handled by
+  `LongPathFailureAction`. See [Long paths](#long-paths).
 - `RestoreAsync` puts an entry back where its own record says it was deleted from, and reports per
   entry in [`RecycleBinRestoreResult`](#recyclebinrestoreresult).
 
@@ -40,15 +42,13 @@ Every item is moved, reported and retried on its own:
 
 | | |
 | --- | --- |
-| OS | Windows 10 version 1607 (build 14393) or later |
+| OS | Windows |
 | Runtime | .NET 10 |
 | Architecture | Any |
 | Permissions | Write access to the file, and to its parent directory |
 
-The library writes the Recycle Bin's current index format, which the Windows 10 version 1607 Shell
-reads and no earlier one does. Below that, `RecycleAsync` raises `PlatformNotSupportedException` before
-it touches anything, and `ThrowOnError` does **not** suppress it. Listing, restoring and emptying are
-not gated.
+The library writes whichever of the Recycle Bin's two index formats this machine's own Windows reads,
+so the same call works on an old build and on a current one.
 
 The API is annotated `[SupportedOSPlatform("windows6.0.6000")]`, so calling it from a
 cross-platform target produces an analyzer warning unless you guard with
@@ -152,15 +152,12 @@ under an explicit policy.
 | `FileNotFoundException` | `filePath` does not exist, and `ThrowOnError` is on |
 | `IOException` | A move failed, or a volume refused the path, and `ThrowOnError` is on |
 | `NotSupportedException` | The path names its volume by GUID, and `ThrowOnError` is on |
-| `PlatformNotSupportedException` | This machine cannot write to the Recycle Bin — see [Requirements](#requirements) |
+| `PathTooLongException` | The Recycle Bin cannot record this path, and `ThrowOnError` is on — see [Long paths](#long-paths) |
 | `OperationCanceledException` | `cancellationToken` was cancelled before the work started |
 
 The file is untouched in every one of those cases. `IOException.HResult` carries the file system's own
 code, or `0` where the volume was refused from configuration. A GUID path was refused before anything
 was attempted; address the same location by drive letter instead.
-
-`PlatformNotSupportedException` is raised before anything is attempted and is **not** suppressed by
-`ThrowOnError`: nothing failed, so there is no failure to report as data.
 
 With `ThrowOnError` off, nothing is thrown: a bad path returns `false`.
 
@@ -282,6 +279,7 @@ a production default, so `RecycleOptions.Default` is always a valid argument.
 | `OverallTimeout` | `TimeSpan` | `30s` | Upper bound on wall-clock time spent retrying the batch, one budget for the whole call. |
 | `ThrowOnError` | `bool` | `true` | Whether a single-path failure raises instead of returning `false`. On the batch overload the property is not read. |
 | `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. |
+| `LongPathFailureAction` | `LongPathFailureAction` | `Throw` | What happens to a path the Recycle Bin cannot record. See [Long paths](#long-paths). |
 
 ```csharp
 var options = new RecycleOptions
@@ -349,9 +347,10 @@ The immutable result of a batch recycle.
 
 | Member | Type | Description |
 | --- | --- | --- |
-| `Succeeded` | `bool` | `true` when every requested path is gone from disk. |
+| `Succeeded` | `bool` | `true` when every requested path is gone from disk and nothing was stranded. |
 | `RecycledPaths` | `IReadOnlyList<string>` | Paths recycled, exactly as supplied. |
 | `PermanentlyDeletedPaths` | `IReadOnlyList<string>` | Paths removed permanently under an explicit policy. Empty unless that happened. |
+| `LeftoverStagingDirectories` | `IReadOnlyList<string>` | Staging directories left holding something, so the caller's data is still on their disk. Empty unless that happened. |
 | `Failures` | `IReadOnlyList<RecycleFailure>` | Paths that were not handled. Empty when `Succeeded`. |
 | `Elapsed` | `TimeSpan` | Time the call took. |
 | `FirstFailure` | `RecycleFailure?` | The first failure recorded, or `null`. |
@@ -401,6 +400,7 @@ A locked file reports `0x80270027` at stage `Performing`.
 | `VolumeGuidPathNotAddressable` | The path names its volume by GUID, as `\\?\Volume{GUID}\…`, which has no drive letter to be measured, emptied or reported against. Nothing was attempted: `Attempts` and `HResult` are `0`. Address the same location by drive letter or mount point. |
 | `RestoreFailed` | Reachable only from `RestoreAsync`: a record could not be read, a payload would not move, or a record would not be deleted. See below. |
 | `RestoreConflictRefused` | Reachable only from `RestoreAsync`, under `FileConflict` or `DirectoryConflict` set to `Error`: the path was occupied, nothing was touched, and the entry stays in the bin. `Attempts` and `HResult` are `0`. |
+| `LongPathNotRecyclable` | The Recycle Bin cannot record this path and the caller asked for it to be recycled. Nothing was attempted: `Attempts` is `0`, `HResult` is `0x800700CE`, and the file is untouched. See [Long paths](#long-paths). |
 
 Under `RestoreFailed`:
 
@@ -409,6 +409,37 @@ Under `RestoreFailed`:
   twice can produce two failures under the same path — group by path for one failure per file.
 - The entry is still in the bin, so a retry is worth making, unless the payload already moved and the
   file is on disk.
+
+### `LongPathFailureAction`
+
+What to do with a path the Recycle Bin cannot record. See [Long paths](#long-paths) for when this
+applies at all.
+
+| Value | Effect |
+| --- | --- |
+| `Throw` | Default. The path is refused, reported at `LongPathNotRecyclable`, and left in place. Raises `PathTooLongException` on `RecycleAsync(string?, …)` only when `ThrowOnError` is on. |
+| `DeletePermanently` | The file is deleted permanently by the library itself and listed in `PermanentlyDeletedPaths`, never in `RecycledPaths`. A file system that refuses reports `PermanentDeleteFailed` and leaves the file in place. |
+| `ShortenPathAndRecycle` | The item is moved to a short path on its own volume — a rename, so nothing is copied — and recycled from there. |
+
+`ShortenPathAndRecycle` trades the original location in the Recycle Bin: the entry shows the staging
+path the item was deleted from, and restoring it later puts it there rather than where it lived. An
+item whose recycle fails is moved back. If the library cannot move it back either, the directory is
+left in place and named in `LeftoverStagingDirectories` rather than deleted.
+
+### Long paths
+
+A path is recorded in the Recycle Bin, and a record can only hold so much of one. Where the format in
+use counts its length, every path Windows can name fits and nothing below applies. Where it does not,
+a path past about 259 characters cannot be recorded at all, and this library does the following, in
+order:
+
+| | |
+| --- | --- |
+| A short name the volume already has | Used in the record. The file does not move — the address changes, nothing else. Only on volumes with 8.3 short names enabled. |
+| `LongPathFailureAction` | Otherwise. Nothing happens to the file without the caller saying so. |
+
+One path that cannot be recorded never costs the caller the rest of the batch: the other paths are
+still recycled.
 
 ### `NoRecycleBinAction`
 

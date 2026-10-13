@@ -16,6 +16,7 @@ return await TestRunner.RunAsync(args,
         .Concat(WorkflowSuite.Cases)
         .Concat(StressSuite.Cases)
         .Concat(NativeBinSuite.Cases)
+        .Concat(LongPathSuite.Cases)
         .Concat(ListerSuite.Cases)
         .Concat(EmptySuite.Cases)
         .Concat(StatusSuite.Cases)
