@@ -557,16 +557,17 @@ they are allowed to sit behind a flag:
 
 ## How documentation is written here
 
-Three surfaces carry prose in this repository: `README.md`, the XML documentation on the public surface,
-and comments in the code — `//` and `///` alike. They answer different questions, which is what the
-sections below are about. **How the sentences are built is one rule set for all three**, and this is it.
+Three surfaces in this repository are written for a reader: `README.md`, the XML documentation on the
+public surface, and comments in the code — `//` and `///` alike. They answer different questions, which is
+what the sections below are about. **How the sentences are built is one rule set for all three**, and this
+is it.
 
 **A fact is a row, not a paragraph.** A table cell, a bullet, or one sentence. A paragraph that reasons
 its way to the fact is the author's thinking, and a reader scanning for the fact has to find it first.
 Where a row would need a condition inside the condition — "X, or Y when Z, unless W" — it is two facts:
 split it, or give the row the short form and put the detail in a bullet under the table.
 
-**Use the standard word.** Technical prose has an established term for almost everything a library
+**Use the standard word.** Technical writing has an established term for almost everything a library
 reports, and the non-standard phrase is nearly always the author's own and nearly always worse:
 
 | Do not write | Write |
@@ -587,7 +588,7 @@ reader reads it twice.
 
 **Nothing defends the design.** "Kept for contract stability", "this is the only difference `Error`
 makes", "deliberately not `Enabled`" — a reader who did not ask whether the design is defensible is now
-being answered a question they did not ask, in prose, before the thing they did ask. State the
+being answered a question they did not ask, in a paragraph, before the thing they did ask. State the
 behaviour; that is the contract. The justification belongs in this file, and it usually already is.
 
 **One fact, one place.** A fact stated in a table is not repeated in the paragraph under it, in the code
@@ -630,7 +631,7 @@ leaves able to write a call. Anything that does not serve that trip does not bel
 **The test for a borderline paragraph: could a caller write different code because of this?** If
 yes, it is in the README. If the answer is "they would understand the library better", it is here.
 
-**A type section is a table and short rows, not prose under it.** The shape that works is a member
+**A type section is a table and short rows, not a paragraph under it.** The shape that works is a member
 table, then one row per guarantee, then a table per rule that would otherwise run past 300 characters
 in a single cell. A guarantee the reader has to reconstruct from four sentences is a guarantee they
 will not act on. The same shape for `<returns>`, `<remarks>` and the comment tables: what is true, in
@@ -718,8 +719,8 @@ decision record.
 - **Never reference a test.** No `<summary>`, `<remarks>`, `<param>`, `<returns>` or `<exception>`
   anywhere in `src/` may mention a suite, a case, a test run or this repository's own coverage. The
   dependency is one-directional: tests reference the library, the library never references the tests.
-  A coverage claim has no home in library prose — put it in the test that would change if it stopped
-  being true. Check with a grep before finishing.
+  A coverage claim has no home in the library's own documentation — put it in the test that would change
+  if it stopped being true. Check with a grep before finishing.
 
 **Internal and private members keep their comments.** They are not shown to a caller, they are the
 right home for a note to the next reader, and a `remarks` on one of them costs nothing. The rules

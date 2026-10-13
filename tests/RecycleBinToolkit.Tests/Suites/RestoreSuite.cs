@@ -404,7 +404,7 @@ internal static class RestoreSuite
     /// somebody is using becomes the same name with the next number nobody is using.
     /// </summary>
     /// <remarks>
-    /// <see cref="RestoreFileConflict.Rename"/> writes this convention out in prose and this is the only
+    /// <see cref="RestoreFileConflict.Rename"/> writes this convention out in words and this is the only
     /// code behind it, so what is pinned here is the spelling rather than the arithmetic.
     /// <list type="bullet">
     /// <item>The number is never read back out of the name it produced, so <c>report (5).txt</c> becomes
