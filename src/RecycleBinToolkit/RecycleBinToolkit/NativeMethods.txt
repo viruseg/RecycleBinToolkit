@@ -1,4 +1,5 @@
 GetVolumeNameForVolumeMountPointW
+GetShortPathNameW
 RtlGetVersion
 OSVERSIONINFOW
 CreateFile

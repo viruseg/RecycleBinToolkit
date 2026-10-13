@@ -218,6 +218,16 @@ internal static class NativeRecycleRunner
                 }
             }
 
+            // Tried after the delete the caller asked for and before the refusal they did not, because the
+            // alias is free: the file does not move, and the record names a path the caller can restore from.
+            // The caller never learns it happened unless they look, which is what makes it the right first
+            // answer — it is also the only one that changes nothing.
+            if (TryTakeAlias(target, out var aliased))
+            {
+                pending.Add(aliased);
+                continue;
+            }
+
             failuresByPath[target.InputPath] = new RecycleFailure(
                 target.InputPath,
                 PathTooLong,
@@ -226,6 +236,28 @@ internal static class NativeRecycleRunner
         }
 
         return pending;
+    }
+
+    /// <summary>
+    /// Replaces a target's recorded path with the volume's short name for it, when it has one that fits.
+    /// </summary>
+    /// <remarks>
+    /// Both spellings have to fit, and only the recorded one is measured: a short name that is itself too
+    /// long is not a shorter path, and writing it would produce a record holding a path nothing can name.
+    /// </remarks>
+    private static bool TryTakeAlias(RecycleTarget target, out RecycleTarget aliased)
+    {
+        aliased = default;
+
+        var alias = ShortPathResolver.TryResolveShort(target.RecordPath);
+
+        if (alias is null || alias.Length > NativeIndexFile.LegacyPathCapacity)
+        {
+            return false;
+        }
+
+        aliased = target.WithRecordPath(alias);
+        return true;
     }
 
     /// <summary>

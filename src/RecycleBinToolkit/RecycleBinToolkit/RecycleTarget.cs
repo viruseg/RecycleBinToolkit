@@ -64,6 +64,18 @@ internal readonly struct RecycleTarget
     public string RecordPath => _recordPath ?? FullPath;
 
     /// <summary>
+    /// Returns a copy that names <paramref name="recordPath"/> in its record, leaving the path the item is
+    /// moved from alone.
+    /// </summary>
+    /// <remarks>
+    /// For a path the record cannot hold, when the volume offers a short name that fits. The two diverge
+    /// here in the one way they do not elsewhere: the item stays where it was and only the recorded
+    /// spelling changes, so a restore puts it back at the alias, which is the same file at the same place.
+    /// </remarks>
+    internal RecycleTarget WithRecordPath(string recordPath) =>
+        new(InputPath, FullPath, Attributes, Size, recordPath);
+
+    /// <summary>
     /// What the filesystem said about the path when it was validated.
     /// </summary>
     /// <remarks>

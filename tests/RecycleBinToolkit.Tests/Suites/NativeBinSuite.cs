@@ -50,6 +50,8 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(DeletePermanentlyRemovesTheFileAndReportsIt), DeletePermanentlyRemovesTheFileAndReportsIt),
         new TestCase("NativeBinSuite." + nameof(DeletePermanentlyRemovesALongDirectoryToo), DeletePermanentlyRemovesALongDirectoryToo),
         new TestCase("NativeBinSuite." + nameof(ARefusedLongPathDoesNotCostTheRestOfTheBatch), ARefusedLongPathDoesNotCostTheRestOfTheBatch),
+        new TestCase("NativeBinSuite." + nameof(AnOverLongPathTakesItsEightDotThreeAlias), AnOverLongPathTakesItsEightDotThreeAlias),
+        new TestCase("NativeBinSuite." + nameof(AnAliasThatIsStillTooLongFallsThroughToThePolicy), AnAliasThatIsStillTooLongFallsThroughToThePolicy),
         new TestCase("NativeBinSuite." + nameof(NativeRecycleReportsALockedFileAndLeavesNoIndexRecord), NativeRecycleReportsALockedFileAndLeavesNoIndexRecord),
         new TestCase("NativeBinSuite." + nameof(TheDetectedVersionMatchesTheBoundary), TheDetectedVersionMatchesTheBoundary),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderReadsAVersionOneRecord), NativeIndexReaderReadsAVersionOneRecord),
@@ -658,6 +660,87 @@ internal static class NativeBinSuite
         }
 
         return directory;
+    }
+
+    /// <summary>
+    /// A volume that offers short names gives an over-long path one that fits, and the file does not move
+    /// for it: only the spelling in the record changes. That is the cheapest answer available and it is
+    /// why it is tried before anything is asked of the caller.
+    /// </summary>
+    private static async Task AnOverLongPathTakesItsEightDotThreeAlias(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the entry to land in");
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var path = CreateDeepFile(NativeIndexFile.LegacyPathCapacity + 50);
+            var alias = ShortPathResolver.TryResolveShort(path);
+
+            if (alias is null)
+            {
+                Check.Skip($"{ScratchWorkspace.VolumeRoot} has no short name for this path, so there is no alias to record. This case needs 8.3 short names");
+            }
+
+            Check.True(alias.Length < path.Length, "the alias the volume offers is shorter than the path it names");
+            Check.True(alias.Length <= NativeIndexFile.LegacyPathCapacity, $"and fits the record ({alias.Length} of {NativeIndexFile.LegacyPathCapacity})");
+
+            var result = await RecycleBin.RecycleAsync([path], RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+
+            Check.True(result.Succeeded, $"the file is recycled (first failure: {Describe(result.FirstFailure)})");
+            Check.True(File.Exists(alias), "the file is still reachable at the alias the record now names, which is where it always was");
+
+            var record = ReadNewestRecord(new FileInfo(alias).Length, alias);
+            Check.Equal(alias, record.OriginalPath, "and the record names the alias rather than the path that would not fit");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An alias that is itself too long is no answer. It must fall through to the caller's policy rather
+    /// than be written into a record that cannot hold it.
+    /// </summary>
+    private static Task AnAliasThatIsStillTooLongFallsThroughToThePolicy(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        var longRoot = ScratchWorkspace.RecreateLongDirectoryRoot();
+
+        // Every component is its own short-name-eligible name and none of them collapses far enough, so the
+        // alias stays over the capacity while still being an alias rather than the original path.
+        var path = BuildDeepDirectory(longRoot, NativeIndexFile.LegacyPathCapacity + 50);
+        var alias = ShortPathResolver.TryResolveShort(path);
+
+        if (alias is null || alias.Length <= NativeIndexFile.LegacyPathCapacity)
+        {
+            Check.Skip($"{ScratchWorkspace.VolumeRoot} produced no alias that is still too long for {path}. This case needs short names that do not shorten enough");
+        }
+
+        Check.True(alias.Length > NativeIndexFile.LegacyPathCapacity, "the alias this case needs is itself over the record's capacity");
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var result = RecycleBin.RecycleAsync([path], RecycleOptions.Default, context.CancellationToken).GetAwaiter().GetResult();
+
+            Check.False(result.Succeeded, "so the path is refused rather than recorded with an alias that does not fit");
+            Check.Equal(RecycleFailureStage.LongPathNotRecyclable, result.FirstFailure?.Stage, "at the stage that says the length is the obstacle");
+            Check.True(Directory.Exists(path), "and the path is exactly where the caller left it");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        workspace.Dispose();
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
