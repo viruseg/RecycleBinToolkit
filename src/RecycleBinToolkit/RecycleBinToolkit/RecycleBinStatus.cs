@@ -3,7 +3,7 @@ using System.Runtime.Versioning;
 namespace RecycleBinToolkit;
 
 /// <summary>Whether the Recycle Bin is in use for one volume.</summary>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 public sealed class RecycleBinStatus
 {
     internal RecycleBinStatus(

@@ -24,7 +24,7 @@ namespace RecycleBinToolkit;
 /// their payloads, and a merge that had already set something down keeps it.</item>
 /// </list>
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class RestoreRunner
 {
     /// <summary>Longest wait that can be expressed as a <see cref="TimeSpan"/> from milliseconds.</summary>
@@ -1702,7 +1702,7 @@ internal sealed record RestoreDiskGroup(PhysicalDiskKey? Disk, List<RestoreVolum
 /// never been the same object.
 /// </para>
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal sealed class RestoreVolumePipeline
 {
     /// <summary>Opens the movers, the channel and the state they share for one volume.</summary>

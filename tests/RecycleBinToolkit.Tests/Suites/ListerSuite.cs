@@ -8,7 +8,7 @@ namespace RecycleBinToolkit.Tests.Suites;
 /// Covers <see cref="RecycleBin.GetItemsAsync"/>: what a listing reports about a recycled item, and
 /// what it does with it.
 /// </summary>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class ListerSuite
 {
     internal static IReadOnlyList<TestCase> Cases =>

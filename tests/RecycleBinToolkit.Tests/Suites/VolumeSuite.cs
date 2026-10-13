@@ -10,7 +10,7 @@ namespace RecycleBinToolkit.Tests.Suites;
 /// Owns the questions about one volume at a time: what its Recycle Bin holds, and what this library
 /// does when a volume has none.
 /// </summary>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class VolumeSuite
 {
     internal static IReadOnlyList<TestCase> Cases =>

@@ -48,7 +48,7 @@ internal readonly record struct PhysicalDiskKey(int DeviceType, int DeviceNumber
 /// handle and a device control to reach the same refusal, and neither refusal changes under a run.
 /// </para>
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class PhysicalVolumeDisk
 {
     /// <summary>

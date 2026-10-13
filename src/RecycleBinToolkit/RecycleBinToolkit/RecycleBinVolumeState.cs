@@ -13,7 +13,7 @@ namespace RecycleBinToolkit;
 /// a bin for — is answered <see cref="RecycleBinAvailabilityReason.Indeterminate"/>: unproven is not
 /// enabled.
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class RecycleBinVolumeState
 {
     private const int GuidPathCapacity = 64;

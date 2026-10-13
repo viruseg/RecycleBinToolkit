@@ -37,7 +37,7 @@ internal sealed record VolumeDiskGroup(PhysicalDiskKey? Disk, List<int> Position
 /// comparing two runs sees the same shape either way.</item>
 /// </list>
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class VolumeDiskGroups
 {
     /// <summary>

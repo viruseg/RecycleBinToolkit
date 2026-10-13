@@ -3,7 +3,7 @@ using System.Runtime.Versioning;
 namespace RecycleBinToolkit;
 
 /// <summary>The entries one volume's Recycle Bin holds.</summary>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 public sealed class RecycleBinVolumeContents
 {
     /// <summary>Creates the group for one volume.</summary>

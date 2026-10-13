@@ -17,7 +17,7 @@ namespace RecycleBinToolkit;
 /// on a batch of twenty thousand paths, is minutes of filesystem probes.
 /// </para>
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class RecycleBatch
 {
     /// <summary>

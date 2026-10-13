@@ -25,7 +25,7 @@ namespace RecycleBinToolkit;
 /// The version comes from <c>RtlGetVersion</c> rather than from <see cref="Environment.OSVersion"/> or
 /// <see cref="OperatingSystem"/>. Both of those report the framework's declared minimum instead of the
 /// running system whenever that minimum is below it, and this assembly declares
-/// <c>windows6.0.6000</c> — so the shim would answer with the oldest Windows this library claims. The
+/// <c>windows10.0.14393</c> — so the shim would answer with the oldest Windows this library claims. The
 /// native call answers with the machine.
 /// </para>
 /// </remarks>
@@ -71,7 +71,7 @@ private static readonly Lazy<(int Major, int Minor, int Build)> LazyRunningVersi
     /// cache is built once per process and a caller that set the flag after that would silently get the
     /// cached answer instead.
     /// </remarks>
-    [SupportedOSPlatform("windows6.0.6000")]
+    [SupportedOSPlatform("windows10.0.14393")]
     internal static int VersionForWriting =>
         ForceVersionOne
             ? Legacy
@@ -90,7 +90,7 @@ private static readonly Lazy<(int Major, int Minor, int Build)> LazyRunningVersi
     /// <summary>
     /// The Windows version this process is running on, as the machine reports it.
     /// </summary>
-    [SupportedOSPlatform("windows6.0.6000")]
+    [SupportedOSPlatform("windows10.0.14393")]
     internal static (int Major, int Minor, int Build) RunningVersion => LazyRunningVersion.Value;
 
     /// <summary>How many times the machine was actually asked.</summary>

@@ -10,7 +10,7 @@ namespace RecycleBinToolkit;
 /// once here. A caller who names a path that is not a volume root gets the same refusal whichever
 /// operation would have acted on it.
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class RecycleBinVolumeSet
 {
     /// <summary>

@@ -10,7 +10,7 @@ namespace RecycleBinToolkit;
 /// Synchronous, because everything it does blocks: a file move is a metadata operation the thread waits
 /// on. It is only ever given a thread from the pool, never a caller's.
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class NativeRecycleRunner
 {
     /// <summary>Longest wait that can be expressed as a <see cref="TimeSpan"/> from milliseconds.</summary>

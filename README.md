@@ -50,7 +50,7 @@ Every item is moved, reported and retried on its own:
 The library writes whichever of the Recycle Bin's two index formats this machine's own Windows reads,
 so the same call works on an old build and on a current one.
 
-The API is annotated `[SupportedOSPlatform("windows6.0.6000")]`, so calling it from a
+The API is annotated `[SupportedOSPlatform("windows10.0.14393")]`, so calling it from a
 cross-platform target produces an analyzer warning unless you guard with
 `OperatingSystem.IsWindows()`.
 

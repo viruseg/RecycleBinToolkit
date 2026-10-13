@@ -7,7 +7,7 @@ namespace RecycleBinToolkit;
 /// Moves files and directories into the Windows Recycle Bin, and reads, empties and reports on the bin
 /// itself.
 /// </summary>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 public static class RecycleBin
 {
     /// <summary>Win32 <c>ERROR_PATH_NOT_FOUND</c>, for a path that is not a volume root.</summary>

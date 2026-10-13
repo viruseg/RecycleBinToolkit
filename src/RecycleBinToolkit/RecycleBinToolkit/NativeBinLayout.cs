@@ -13,7 +13,7 @@ namespace RecycleBinToolkit;
 /// one entry's index is read to learn about it, and the payload's name is derived from it rather than
 /// looked up.
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class NativeBinLayout
 {
     private const string RecycleBinFolder = "$RECYCLE.BIN";

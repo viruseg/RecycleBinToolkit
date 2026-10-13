@@ -10,7 +10,7 @@ namespace RecycleBinToolkit.Tests.Suites;
 /// Covers <see cref="RecycleBin.EmptyAsync"/>: that the entries really leave the Recycle Bin, and
 /// that the counts it reports are measured rather than assumed.
 /// </summary>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class EmptySuite
 {
     internal static IReadOnlyList<TestCase> Cases =>

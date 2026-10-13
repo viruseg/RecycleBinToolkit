@@ -10,7 +10,7 @@ namespace RecycleBinToolkit.Tests.Suites;
 /// Covers <see cref="RecycleBin.GetStatusAsync"/>: whether the Recycle Bin is in use for a volume,
 /// and whether the answer matches what that volume actually does.
 /// </summary>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class StatusSuite
 {
     internal static IReadOnlyList<TestCase> Cases =>

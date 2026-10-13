@@ -17,7 +17,7 @@ namespace RecycleBinToolkit;
 /// string and changes only what goes in the record.
 /// </para>
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static unsafe class ShortPathResolver
 {
     private const int BufferLength = 1024;

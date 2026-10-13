@@ -33,7 +33,7 @@ internal sealed record NativeBinEntry(
 /// enumerate nothing at all.
 /// </para>
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class NativeBinEntries
 {
     /// <summary>The character every entry name starts with, before the <c>I</c> or <c>R</c> that says which half it is.</summary>

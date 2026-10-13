@@ -3,7 +3,7 @@ using System.Runtime.Versioning;
 namespace RecycleBinToolkit;
 
 /// <summary>The entries read by <see cref="RecycleBin.GetItemsAsync"/>, grouped by volume.</summary>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 public sealed class RecycleBinContents
 {
     /// <summary>Creates a listing, deriving its total from the items.</summary>

@@ -25,7 +25,7 @@ namespace RecycleBinToolkit;
 /// asked about.
 /// </para>
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class NativeBinLister
 {
     /// <summary>

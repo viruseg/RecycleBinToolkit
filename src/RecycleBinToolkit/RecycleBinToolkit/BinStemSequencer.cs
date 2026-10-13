@@ -26,7 +26,7 @@ namespace RecycleBinToolkit;
 /// </list>
 /// Nothing here is measured: the ordering is a hypothesis about how a directory's index behaves.
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal sealed class BinStemSequencer
 {
     /// <summary>The character every entry name starts with, before the half's own letter.</summary>

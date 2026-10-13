@@ -19,7 +19,7 @@ namespace RecycleBinToolkit;
 /// finished: each volume writes a slot taken by its position in the argument.
 /// </para>
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class NativeBinEmptier
 {
     /// <summary>

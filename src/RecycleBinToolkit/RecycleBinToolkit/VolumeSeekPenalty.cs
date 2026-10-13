@@ -37,7 +37,7 @@ internal enum VolumeStorageKind
 /// asked twice per entry would pay a device control for every one of ninety thousand entries.
 /// </para>
 /// </remarks>
-[SupportedOSPlatform("windows6.0.6000")]
+[SupportedOSPlatform("windows10.0.14393")]
 internal static class VolumeSeekPenalty
 {
     /// <summary>
