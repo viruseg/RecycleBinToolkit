@@ -118,7 +118,7 @@ public sealed class RecycleFailure
     public RecycleFailureStage Stage { get; }
 }
 
-/// <summary>The outcome of a batch recycle.</summary>
+/// <summary>The outcome of one batch <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleOptions?, CancellationToken)"/> call.</summary>
 public sealed class RecycleBinResult
 {
     private RecycleBinResult(

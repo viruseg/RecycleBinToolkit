@@ -1,6 +1,6 @@
 namespace RecycleBinToolkit;
 
-/// <summary>How one item a recycle was asked for ended.</summary>
+/// <summary>The outcome of one path in a <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/> call.</summary>
 public enum RecycleStatus
 {
     /// <summary>The item is in the Recycle Bin.</summary>
@@ -16,7 +16,10 @@ public enum RecycleStatus
     DeletedPermanently = 3
 }
 
-/// <summary>What became of one item a recycle was asked for.</summary>
+/// <summary>
+/// The report <see cref="RecycleBin.RecycleAsync(string?, RecycleOptions?, CancellationToken)"/> raises for
+/// one path, carrying its position in the batch.
+/// </summary>
 /// <remarks>
 /// One per item that was passed in, whether or not anything happened to it, and including a path that was
 /// refused, repeated, or never named a file. <see cref="Elapsed"/> is measured when the report is created,
@@ -24,7 +27,7 @@ public enum RecycleStatus
 /// </remarks>
 /// <param name="Index">Position of this item in the operation's own numbering, starting at 1.</param>
 /// <param name="Count">Number of items the operation was asked about.</param>
-/// <param name="Status">What became of the item.</param>
+/// <param name="Status">The outcome for this path.</param>
 /// <param name="Path">The path as the caller wrote it. A <see langword="null"/> entry is reported as an empty string.</param>
 /// <param name="Elapsed">Time from the start of the call to the moment this report was created.</param>
 /// <param name="Failure">Why it was refused or failed, or <see langword="null"/> when nothing went wrong.</param>

@@ -1,6 +1,6 @@
 namespace RecycleBinToolkit;
 
-/// <summary>The outcome of a restore.</summary>
+/// <summary>The outcome of one <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/> call.</summary>
 /// <remarks>
 /// Each list keeps the relative order the entries were handed in, and none of them is an index the caller can
 /// line up against the input: a list holds only the entries that belong in it, so one entry of three may appear

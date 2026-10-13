@@ -292,7 +292,7 @@ The report `RecycleAsync` raises for one path, carrying its position in the batc
 | Member | Type | Description |
 | --- | --- | --- |
 | `Index`, `Count` | `int` | This item's number, and how many the call was asked about. |
-| `Status` | `RecycleStatus` | What became of the path. See [`RecycleStatus`](#recyclestatus). |
+| `Status` | `RecycleStatus` | The outcome for this path. See [`RecycleStatus`](#recyclestatus). |
 | `Path` | `string` | The path as you wrote it. A batch entry that was `null` is reported as `""`. |
 | `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
 | `Failure` | `RecycleFailure?` | Why it was refused or failed, or `null`. A repeated path is `Refused` with no `Failure`: it was not acted on, and there is no reason to invent. |
@@ -304,7 +304,7 @@ The report `RestoreAsync` raises for one entry, carrying its position in the bat
 | Member | Type | Description |
 | --- | --- | --- |
 | `Index`, `Count` | `int` | This entry's number, and how many the call was asked about. |
-| `Status` | `RestoreStatus` | What became of the entry. See [`RestoreStatus`](#restorestatus). |
+| `Status` | `RestoreStatus` | The outcome for this entry. See [`RestoreStatus`](#restorestatus). |
 | `Path` | `string` | Where the entry landed, or the record it came from when it landed nowhere. |
 | `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
 | `Failure` | `RecycleFailure?` | Why it was skipped or failed, or `null`. |
@@ -316,7 +316,7 @@ The report `EmptyAsync` raises for one entry, carrying its position in the count
 | Member | Type | Description |
 | --- | --- | --- |
 | `Index`, `Count` | `int` | This entry's number, and how many were counted before the sweep began. |
-| `Status` | `EmptyStatus` | What became of the entry. See [`EmptyStatus`](#emptystatus). |
+| `Status` | `EmptyStatus` | The outcome for this entry. See [`EmptyStatus`](#emptystatus). |
 | `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
 
 ```csharp
@@ -446,7 +446,7 @@ Console.WriteLine(options.PreloadItemDetails);
 
 ### `RecycleBinResult`
 
-The immutable result of a batch recycle.
+The immutable result of one `RecycleAsync` batch call.
 
 | Member | Type | Description |
 | --- | --- | --- |
@@ -665,7 +665,7 @@ What one volume's Recycle Bin holds.
 
 ### `RecycleBinEmptyResult`
 
-The immutable result of an empty.
+The immutable result of one `EmptyAsync` call.
 
 | Member | Type | Description |
 | --- | --- | --- |
@@ -690,7 +690,7 @@ worked out leaves the bin without being counted.
 
 ### `RecycleBinRestoreResult`
 
-The immutable result of a restore.
+The immutable result of one `RestoreAsync` call.
 
 | Member | Type | Description |
 | --- | --- | --- |

@@ -607,8 +607,34 @@ reports, and the non-standard phrase is nearly always the author's own and nearl
 | Wall-clock time the caller waited | elapsed time |
 | asserts a fact, answers for it | reports, returns |
 | the path it wanted | the destination path |
+| What became of … | The outcome of … |
+| How one X a Y ended. | The outcome of one X in a `Y` call. |
 
 If a phrase would not survive being read aloud to a colleague, it does not go in the file.
+
+**A type says what it codes, not what happened.** The sentence that opens a type's section, and a
+`<summary>`, describe the axis the type quantifies and the member that hands one back. They are noun
+phrases. A question, an event, or a story about something that occurred is a description of a process,
+and a reader who wants to know what a type is gets nothing from it. Four ways this goes wrong, all of
+which shipped before they were caught:
+
+| Do not write | Write | Why the first one fails |
+| --- | --- | --- |
+| What became of one item a recycle was asked for. | The outcome of one path in a `RecycleAsync` call. | `What became of` is a conversational idiom about things whose fate is unknown. The members of an enum are known at compile time. |
+| How one item a recycle was asked for ended. | The outcome of one path in a `RecycleAsync` call. | Same idiom, and `a recycle` is a verb wearing a noun's clothes. |
+| The outcome of an empty. | The outcome of one `EmptyAsync` call. | `an empty` reads as a typo. The operation has a name; use it. |
+| The volume root this answer is about. | The volume root the answer is about. | `this` points at nothing a reader can see. A tooltip is read out of context. |
+
+**A reduced relative clause keeps its relative pronoun.** `one item a recycle was asked for` is a
+garden path: `item` and `recycle` are two nouns with no link, and the reader parses `item a` before
+finding out what the sentence is doing. `one item \`RecycleAsync\` was asked to recycle` cannot be
+misparsed.
+
+**Name the owner.** An enum or record that exists to be returned by one method carries that method's
+name, so a reader in a tooltip knows where to look next without searching the file for it.
+
+**The test:** could a reader say what the type codes without reading its members? If not, the sentence
+is narration and it does not go in the file.
 
 **Nothing restates what the reader can already see.** Not the line under a comment, not the parameter
 type, not the default already in the table above, not the sentence in the paragraph above. A comment
@@ -716,8 +742,10 @@ above it.** It is a contract and nothing else: what the member does, what each p
 this call, what comes back, what is raised. It is not a second copy of the README and it is not a
 decision record.
 
-- **`<summary>` is one sentence.** If the second sentence is a different fact rather than a
-  continuation, it usually belongs in `<returns>`, in the README, or nowhere.
+- **`<summary>` is one sentence**, and it is a noun phrase naming the axis rather than a story about
+  something that happened. See **A type says what it codes, not what happened** in [How documentation
+  is written here](#how-documentation-is-written-here). If the second sentence is a different fact
+  rather than a continuation, it usually belongs in `<returns>`, in the README, or nowhere.
 - **A default belongs in the summary**, not in a remarks block under it. `Defaults to 6, clamped to at
   least 1` is one line a caller sees without expanding anything; a `/// <remarks>The default is 6.
   /// </remarks>` is two tags they have to expand to read.

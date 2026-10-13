@@ -1,6 +1,6 @@
 namespace RecycleBinToolkit;
 
-/// <summary>How one entry an empty removed ended.</summary>
+/// <summary>The outcome of one entry in an <see cref="RecycleBin.EmptyAsync(string?, EmptyOptions?, CancellationToken)"/> call.</summary>
 public enum EmptyStatus
 {
     /// <summary>The entry is out of the Recycle Bin.</summary>
@@ -10,9 +10,13 @@ public enum EmptyStatus
     Failed = 1
 }
 
-/// <summary>What became of one entry an empty removed.</summary>
+/// <summary>
+/// The report <see cref="RecycleBin.EmptyAsync(string?, EmptyOptions?, CancellationToken)"/> raises for one
+/// entry, carrying its position in the count.
+/// </summary>
 /// <remarks>
-/// One per entry the operation went after. An empty reports entries leaving the Recycle Bin rather than
+/// One per entry the operation went after. An <see cref="RecycleBin.EmptyAsync(string?, EmptyOptions?, CancellationToken)"/>
+/// call reports entries leaving the Recycle Bin rather than
 /// where they were, so there is no path here: the entries that did not go are named by
 /// <see cref="RecycleBinEmptyResult.Failures"/>, by their record inside the bin rather than by where they
 /// were. <para>

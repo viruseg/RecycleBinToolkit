@@ -1,6 +1,6 @@
 namespace RecycleBinToolkit;
 
-/// <summary>The outcome of an empty.</summary>
+/// <summary>The outcome of one <see cref="RecycleBin.EmptyAsync(string?, EmptyOptions?, CancellationToken)"/> call.</summary>
 public sealed record RecycleBinEmptyResult
 {
     /// <summary>Creates a result.</summary>

@@ -16,7 +16,7 @@ public sealed class RecycleBinStatus
         Reason = reason;
     }
 
-    /// <summary>The volume root this answer is about, always with a trailing separator.</summary>
+    /// <summary>The volume root the answer is about, always with a trailing separator.</summary>
     public string VolumeRoot { get; }
 
     /// <summary>
