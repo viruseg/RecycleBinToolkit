@@ -236,6 +236,38 @@ internal static class ReadmeExamples
         }
     }
 
+    internal static async Task ReportEachDeleteThatDidNotHappen()
+    {
+        IReadOnlyList<string?> paths =
+        [
+            @"W:\Projects\build-output",
+            @"W:\Projects\gone.log",
+        ];
+
+        var options = new RecycleOptions
+        {
+            WaitForProgressCallbacks = true,
+            OnItemProcessed = progress =>
+            {
+                var failure = progress.Failure;
+
+                switch (progress.Status)
+                {
+                    case RecycleStatus.Failed:
+                        Console.Error.WriteLine($"{progress.Path} is still on disk: {failure?.Stage} 0x{failure?.HResult:X8} after {failure?.Attempts} attempt(s)");
+                        break;
+
+                    case RecycleStatus.Refused
+                        when (failure?.Stage is not (null or RecyclePathFailureStage.PathValidation)):
+                        Console.Error.WriteLine($"{progress.Path} was never attempted: {failure?.Stage}");
+                        break;
+                }
+            }
+        };
+
+        await RecycleBin.RecycleAsync(paths, options);
+    }
+
     internal static async Task ChooseWhatHappensOnAVolumeWithoutARecycleBin()
     {
         IReadOnlyList<string?> paths = [@"W:\Reports\quarterly.xlsx"];

@@ -1020,6 +1020,48 @@ foreach (var failure in result.Failures)
 }
 ```
 
+### Report each delete that did not happen
+
+```csharp
+IReadOnlyList<string?> paths =
+[
+    @"W:\Projects\build-output",
+    @"W:\Projects\gone.log",
+];
+
+var options = new RecycleOptions
+{
+    WaitForProgressCallbacks = true,
+    OnItemProcessed = progress =>
+    {
+        var failure = progress.Failure;
+
+        switch (progress.Status)
+        {
+            case RecycleStatus.Failed:
+                Console.Error.WriteLine($"{progress.Path} is still on disk: {failure?.Stage} 0x{failure?.HResult:X8} after {failure?.Attempts} attempt(s)");
+                break;
+            
+            case RecycleStatus.Refused
+                when (failure?.Stage is not (null or RecyclePathFailureStage.PathValidation)):
+                Console.Error.WriteLine($"{progress.Path} was never attempted: {failure?.Stage}");
+                break;
+        }
+    }
+};
+
+await RecycleBin.RecycleAsync(paths, options);
+```
+
+The handler above says nothing about a path that is already gone, and everything about one that is not:
+
+| Report | What the path is now |
+| --- | --- |
+| `Recycled`, `DeletedPermanently` | Gone from disk. |
+| `Failed` | Still on disk. `Stage` is the step that gave up, `HResult` the file system's own code, `Attempts` how many were spent on it. |
+| `Refused` at `PathValidation` | The path was empty, malformed, or already gone — one stage carries all three, so a caller who wants them apart has to ask before the call. |
+| `Refused` at any other stage | Still on disk and untouched. Nothing was tried: no Recycle Bin on that volume, a path naming its volume by GUID, or one the record cannot hold. |
+
 ### Choose what happens on a volume without a Recycle Bin
 
 ```csharp
