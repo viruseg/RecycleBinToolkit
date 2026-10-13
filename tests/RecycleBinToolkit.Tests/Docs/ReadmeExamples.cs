@@ -267,4 +267,24 @@ internal static class ReadmeExamples
 
         bool gone = await RecycleBin.RecycleAsync(@"W:\Reports\quarterly.xlsx", options);
     }
+
+    internal static async Task ReportEachPathAsItIsRecycled()
+    {
+        var options = new RecycleOptions
+        {
+            OnItemProcessed = progress =>
+                Console.WriteLine($"{progress.Index}/{progress.Count} {progress.Status} {progress.Path}"),
+            WaitForProgressCallbacks = true
+        };
+
+        await RecycleBin.RecycleAsync([@"W:\Users\me\Downloads\archive.zip"], options);
+    }
+
+    internal static async Task ReportEachEntryAsTheBinIsEmptied()
+    {
+        await RecycleBin.EmptyAsync(@"W:\", new EmptyOptions
+        {
+            OnItemProcessed = progress => Console.WriteLine($"{progress.Index}/{progress.Count} {progress.Status}")
+        });
+    }
 }

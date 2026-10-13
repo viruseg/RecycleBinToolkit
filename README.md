@@ -125,6 +125,7 @@ if (!result.Succeeded)
 | `RecycleBin.RestoreAsync(IReadOnlyList<RecycleBinItem> items, RestoreOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinRestoreResult>` | Puts listed entries back where their records say they came from. |
 | `RecycleBin.RestoreAsync(IReadOnlyList<RecycleBinVolumeContents> volumes, RestoreOptions? options = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinRestoreResult>` | The same, for the volume groups of a listing. |
 | `RecycleBin.EmptyAsync(string? volumeRoot = null, CancellationToken cancellationToken = default)` | `Task<RecycleBinEmptyResult>` | Empties it, and reports how much it freed. |
+| `RecycleBin.EmptyAsync(string? volumeRoot, EmptyOptions? options, CancellationToken cancellationToken = default)` | `Task<RecycleBinEmptyResult>` | The same, reporting each entry as it goes. `volumeRoot` has no default on this overload, so `EmptyAsync(root)` still picks the one above. |
 | `RecycleBin.GetStatusAsync(string volumeRoot, CancellationToken cancellationToken = default)` | `Task<RecycleBinStatus>` | Whether it is in use for a volume, and why not if it is not. |
 
 `GetItemsAsync`, `RestoreAsync`, `EmptyAsync` and `GetStatusAsync` report an environmental problem as
@@ -227,7 +228,7 @@ when the token is cancelled. Per-entry problems are data, not exceptions.
 
 ### `EmptyAsync`
 
-Empties the Recycle Bin.
+Empties the Recycle Bin. The first signature below is the one to reach for unless you want reports.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
@@ -237,6 +238,10 @@ Empties the Recycle Bin.
 **Returns** a `RecycleBinEmptyResult`. `ItemsRemoved` and `BytesFreed` are summed from the records
 being deleted, so a record whose payload is already gone counts as removed. `VolumesEmptied` and
 `Failures` are in the order the volumes were covered.
+
+The second overload adds `EmptyOptions? options` between the two, `null` meaning `EmptyOptions.Default`.
+`volumeRoot` has no default on it, so a call that names only a root still binds to the first overload.
+See [Progress](#progress).
 
 ### `GetStatusAsync`
 
@@ -252,6 +257,81 @@ Whether the Recycle Bin is in use for one volume.
 `RecycleAsync` calls this before a batch and refuses a path whose volume is not `Enabled`, unless
 `NoRecycleBinAction` says otherwise. Nothing is cached: a volume mounted or a policy applied after one
 call is seen by the next.
+
+### Progress
+
+`RecycleAsync`, `RestoreAsync` and `EmptyAsync` can report each item as it is settled. The three carry the
+same three properties and nothing else; what differs is the type their handler is given, because a
+recycled path, a restored entry and an emptied entry have different outcomes to report.
+
+| Property | Type | Default | Description |
+| --- | --- | --- | --- |
+| `OnItemProcessed` | `Action<RecycleProgress>` / `Action<RestoreProgress>` / `Action<EmptyProgress>` | `null` | Called once per item. `null` reports nothing and costs one null check per item. |
+| `OnProgressFailed` | `Action<Exception>` | `null` | Called once with whatever `OnItemProcessed` threw, after which that handler is not called again. |
+| `WaitForProgressCallbacks` | `bool` | `false` | Whether the call returns only once every report has been delivered. |
+
+| Guarantee | |
+| --- | --- |
+| One report per input item | Includes one refused, repeated, or absent path. `RecycleAsync` and `RestoreAsync` report `Count` equal to the length of what you passed. |
+| `Index` is one counter | Handed out as each item is settled, never reused within a call, and shared by every thread the operation runs on. |
+| `Elapsed` is stamped at creation, not at delivery | A handler that takes a second on item 3 does not make item 4 look slow. |
+| Delivery order is arrival order | A restore across two volumes or an empty across two disks reports volume B before volume A. `Index` is the ordering, not the stream. |
+| The operation never waits for the handler | It runs to completion on its own thread while your handler is still working. Reports may still arrive after the `await` returns unless `WaitForProgressCallbacks` is set. |
+| Two reports are never delivered at once | And never on the thread that called the operation, so a handler may touch UI state. |
+| A cancelled call reports only what it decided | The method raises `OperationCanceledException` and returns no result. |
+| A handler that throws ends delivery | The failure handler is told once and the operation still returns its result. It never reaches the operation. |
+| `EmptyAsync` reads every bin one extra time | Only when `OnItemProcessed` is set, and only to know the total. Leave it `null` and nothing is read that the empty does not already read. |
+| A restore does not report a merge's leftovers | A file a merge could not put back goes into the Recycle Bin again. It was never in your list, so it has no index in your count. See `MergedSkipped` in `Conflicts`. |
+| An empty reports no path | An empty says entries left the bin. The ones that did not are named in `RecycleBinEmptyResult.Failures`. |
+
+#### `RecycleProgress`
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `Index`, `Count` | `int` | This item's number, and how many the call was asked about. |
+| `Status` | `RecycleStatus` | `Recycled`, `Failed` (attempted, did not happen), `Refused` (not attempted, the file is where you left it), `DeletedPermanently`. |
+| `Path` | `string` | The path as you wrote it. |
+| `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
+| `Failure` | `RecycleFailure?` | Why it was refused or failed, or `null`. A repeated path is `Refused` with no `Failure`: it was not acted on, and there is no reason to invent. |
+
+#### `RestoreProgress`
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `Index`, `Count` | `int` | This entry's number, and how many the call was asked about. |
+| `Status` | `RestoreStatus` | `Restored`, `Merged`, `Skipped` (your conflict policy left it in the bin — not a failure), `Failed`. |
+| `Path` | `string` | Where the entry landed, or the record it came from when it landed nowhere. |
+| `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
+| `Failure` | `RecycleFailure?` | Why it was skipped or failed, or `null`. |
+
+#### `EmptyProgress`
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `Index`, `Count` | `int` | This entry's number, and how many were counted before the sweep began. |
+| `Status` | `EmptyStatus` | `Removed` (out of the bin) or `Failed` (still there). |
+| `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
+
+`Removed` and `ItemsRemoved` can disagree, and did before this existed: an entry whose size could not be
+worked out leaves the bin without being counted.
+
+```csharp
+var options = new RecycleOptions
+{
+    OnItemProcessed = progress =>
+        Console.WriteLine($"{progress.Index}/{progress.Count} {progress.Status} {progress.Path}"),
+    WaitForProgressCallbacks = true
+};
+
+await RecycleBin.RecycleAsync([@"W:\Users\me\Downloads\archive.zip"], options);
+```
+
+```csharp
+await RecycleBin.EmptyAsync(@"W:\", new EmptyOptions
+{
+    OnItemProcessed = progress => Console.WriteLine($"{progress.Index}/{progress.Count} {progress.Status}")
+});
+```
 
 ---
 
@@ -280,6 +360,9 @@ a production default, so `RecycleOptions.Default` is always a valid argument.
 | `ThrowOnError` | `bool` | `true` | Whether a single-path failure raises instead of returning `false`. On the batch overload the property is not read. |
 | `NoRecycleBinAction` | `NoRecycleBinAction` | `Throw` | What happens to a file whose volume has no Recycle Bin to put it in. |
 | `LongPathFailureAction` | `LongPathFailureAction` | `Throw` | What happens to a path the Recycle Bin cannot record. See [Long paths](#long-paths). |
+| `OnItemProcessed` | `Action<RecycleProgress>` | `null` | Reports each path as it is settled. See [Progress](#progress). |
+| `OnProgressFailed` | `Action<Exception>` | `null` | Told once if `OnItemProcessed` throws, after which it is not called again. |
+| `WaitForProgressCallbacks` | `bool` | `false` | Whether the call waits for every report before returning. |
 
 ```csharp
 var options = new RecycleOptions
@@ -307,6 +390,9 @@ a production default, so `RestoreOptions.Default` is always a valid argument.
 | `OverallTimeout` | `TimeSpan` | `30s` | Upper bound on wall-clock time spent retrying the batch, one budget for the whole call. |
 | `FileConflict` | `RestoreFileConflict` | `Skip` | What a restore does with a **file** whose path is already occupied. See [`RestoreFileConflict`](#restorefileconflict). |
 | `DirectoryConflict` | `RestoreDirectoryConflict` | `MergeSkip` | What a restore does with a **directory** whose path is already occupied. See [`RestoreDirectoryConflict`](#restoredirectoryconflict). |
+| `OnItemProcessed` | `Action<RestoreProgress>` | `null` | Reports each entry as it is settled. See [Progress](#progress). |
+| `OnProgressFailed` | `Action<Exception>` | `null` | Told once if `OnItemProcessed` throws, after which it is not called again. |
+| `WaitForProgressCallbacks` | `bool` | `false` | Whether the call waits for every report before returning. |
 
 A directory entry can be merged or set down whole under a new name; a file entry only ever takes its
 own name back. A conflict is data: the resolved ones in `Conflicts`, the ones an `Error` policy refuses
@@ -324,6 +410,19 @@ var options = new RestoreOptions
 
 Console.WriteLine(options.OverallTimeout);
 ```
+
+### `EmptyOptions`
+
+What the reporting overload of `EmptyAsync` takes. Immutable; set with object initialisers.
+`EmptyOptions.Default` is always a valid argument. It carries the three reporting properties and nothing
+else — an empty has no retry budget, no conflict policy and no threshold to raise on.
+
+| Property | Type | Default | Description |
+| --- | --- | --- | --- |
+| `Default` | `EmptyOptions` | — | Shared instance carrying the defaults. |
+| `OnItemProcessed` | `Action<EmptyProgress>` | `null` | Reports each entry as it leaves the bin. Setting it makes the empty read every volume's bin once more. See [Progress](#progress). |
+| `OnProgressFailed` | `Action<Exception>` | `null` | Told once if `OnItemProcessed` throws, after which it is not called again. |
+| `WaitForProgressCallbacks` | `bool` | `false` | Whether the call waits for every report before returning. |
 
 ### `GetItemsOptions`
 
