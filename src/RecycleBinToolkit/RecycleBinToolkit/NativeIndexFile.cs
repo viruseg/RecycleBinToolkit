@@ -27,8 +27,11 @@ internal readonly record struct NativeIndexRecord(string OriginalPath, long Size
 /// </remarks>
 internal static class NativeIndexFile
 {
-    /// <summary>The format this backend writes.</summary>
-    internal const int Version = 2;
+    /// <summary>
+    /// The format this library writes on a machine whose Shell reads it. A record declaring anything else is
+    /// a record this machine's Shell does not understand.
+    /// </summary>
+    internal const int CurrentVersion = 2;
 
     /// <summary>
     /// Bytes before the path: version, size and deletion time as three 64-bit fields, then the path's
@@ -54,6 +57,14 @@ internal static class NativeIndexFile
 
     /// <summary>Bytes of a version 1 path field: 260 UTF-16 characters.</summary>
     private const int LegacyPathLength = 520;
+
+    /// <summary>
+    /// Characters a version 1 record can name: the fixed field's 260 minus the NUL that terminates it.
+    /// </summary>
+    /// <remarks>
+    /// Counted in UTF-16 code units, not bytes and not graphemes, because that is what the field holds.
+    /// </remarks>
+    internal const int LegacyPathCapacity = LegacyPathLength / 2 - 1;
 
     /// <summary>
     /// The longest path Windows can name, in characters. The extended-length prefix is what buys paths past
@@ -89,6 +100,11 @@ internal static class NativeIndexFile
     /// </param>
     /// <param name="size">The item's size in bytes, or 0 for a directory.</param>
     /// <param name="deletionUtc">When the deletion happened.</param>
+    /// <param name="version">
+    /// Which format to write. <see cref="IndexFormat.Legacy"/> fits a path of at most
+    /// <see cref="LegacyPathCapacity"/> characters and no more; <see cref="IndexFormat.Current"/> fits any
+    /// path Windows can name.
+    /// </param>
     /// <remarks>
     /// The record is created new rather than overwritten, because overwriting a name another entry holds
     /// would destroy that entry's record and leave two payloads under one name.
@@ -99,16 +115,43 @@ internal static class NativeIndexFile
     /// file where it was and an index with no payload, which the next empty collects.
     /// </para>
     /// </remarks>
-    internal static void Write(string indexPath, string originalPath, long size, DateTime deletionUtc)
+    internal static void Write(string indexPath, string originalPath, long size, DateTime deletionUtc, int version)
     {
-        var characters = originalPath.Length + 1;
-        var total = HeaderLength + (characters * 2);
+        // Before the file is created, not after: an index record with no payload beside it is a phantom
+        // a user can try to restore and cannot, and an empty one left by a refusal is exactly that.
+        if (version == IndexFormat.Legacy && originalPath.Length > LegacyPathCapacity)
+        {
+            // A path that will not fit is never shortened. The caller's path is what a restore has to put
+            // the item back to, so a truncated one is a wrong answer rather than an approximate one, and
+            // the caller is better served by a refusal it can see.
+            throw new ArgumentException(
+                $"A version 1 index record holds a path of at most {LegacyPathCapacity} characters, and this one is {originalPath.Length}. " +
+                "It was not written, and nothing was truncated.",
+                nameof(originalPath));
+        }
 
         using var handle = File.OpenHandle(indexPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
 
+        if (version == IndexFormat.Legacy)
+        {
+            Span<byte> legacy = stackalloc byte[LegacyLength];
+
+            BinaryPrimitives.WriteInt64LittleEndian(legacy, IndexFormat.Legacy);
+            BinaryPrimitives.WriteInt64LittleEndian(legacy[8..], size);
+            BinaryPrimitives.WriteInt64LittleEndian(legacy[16..], deletionUtc.ToFileTimeUtc());
+
+            Encoding.Unicode.GetBytes(originalPath.AsSpan(), legacy[LegacyHeaderLength..]);
+
+            RandomAccess.Write(handle, legacy, 0);
+            return;
+        }
+
+        var characters = originalPath.Length + 1;
+        var total = HeaderLength + (characters * 2);
+
         Span<byte> buffer = total <= StackBufferLength ? stackalloc byte[StackBufferLength] : new byte[total];
 
-        BinaryPrimitives.WriteInt64LittleEndian(buffer, Version);
+        BinaryPrimitives.WriteInt64LittleEndian(buffer, version);
         BinaryPrimitives.WriteInt64LittleEndian(buffer[8..], size);
         BinaryPrimitives.WriteInt64LittleEndian(buffer[16..], deletionUtc.ToFileTimeUtc());
         BinaryPrimitives.WriteInt32LittleEndian(buffer[24..], characters);
@@ -202,7 +245,7 @@ internal static class NativeIndexFile
     private static bool DeclaresLongerPath(ReadOnlySpan<byte> bytes)
     {
         if (bytes.Length < HeaderLength
-            || BinaryPrimitives.ReadInt64LittleEndian(bytes) != Version)
+            || BinaryPrimitives.ReadInt64LittleEndian(bytes) != CurrentVersion)
         {
             return false;
         }
@@ -254,7 +297,7 @@ internal static class NativeIndexFile
 
         var deleted = DateTime.FromFileTimeUtc(fileTime);
 
-        if (version == Version)
+        if (version == CurrentVersion)
         {
             var characters = BinaryPrimitives.ReadInt32LittleEndian(bytes[24..]);
 
@@ -279,7 +322,7 @@ internal static class NativeIndexFile
             return true;
         }
 
-        if (version != 1 || bytes.Length < LegacyLength)
+        if (version != IndexFormat.Legacy || bytes.Length < LegacyLength)
         {
             return false;
         }

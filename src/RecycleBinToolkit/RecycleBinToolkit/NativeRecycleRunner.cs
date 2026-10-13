@@ -178,6 +178,10 @@ internal static class NativeRecycleRunner
             bins.Add(root, bin);
         }
 
+        // Asked once for the whole operation rather than per item, because it is a property of the
+        // machine and of nothing in the batch.
+        var version = IndexFormat.VersionForWriting;
+
         var isDirectory = target.IsDirectory;
         var extension = Path.GetExtension(target.FullPath);
 
@@ -195,7 +199,7 @@ internal static class NativeRecycleRunner
                 // No query at all. Validation already read the size, and it read it from the same query
                 // that told it the path is a file — which is why the record costs nothing to produce beyond
                 // the write itself.
-                NativeIndexFile.Write(indexPath, target.RecordPath, target.Size, DateTime.UtcNow);
+                NativeIndexFile.Write(indexPath, target.RecordPath, target.Size, DateTime.UtcNow, version);
             }
             catch (IOException ex) when (attempt < NameCollision.NameAttempts && NameCollision.IsTaken(ex))
             {

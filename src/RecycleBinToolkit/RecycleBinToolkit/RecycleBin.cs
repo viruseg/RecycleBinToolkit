@@ -39,10 +39,6 @@ public static class RecycleBin
     /// The path names its volume by GUID and <see cref="RecycleOptions.ThrowOnError"/> is on. Nothing was
     /// attempted; address the same location by drive letter or mount point instead.
     /// </exception>
-    /// <exception cref="PlatformNotSupportedException">
-    /// This machine's Recycle Bin cannot be written to (see Requirements in the README). Nothing was
-    /// attempted, and <see cref="RecycleOptions.ThrowOnError"/> does not suppress it.
-    /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work started.
     /// </exception>
@@ -113,12 +109,6 @@ public static class RecycleBin
         }
 
         var effective = options ?? RecycleOptions.Default;
-
-        // Before argument validation, before any filesystem question, and before the hop to the pool: the
-        // machine either can be written to or cannot, and that does not depend on the paths, so a
-        // caller is told before this library starts touching anything. It is not a RecycleFailure and
-        // ThrowOnError does not suppress it — nothing was attempted, so there is nothing to report as data.
-        RecycleBinBackendGuard.RequireWriteSupport();
 
         // Validating a batch is one filesystem probe per path, and it is slow enough that running it inline
         // would be the caller's own time: an async method runs everything before its first await on the

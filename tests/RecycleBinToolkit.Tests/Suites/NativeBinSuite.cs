@@ -1,3 +1,4 @@
+using System.Text;
 using RecycleBinToolkit.Tests.Host;
 using RecycleBinToolkit.Tests.Infrastructure;
 using RecycleBinToolkit;
@@ -39,8 +40,13 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeRecycleMovesADirectory), NativeRecycleMovesADirectory),
         new TestCase("NativeBinSuite." + nameof(RecycledNamesClimbAboveWhateverTheBinAlreadyHolds), RecycledNamesClimbAboveWhateverTheBinAlreadyHolds),
         new TestCase("NativeBinSuite." + nameof(NativeIndexRecordCarriesVersionTwoAndTheOriginalPath), NativeIndexRecordCarriesVersionTwoAndTheOriginalPath),
+        new TestCase("NativeBinSuite." + nameof(VersionOneRecordCarriesTheHeaderAndAPaddedPath), VersionOneRecordCarriesTheHeaderAndAPaddedPath),
+        new TestCase("NativeBinSuite." + nameof(VersionOnePathFitsUpToTheLastCharacter), VersionOnePathFitsUpToTheLastCharacter),
+        new TestCase("NativeBinSuite." + nameof(VersionOneCapacityCountsCodeUnitsNotBytes), VersionOneCapacityCountsCodeUnitsNotBytes),
+        new TestCase("NativeBinSuite." + nameof(AnOverLongPathUnderVersionOneIsNeverTruncated), AnOverLongPathUnderVersionOneIsNeverTruncated),
+        new TestCase("NativeBinSuite." + nameof(VersionOneRecordLandsInTheBin), VersionOneRecordLandsInTheBin),
         new TestCase("NativeBinSuite." + nameof(NativeRecycleReportsALockedFileAndLeavesNoIndexRecord), NativeRecycleReportsALockedFileAndLeavesNoIndexRecord),
-        new TestCase("NativeBinSuite." + nameof(NativeWriteSupportIsAvailableOnThisMachine), NativeWriteSupportIsAvailableOnThisMachine),
+        new TestCase("NativeBinSuite." + nameof(TheDetectedVersionMatchesTheBoundary), TheDetectedVersionMatchesTheBoundary),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderReadsAVersionOneRecord), NativeIndexReaderReadsAVersionOneRecord),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderReadsARecordLongerThanTheStackBuffer), NativeIndexReaderReadsARecordLongerThanTheStackBuffer),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderRejectsATruncatedRecord), NativeIndexReaderRejectsATruncatedRecord),
@@ -295,11 +301,171 @@ internal static class NativeBinSuite
 
         var record = ReadNewestRecord(size, path);
 
-        Check.Equal(NativeIndexFile.Version, NativeIndexFile.ReadVersion(RecordOf(path)), "the record says version 2, which is what a Windows 10 1607 Shell reads");
+        Check.Equal(NativeIndexFile.CurrentVersion, NativeIndexFile.ReadVersion(RecordOf(path)), "the record says version 2, which is what a Windows 10 1607 Shell reads");
         Check.Equal(size, record.Size, "the size is the file's own");
         Check.True(record.DeletedAtUtc >= before && record.DeletedAtUtc <= DateTime.UtcNow.AddMinutes(1),
             $"the deletion time is the moment of the call, not a file timestamp ({record.DeletedAtUtc:O})");
         Check.Equal(path, record.OriginalPath, "and the original path is the one the caller passed");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A version 1 record is its three 64-bit fields and a fixed 520-byte path field, NUL-terminated
+    /// inside that field rather than counted. What Explorer's own Restore reads has to be exactly that.
+    /// </summary>
+    private static Task VersionOneRecordCarriesTheHeaderAndAPaddedPath(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var path = Path.Combine(ScratchWorkspace.Root, $"v1-bytes-{RunTag}.bin");
+        var deleted = new DateTime(2026, 10, 13, 12, 0, 0, DateTimeKind.Utc);
+
+        try
+        {
+            const string original = @"X:\thing.txt";
+
+            NativeIndexFile.Write(path, original, 1234, deleted, IndexFormat.Legacy);
+
+            var bytes = File.ReadAllBytes(path);
+
+            Check.Equal(544, bytes.Length, "a version 1 record is a 24-byte header and a fixed 520-byte path field");
+            Check.Equal(IndexFormat.Legacy, ReadInt64(bytes, 0), "the version field says 1");
+            Check.Equal(1234L, ReadInt64(bytes, 8), "the size field carries what the caller passed");
+            Check.Equal(deleted.ToFileTimeUtc(), ReadInt64(bytes, 16), "the deletion time is a FILETIME");
+            Check.Equal(original, Encoding.Unicode.GetString(bytes, 24, original.Length * 2), "the path occupies the start of the fixed field");
+            Check.True(
+                bytes.AsSpan(24 + (original.Length * 2), 520 - (original.Length * 2)).Trim((byte)0).IsEmpty,
+                "and the rest of the field is zero");
+
+            return Task.CompletedTask;
+        }
+        finally
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The last character the fixed field can name is the last one that fits. One more and the record
+    /// cannot be written at all — which is a refusal the caller can see, not a truncated path.
+    /// </summary>
+    private static Task VersionOnePathFitsUpToTheLastCharacter(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        const int capacity = NativeIndexFile.LegacyPathCapacity;
+        var original = @"X:\" + new string('a', capacity - 3);
+
+        Check.Equal(capacity, original.Length, "the fixture is exactly one capacity long");
+
+        var path = Path.Combine(ScratchWorkspace.Root, $"v1-edge-{RunTag}.bin");
+
+        try
+        {
+            NativeIndexFile.Write(path, original, 0, DateTime.UtcNow, IndexFormat.Legacy);
+
+            Check.Equal(original, Encoding.Unicode.GetString(File.ReadAllBytes(path), 24, capacity * 2).TrimEnd('\0'),
+                "a path of exactly the capacity round-trips through a version 1 record");
+
+            return Task.CompletedTask;
+        }
+        finally
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The field holds UTF-16 code units, not bytes and not graphemes, so a path of the same length in
+    /// characters fits or does not fit exactly as an ASCII one does.
+    /// </summary>
+    private static Task VersionOneCapacityCountsCodeUnitsNotBytes(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        const int capacity = NativeIndexFile.LegacyPathCapacity;
+        var original = new string('я', capacity);
+
+        Check.Equal(capacity, original.Length, "the fixture is exactly one capacity long in characters");
+        Check.Equal(518, original.Length * 2, "and it fills the 520-byte field exactly, once the NUL that ends it is taken off");
+
+        var path = Path.Combine(ScratchWorkspace.Root, $"v1-unicode-{RunTag}.bin");
+
+        try
+        {
+            NativeIndexFile.Write(path, original, 0, DateTime.UtcNow, IndexFormat.Legacy);
+
+            Check.Equal(original, Encoding.Unicode.GetString(File.ReadAllBytes(path), 24, capacity * 2).TrimEnd('\0'),
+                "a path at the capacity round-trips whatever its characters are");
+
+            return Task.CompletedTask;
+        }
+        finally
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A path the fixed field cannot name is refused whole. Nothing is written, nothing is shortened, and
+    /// no file is left behind pretending to be a record.
+    /// </summary>
+    private static Task AnOverLongPathUnderVersionOneIsNeverTruncated(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var original = new string('a', NativeIndexFile.LegacyPathCapacity + 1);
+        var path = Path.Combine(ScratchWorkspace.Root, $"v1-over-{RunTag}.bin");
+
+        Check.Throws<ArgumentException>(
+            () => NativeIndexFile.Write(path, original, 0, DateTime.UtcNow, IndexFormat.Legacy),
+            "a path one character past the capacity is refused rather than shortened");
+
+        Check.False(File.Exists(path), "and nothing was written for it");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The whole operation, on a machine whose Shell would rather have the other format: the file moves,
+    /// the record that lands beside it declares version 1, and it names the path the caller passed.
+    /// </summary>
+    private static async Task VersionOneRecordLandsInTheBin(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the record to land in");
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var path = CreateFile("version-one");
+            var size = new FileInfo(path).Length;
+
+            var result = await RecycleBin.RecycleAsync([path], RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+
+            Check.True(result.Succeeded, $"the file is recycled (first failure: {Describe(result.FirstFailure)})");
+            Check.Equal(IndexFormat.Legacy, NativeIndexFile.ReadVersion(RecordOf(path)), "the record beside it declares version 1");
+            Check.Equal(path, ReadNewestRecord(size, path).OriginalPath, "and names the path the caller passed");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
 
         workspace.Dispose();
     }
@@ -376,7 +542,7 @@ internal static class NativeBinSuite
 
         var original = ScratchWorkspace.Root + new string('p', 600) + ".bin";
         var path = Path.Combine(ScratchWorkspace.Root, "$Ilong.bin");
-        File.WriteAllBytes(path, BuildRecord(original, size: 17, deleted: DateTime.UtcNow, version: NativeIndexFile.Version));
+        File.WriteAllBytes(path, BuildRecord(original, size: 17, deleted: DateTime.UtcNow, version: NativeIndexFile.CurrentVersion));
 
         Check.True(original.Length * 2 > NativeIndexFile.StackBufferLength, $"the path is longer than the buffer holds ({original.Length * 2} bytes against {NativeIndexFile.StackBufferLength})");
 
@@ -446,7 +612,7 @@ internal static class NativeBinSuite
         // A header and nothing after it, declaring the largest character count the reader admits. What the
         // reader does with that count — allocate for it, or overflow adding it — is the whole subject.
         var header = new byte[NativeIndexFile.HeaderLength];
-        WriteInt64(header, 0, NativeIndexFile.Version);
+        WriteInt64(header, 0, NativeIndexFile.CurrentVersion);
         WriteInt64(header, 8, 4096);
         WriteInt64(header, 16, DateTime.UtcNow.ToFileTimeUtc());
         WriteInt32(header, 24, int.MaxValue / 2);
@@ -485,7 +651,7 @@ internal static class NativeBinSuite
         workspace.Recreate();
 
         var original = Path.Combine(ScratchWorkspace.Root, "unreachable-time.bin");
-        var bytes = BuildRecord(original, size: 128, deleted: DateTime.UtcNow, version: NativeIndexFile.Version);
+        var bytes = BuildRecord(original, size: 128, deleted: DateTime.UtcNow, version: NativeIndexFile.CurrentVersion);
 
         // Every other field is one this reader accepts, so the timestamp is the only thing wrong with it.
         WriteInt64(bytes, 16, long.MaxValue);
@@ -537,7 +703,7 @@ internal static class NativeBinSuite
         File.SetAttributes(taken, FileAttributes.ReadOnly | FileAttributes.Hidden | FileAttributes.System);
 
         var refused = Check.Throws<IOException>(
-            () => NativeIndexFile.Write(taken, ScratchWorkspace.Root + "another.bin", 0, DateTime.UtcNow),
+            () => NativeIndexFile.Write(taken, ScratchWorkspace.Root + "another.bin", 0, DateTime.UtcNow, IndexFormat.Current),
             "creating a record over a name that is taken is refused rather than overwriting it");
 
         Check.Equal(
@@ -614,7 +780,7 @@ internal static class NativeBinSuite
         File.WriteAllText(payloadPath, "a payload that is already there");
 
         var recordRefused = Check.Throws<IOException>(
-            () => NativeIndexFile.Write(indexPath, ScratchWorkspace.Root + "original.bin", 0, DateTime.UtcNow),
+            () => NativeIndexFile.Write(indexPath, ScratchWorkspace.Root + "original.bin", 0, DateTime.UtcNow, IndexFormat.Current),
             "a record cannot be written over a name that is taken");
 
         var payloadSource = CreateFile("payload-wanted-that-name");
@@ -1610,6 +1776,9 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(buffer.AsSpan(offset), value);
     }
 
+    private static long ReadInt64(byte[] buffer, int offset) =>
+        System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(buffer.AsSpan(offset));
+
     private static void WriteInt32(byte[] buffer, int offset, int value)
     {
         System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(offset), value);
@@ -1633,22 +1802,49 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
     }
 
     /// <summary>
-    /// The write path is refused below Windows 10 build 14393, which is the first build that reads a
-    /// version 2 record. Nothing can make this machine report an older version, so what is checked here is
-    /// the half that a test on this machine can reach: that the machine satisfies the boundary, and that
-    /// the guard therefore lets the write through.
+    /// The format written follows the machine, and the machine is asked once per process. Nothing can
+    /// make this Windows report an older build, so what is pinned here is the mapping and the cache: the
+    /// version written is the one the boundary asks for, the override turns it around whatever the machine
+    /// says, and an operation in between does not ask again.
     /// </summary>
-    private static Task NativeWriteSupportIsAvailableOnThisMachine(TestContext context)
+    private static async Task TheDetectedVersionMatchesTheBoundary(TestContext context)
     {
-        var version = RecycleBinBackendGuard.RunningVersion;
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the record to land in");
 
-        Check.True(
-            version.Major > 10 || (version.Major == 10 && version.Build >= RecycleBinBackendGuard.MinimumBuild),
-            $"this machine satisfies the boundary the write path is gated on (reported {version.Major}.{version.Minor} build {version.Build}, need 10.0 build {RecycleBinBackendGuard.MinimumBuild} or later)");
+        var running = IndexFormat.RunningVersion;
+        var boundarySatisfied = running.Major > 10 || (running.Major == 10 && running.Build >= IndexFormat.MinimumBuildForCurrent);
 
-        RecycleBinBackendGuard.RequireWriteSupport();
+        Check.Equal(
+            boundarySatisfied ? IndexFormat.Current : IndexFormat.Legacy,
+            IndexFormat.VersionForWriting,
+            $"this machine reports {running.Major}.{running.Minor} build {running.Build}, and the format written follows the boundary at {IndexFormat.MinimumBuildForCurrent}");
 
-        return Task.CompletedTask;
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            Check.Equal(IndexFormat.Legacy, IndexFormat.VersionForWriting, "the override asks for version 1 whatever the machine reports");
+
+            var before = IndexFormat.MachineQuestions;
+            var path = CreateFile("cached-version");
+
+            var result = await RecycleBin.RecycleAsync([path], RecycleOptions.Default, context.CancellationToken).ConfigureAwait(false);
+
+            Check.True(result.Succeeded, $"the file is recycled (first failure: {Describe(result.FirstFailure)})");
+            Check.Equal(before, IndexFormat.MachineQuestions, "and the machine was not asked a second time to find that out");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        Check.Equal(
+            boundarySatisfied ? IndexFormat.Current : IndexFormat.Legacy,
+            IndexFormat.VersionForWriting,
+            "and clearing the override puts the machine's own answer back");
+
+        workspace.Dispose();
     }
 
     /// <summary>
@@ -1926,11 +2122,11 @@ using var workspace = new ScratchWorkspace();
         var wholePayload = NativeBinLayout.PayloadPath(bin, wholeStem, ".bin");
 
         File.WriteAllBytes(wholePayload, Content);
-        NativeIndexFile.Write(wholeIndex, ScratchWorkspace.Root + "\\whole.bin", Content.LongLength, deleted);
+        NativeIndexFile.Write(wholeIndex, ScratchWorkspace.Root + "\\whole.bin", Content.LongLength, deleted, IndexFormat.Current);
 
         var orphanStem = "BBB" + RunTag;
         var orphanIndex = NativeBinLayout.IndexPath(bin, orphanStem, ".bin");
-        NativeIndexFile.Write(orphanIndex, ScratchWorkspace.Root + "\\orphan.bin", orphanSize, deleted);
+        NativeIndexFile.Write(orphanIndex, ScratchWorkspace.Root + "\\orphan.bin", orphanSize, deleted, IndexFormat.Current);
 
         var result = await Task
             .Run(() => NativeBinEmptier.Empty([root], context.CancellationToken), context.CancellationToken)
@@ -1976,7 +2172,7 @@ using var workspace = new ScratchWorkspace();
         var realIndex = NativeBinLayout.IndexPath(bin, realStem, ".bin");
         var realPayload = NativeBinLayout.PayloadPath(bin, realStem, ".bin");
         File.WriteAllBytes(realPayload, Content);
-        NativeIndexFile.Write(realIndex, ScratchWorkspace.Root + "\\real.bin", Content.LongLength, DateTime.UtcNow);
+        NativeIndexFile.Write(realIndex, ScratchWorkspace.Root + "\\real.bin", Content.LongLength, DateTime.UtcNow, IndexFormat.Current);
 
         var entries = NativeBinEntries.Collect(bin, context.CancellationToken);
         Check.False(
@@ -2092,8 +2288,8 @@ using var workspace = new ScratchWorkspace();
 
         File.WriteAllBytes(lowercasePayload, Content);
         File.WriteAllBytes(upperPayload, Content);
-        NativeIndexFile.Write(lowercaseRecord, root + "lower-" + RunTag + ".bin", Content.LongLength, DateTime.UtcNow);
-        NativeIndexFile.Write(upperRecord, root + "upper-" + RunTag + ".bin", Content.LongLength, DateTime.UtcNow);
+        NativeIndexFile.Write(lowercaseRecord, root + "lower-" + RunTag + ".bin", Content.LongLength, DateTime.UtcNow, IndexFormat.Current);
+        NativeIndexFile.Write(upperRecord, root + "upper-" + RunTag + ".bin", Content.LongLength, DateTime.UtcNow, IndexFormat.Current);
 
         var entries = NativeBinEntries.Collect(bin, context.CancellationToken);
 
@@ -2369,7 +2565,7 @@ using var workspace = new ScratchWorkspace();
             var originalPath = $"{root}synthetic-{i}-{RunTag}.bin";
 
             File.WriteAllBytes(payloadPath, Content);
-            NativeIndexFile.Write(indexPath, originalPath, Content.LongLength, deleted);
+            NativeIndexFile.Write(indexPath, originalPath, Content.LongLength, deleted, IndexFormat.Current);
 
             indexPaths[i] = indexPath;
             items[i] = detailsAlreadyRead
