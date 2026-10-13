@@ -666,7 +666,7 @@ The outcome of a status check. Immutable.
 | Value | Meaning |
 | --- | --- |
 | `Enabled` | Nothing disables the Recycle Bin for this volume. |
-| `DisabledByPolicy` | A group policy forbids it. Neither the user nor the application can change this, which is why it is named first whenever it applies. |
+| `DisabledByPolicy` | A group policy forbids it. Neither the user nor the application can change this. |
 | `DisabledByUserPreference` | This volume is set to delete immediately instead of recycling. The user can change it. |
 | `UnsupportedVolumeType` | The volume type has no Recycle Bin at all. |
 | `VolumeNotFound` | The volume is not mounted, or the path given is not a volume root. |
