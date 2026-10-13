@@ -379,7 +379,7 @@ internal static class NativeRecycleRunner
 
         if (awaitingStaging is not null)
         {
-            StageWithBatchRetries(awaitingStaging, pending, stager, staged, stagedPaths, failuresByPath);
+            StageWithBatchRetries(awaitingStaging, pending, stager, staged, sink, stagedPaths, failuresByPath);
         }
 
         return pending;
@@ -404,6 +404,7 @@ internal static class NativeRecycleRunner
         List<RecycleTarget> pending,
         LongPathStager stager,
         List<StagedTarget> staged,
+        ProgressSink? sink,
         HashSet<string> stagedPaths,
         Dictionary<string, RecycleFailure> failuresByPath)
     {
@@ -418,7 +419,7 @@ internal static class NativeRecycleRunner
 
             foreach (var target in awaitingStaging)
             {
-                if (stager.TryStageOnce(target.FullPath) is not string stagedPath)
+                if (FaultWhileStaging || stager.TryStageOnce(target.FullPath) is not string stagedPath)
                 {
                     stillWaiting.Add(target);
                     continue;
@@ -435,11 +436,18 @@ internal static class NativeRecycleRunner
 
         foreach (var target in awaitingStaging)
         {
-            failuresByPath[target.InputPath] = new RecycleFailure(
+            var failure = new RecycleFailure(
                 target.InputPath,
                 PathTooLong,
                 0,
                 RecycleFailureStage.LongPathNotRecyclable);
+
+            failuresByPath[target.InputPath] = failure;
+
+            // Reported here rather than with the paths that gave up at the end of the retry loop, because a
+            // path that never staged never enters that loop: a caller told one report per path handed over
+            // would otherwise be short exactly one, and the item it could not name would be the missing one.
+            RecycleBinOptions.Report(sink, RecycleStatus.Failed, target.InputPath, failure);
         }
     }
 
@@ -481,6 +489,16 @@ internal static class NativeRecycleRunner
     /// pre-cancelled token the suite used before is refused before this method is entered.
     /// </remarks>
     internal static bool FaultAfterStaging { get; set; }
+
+    /// <summary>
+    /// Whether moving a path to its staging directory is refused, so a path the record cannot name gives up
+    /// before it ever reaches the move.
+    /// </summary>
+    /// <remarks>
+    /// A seam for the suite, like the two beside it: without it the only way to reach the branch is a volume
+    /// whose staging root cannot be created, which no case can arrange from outside.
+    /// </remarks>
+    internal static bool FaultWhileStaging { get; set; }
 
     /// <summary>Whether the put-back of a staged item is skipped, so the staging directory keeps what it holds.</summary>
     internal static bool FaultBeforePutBack { get; set; }

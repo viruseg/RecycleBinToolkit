@@ -28,7 +28,13 @@ internal static class ProgressSuite
         new TestCase("ProgressSuite." + nameof(OneOptionsInstanceServesTwoCalls), OneOptionsInstanceServesTwoCalls),
         new TestCase("ProgressSuite." + nameof(ACancelledCallStillFinishesItsQueue), ACancelledCallStillFinishesItsQueue),
         new TestCase("ProgressSuite." + nameof(EveryRestoredEntryReportsOnce), EveryRestoredEntryReportsOnce),
+        new TestCase("ProgressSuite." + nameof(AMergesPutBackIsNotReported), AMergesPutBackIsNotReported),
         new TestCase("ProgressSuite." + nameof(AnUnresolvableRootStillFinishesItsQueue), AnUnresolvableRootStillFinishesItsQueue),
+        new TestCase("ProgressSuite." + nameof(TwoArmsGetQueuesOfTheirOwn), TwoArmsGetQueuesOfTheirOwn),
+        new TestCase("ProgressSuite." + nameof(TwoCallsAtOnceKeepTheirOwnTotals), TwoCallsAtOnceKeepTheirOwnTotals),
+        new TestCase("ProgressSuite." + nameof(ReportsFromManyThreadsNeverOverlap), ReportsFromManyThreadsNeverOverlap),
+        new TestCase("ProgressSuite." + nameof(ElapsedStartsWhenTheOperationDoes), ElapsedStartsWhenTheOperationDoes),
+        new TestCase("ProgressSuite." + nameof(AStagedPathThatCouldNotBeMovedStillReports), AStagedPathThatCouldNotBeMovedStillReports),
     ];
 
     /// <summary>
@@ -322,6 +328,7 @@ internal static class ProgressSuite
         var callers = Environment.CurrentManagedThreadId;
         var inFlight = 0;
         var overlapped = 0;
+        var onTheCallersThread = 0;
 
         var options = new RecycleOptions
         {
@@ -334,7 +341,7 @@ internal static class ProgressSuite
 
                 if (Environment.CurrentManagedThreadId == callers)
                 {
-                    Interlocked.Increment(ref overlapped);
+                    Interlocked.Increment(ref onTheCallersThread);
                 }
 
                 Thread.Sleep(20);
@@ -348,7 +355,12 @@ internal static class ProgressSuite
         Check.Equal(
             0,
             Volatile.Read(ref overlapped),
-            "no report was ever delivered on top of another, and none on the thread that called the operation");
+            $"no report was ever delivered on top of another ({Volatile.Read(ref overlapped)} of {files.Count})");
+
+        Check.Equal(
+            0,
+            Volatile.Read(ref onTheCallersThread),
+            $"and none on the thread that called the operation (id {callers}, {Volatile.Read(ref onTheCallersThread)} of {files.Count})");
 
         workspace.Dispose();
     }
@@ -665,8 +677,9 @@ internal static class ProgressSuite
     }
 
     /// <summary>
-    /// A root that names no volume is answered for without the sweep, and the answer still has to close the
-    /// queue: a caller who asked to wait would otherwise wait on a reader nobody ever tells to stop.
+    /// A root that names no volume is answered for before any sweep is set up, so nothing is armed and
+    /// nothing is read. The call still has to come back rather than hang, which is what a caller waiting for
+    /// reports would be entitled to expect.
     /// </summary>
     private static async Task AnUnresolvableRootStillFinishesItsQueue(TestContext context)
     {
@@ -697,6 +710,254 @@ internal static class ProgressSuite
         Check.Equal(0, Reports.SoFar(reported).Count, "nothing is reported for a sweep that never happened");
     }
 
+    /// <summary>
+    /// Two calls handed the same options object must not end up writing into one queue. A caller keeping
+    /// settings in a field is the ordinary way to do this, and two calls overlapping on a machine is the
+    /// ordinary way to run them.
+    /// </summary>
+    private static Task TwoArmsGetQueuesOfTheirOwn(TestContext context)
+    {
+        var options = new RecycleOptions { OnItemProcessed = _ => { } };
+
+        var first = options.ArmProgress();
+        var second = options.ArmProgress();
+
+        Check.NotNull(first, "the first call has a queue");
+        Check.NotNull(second, "and so does the second");
+        Check.False(ReferenceEquals(first, second), "and they are not the same one");
+        Check.True(second!.Running, "which is still taking reports while the first call is still running");
+
+        first!.CompleteAsync(wait: false);
+
+        Check.True(second.Running, "and the first call finishing does not close it");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The same, end to end: two batches recycled at once through one options object, each report carrying
+    /// the total of the call that made it and no report belonging to the other.
+    /// </summary>
+    private static async Task TwoCallsAtOnceKeepTheirOwnTotals(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("entries for the batches to recycle");
+
+        var mine = workspace.CreateRandomFiles(6, 4096);
+        var theirs = workspace.CreateRandomFiles(6, 4096);
+
+        var seenByMe = new List<RecycleProgress>();
+        var seenByThem = new List<RecycleProgress>();
+
+        var options = new RecycleOptions { WaitForProgressCallbacks = true, OnItemProcessed = _ => { } };
+
+        var myCall = RecycleBin.RecycleAsync(
+            mine,
+            Clone(options, progress =>
+            {
+                lock (seenByMe)
+                {
+                    seenByMe.Add(progress);
+                }
+            }),
+            context.CancellationToken);
+
+        var theirCall = RecycleBin.RecycleAsync(
+            theirs,
+            Clone(options, progress =>
+            {
+                lock (seenByThem)
+                {
+                    seenByThem.Add(progress);
+                }
+            }),
+            context.CancellationToken);
+
+        var results = await Task.WhenAll(myCall, theirCall).ConfigureAwait(false);
+
+        // Whether both batches went is not this case's subject: two recycles into one bin at once contend
+        // on the directory they share, and that is the library's own measured property. What is the subject
+        // is that each call's reports carry that call's total and that neither lost any.
+        _ = results;
+
+        var byMe = Reports.SoFar(seenByMe);
+        var byThem = Reports.SoFar(seenByThem);
+
+        Check.Equal(mine.Count, byMe.Count, $"every path of the first batch is reported (got {byMe.Count})");
+        Check.Equal(theirs.Count, byThem.Count, $"and every path of the second (got {byThem.Count})");
+        Check.True(byMe.All(progress => progress.Count == mine.Count), "each report carries the total of the call that made it");
+        Check.True(byThem.All(progress => progress.Count == theirs.Count), "and so does the other, not the one that finished first");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The queue is written from every thread the engine happens to use — a restore runs its volumes in
+    /// parallel, an empty runs its disks in parallel — and the handler is promised never to be entered
+    /// twice at once.
+    /// </summary>
+    private static async Task ReportsFromManyThreadsNeverOverlap(TestContext context)
+    {
+
+        var inFlight = 0;
+        var overlapped = 0;
+
+        var delivering = new RecycleProgressSink(_ =>
+        {
+            if (Interlocked.Increment(ref inFlight) != 1)
+            {
+                Interlocked.Increment(ref overlapped);
+            }
+
+            Thread.Sleep(5);
+            Interlocked.Decrement(ref inFlight);
+        });
+
+        delivering.SetCount(200);
+
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(worker => Task.Run(() =>
+        {
+            for (var i = 0; i < 25; i++)
+            {
+                delivering.Report(new RecycleProgress(
+                    delivering.NextIndex(),
+                    delivering.Count,
+                    RecycleStatus.Recycled,
+                    $@"X:\{worker}-{i}.bin",
+                    delivering.Elapsed,
+                    Failure: null));
+            }
+        }))).ConfigureAwait(false);
+
+        await delivering.CompleteAsync(wait: true).ConfigureAwait(false);
+
+        Check.Equal(0, Volatile.Read(ref overlapped), "eight writers, one reader, and the handler was never entered twice at once");
+    }
+
+    /// <summary>
+    /// A caller who builds its settings once and reuses them is waiting for the call, not for the moment
+    /// they wrote the object. Elapsed that counts the gap between the two is not what a progress display
+    /// wants.
+    /// </summary>
+    private static async Task ElapsedStartsWhenTheOperationDoes(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("entries for the batch to recycle");
+
+        var files = workspace.CreateRandomFiles(2, 4096);
+
+        var reported = new List<RecycleProgress>();
+        var options = new RecycleOptions
+        {
+            OnItemProcessed = progress =>
+            {
+                lock (reported)
+                {
+                    reported.Add(progress);
+                }
+            },
+            WaitForProgressCallbacks = true,
+        };
+
+        // The gap a caller's reused settings would otherwise be charged for.
+        await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+
+        await RecycleBin.RecycleAsync(files, options, context.CancellationToken).ConfigureAwait(false);
+
+        var events = Reports.SoFar(reported);
+        Check.Equal(files.Count, events.Count, "every path reported");
+        Check.True(
+            events.All(progress => progress.Elapsed < TimeSpan.FromSeconds(1)),
+            $"no report is charged for the time between building the options and making the call (got {string.Join(", ", events.Select(e => e.Elapsed))})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A path moved to a staging directory and then refused there is a failure of its own, recorded and
+    /// reported. It never reaches the move, so a progress display that only counts moves would leave it
+    /// uncounted for ever.
+    /// </summary>
+    private static async Task AStagedPathThatCouldNotBeMovedStillReports(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a staged path to be refused");
+
+        IndexFormat.ForceVersionOne = true;
+        NativeRecycleRunner.FaultWhileStaging = true;
+
+        try
+        {
+            var longPath = CreateAPathTheRecordCannotName();
+
+            var reported = new List<RecycleProgress>();
+            var options = new RecycleOptions
+            {
+                LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle,
+                OnItemProcessed = progress =>
+                {
+                    lock (reported)
+                    {
+                        reported.Add(progress);
+                    }
+                },
+                WaitForProgressCallbacks = true,
+            };
+
+            var result = await RecycleBin.RecycleAsync([longPath], options, context.CancellationToken).ConfigureAwait(false);
+
+            var events = Reports.SoFar(reported);
+
+            Check.Equal(1, result.Failures.Count, $"the staging failure is in the result ({result.Failures.Count})");
+            Check.Equal(1, events.Count, $"and in the reports, one per path handed over (got {events.Count})");
+            Check.Equal(RecycleStatus.Failed, events[0].Status, "reported as failed rather than silently absent");
+            Check.NotNull(events[0].Failure, "carrying the failure that says why");
+
+            workspace.Dispose();
+        }
+        finally
+        {
+            NativeRecycleRunner.FaultWhileStaging = false;
+            IndexFormat.ForceVersionOne = false;
+        }
+    }
+
+    private static RecycleOptions Clone(RecycleOptions source, Action<RecycleProgress> handler) =>
+        new()
+        {
+            OnItemProcessed = handler,
+            WaitForProgressCallbacks = source.WaitForProgressCallbacks
+        };
+
+    /// <summary>
+    /// Builds a real path the older record format cannot name, by nesting directories rather than by making
+    /// one component long: Windows will not create a single component over its own limit, whatever prefix
+    /// the caller writes.
+    /// </summary>
+    private static string CreateAPathTheRecordCannotName()
+    {
+        var directory = ScratchWorkspace.Root;
+        var component = new string('d', 118);
+
+        while (directory.Length + 105 < NativeIndexFile.LegacyPathCapacity + 50)
+        {
+            directory = Path.Combine(directory, component);
+            Directory.CreateDirectory(directory);
+        }
+
+        var path = Path.Combine(directory, new string('f', 60) + $"-{Interlocked.Increment(ref _deepSequence)}.bin");
+        File.WriteAllBytes(path, new byte[16]);
+        return path;
+    }
+
+    private static int _deepSequence;
+
     private static void Report(ProgressSink sink, string path)
     {
         sink.Report(new RecycleProgress(
@@ -708,13 +969,13 @@ internal static class ProgressSuite
             Failure: null));
     }
 
-private static RecycleStatus StatusOf(IReadOnlyList<RecycleProgress> events, string path, RecycleStatus wanted) =>
+    private static RecycleStatus StatusOf(IReadOnlyList<RecycleProgress> events, string path, RecycleStatus wanted) =>
         events
             .Where(progress => string.Equals(progress.Path, path, StringComparison.OrdinalIgnoreCase))
             .Select(progress => progress.Status)
             .FirstOrDefault(status => status == wanted);
 
-private static RecycleFailure? FailureOf(IReadOnlyList<RecycleProgress> events, string path, RecycleStatus wanted) =>
+    private static RecycleFailure? FailureOf(IReadOnlyList<RecycleProgress> events, string path, RecycleStatus wanted) =>
         events.First(progress =>
             string.Equals(progress.Path, path, StringComparison.OrdinalIgnoreCase) && progress.Status == wanted).Failure;
 }

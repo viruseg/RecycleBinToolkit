@@ -25,8 +25,8 @@ public enum RecycleStatus
 /// <param name="Index">Position of this item in the operation's own numbering, starting at 1.</param>
 /// <param name="Count">Number of items the operation was asked about.</param>
 /// <param name="Status">What became of the item.</param>
-/// <param name="Path">The path as the caller wrote it.</param>
-/// <param name="Elapsed">Time from the start of the operation to the moment this report was created.</param>
+/// <param name="Path">The path as the caller wrote it. A <see langword="null"/> entry is reported as an empty string.</param>
+/// <param name="Elapsed">Time from the start of the call to the moment this report was created.</param>
 /// <param name="Failure">Why it was refused or failed, or <see langword="null"/> when nothing went wrong.</param>
 public sealed record RecycleProgress(
     int Index,

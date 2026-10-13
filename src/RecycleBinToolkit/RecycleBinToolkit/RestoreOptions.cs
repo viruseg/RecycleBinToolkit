@@ -62,7 +62,7 @@ public sealed class RestoreOptions : RecycleBinOptions
 
     /// <summary>
     /// Called once per entry handed to the operation, on a thread of its own, so the restore does not wait
-    /// for it. Two reports are never delivered at once, and never on the thread that called the operation.
+    /// for it. It runs on a thread of its own, so two reports are never delivered at once and neither lands on the thread that called the operation.
     /// Defaults to <see langword="null"/>, which reports nothing and costs nothing.
     /// </summary>
     /// <remarks>

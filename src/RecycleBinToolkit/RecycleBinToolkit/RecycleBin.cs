@@ -134,7 +134,10 @@ public static class RecycleBin
         {
             // On the cancellation path too, and that is the whole point of it: a caller who asked to wait
             // would otherwise wait on a reader nobody ever tells to stop.
-            await effective.FinishProgressAsync(effective.WaitForProgressCallbacks).ConfigureAwait(false);
+            if (sink is not null)
+            {
+                await sink.CompleteAsync(effective.WaitForProgressCallbacks).ConfigureAwait(false);
+            }
         }
     }
 
@@ -285,27 +288,33 @@ public static class RecycleBin
                 TimeSpan.Zero);
         }
 
+        // Armed here rather than inside the task, so that Elapsed on a report and Elapsed on the result
+        // measure the same span. Building one costs nothing: the queue is empty and the thread behind it has
+        // nothing to do until the counting pass is over.
+        var sink = effective.ArmProgress();
+
         // Started before the work is queued so that Elapsed covers the wait for a pool thread as well
         // as the empty itself.
         var stopwatch = Stopwatch.StartNew();
 
         var emptied = await Task.Run(async () =>
         {
-            // Armed here rather than in the prologue because the total is only known once the bins have
-            // been read, and reading them must not happen on the thread that called the method.
-            var sink = effective.ArmProgress();
-            sink?.SetCount(NativeBinEmptier.CountEntries(targets, cancellationToken));
-
             try
             {
+                // Read inside the task, and never when nobody is listening: this is a second walk of every
+                // bin directory, and a caller who asked for no reports does not pay for it.
+                sink?.SetCount(NativeBinEmptier.CountEntries(targets, cancellationToken));
+
                 return NativeBinEmptier.Empty(targets, sink, cancellationToken);
             }
             finally
             {
-                // Finished before the result is stamped rather than after: the sink's clock starts when the
-                // caller assigned the handler, so EmptyProgress.Elapsed and RecycleBinEmptyResult.Elapsed
-                // measure one span only while the queue is closed inside this task.
-                await effective.FinishProgressAsync(effective.WaitForProgressCallbacks).ConfigureAwait(false);
+                // Inside the try, so that a cancellation during the counting pass still closes the queue: a
+                // caller who asked to wait would otherwise wait on a reader nobody ever tells to stop.
+                if (sink is not null)
+                {
+                    await sink.CompleteAsync(effective.WaitForProgressCallbacks).ConfigureAwait(false);
+                }
             }
         }, cancellationToken).ConfigureAwait(false);
 
@@ -369,7 +378,10 @@ public static class RecycleBin
         }
         finally
         {
-            await effective.FinishProgressAsync(effective.WaitForProgressCallbacks).ConfigureAwait(false);
+            if (sink is not null)
+            {
+                await sink.CompleteAsync(effective.WaitForProgressCallbacks).ConfigureAwait(false);
+            }
         }
     }
 

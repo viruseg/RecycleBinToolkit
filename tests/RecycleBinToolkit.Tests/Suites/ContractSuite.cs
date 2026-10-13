@@ -549,7 +549,7 @@ internal static class ContractSuite
             "DirectoryConflict default on the restore type");
         Check.Equal(RestoreFileConflict.Skip, RestoreOptions.Default.FileConflict, "FileConflict default on the restore type");
 
-Check.False(RecycleOptions.Default.WaitForProgressCallbacks, "WaitForProgressCallbacks default on the recycle type");
+        Check.False(RecycleOptions.Default.WaitForProgressCallbacks, "WaitForProgressCallbacks default on the recycle type");
         Check.False(RestoreOptions.Default.WaitForProgressCallbacks, "WaitForProgressCallbacks default on the restore type");
         Check.False(EmptyOptions.Default.WaitForProgressCallbacks, "WaitForProgressCallbacks default on the empty type");
 
@@ -576,7 +576,7 @@ Check.False(RecycleOptions.Default.WaitForProgressCallbacks, "WaitForProgressCal
     /// assembly's compile-time access, reports an internal property as absent.
     /// </summary>
     /// <remarks>
-    /// The second assertion compares the union of what the three types expose against the base's properties
+    /// The second assertion compares the union of what the four types expose against the base's properties
     /// by name, so a ninth knob added to the base and left off every one of them is a failure rather than a
     /// pass with a longer list, and so is a rename that leaves the counts equal. It says nothing about a type
     /// added later than this one: the four named here are the four that exist, and one added after them is not

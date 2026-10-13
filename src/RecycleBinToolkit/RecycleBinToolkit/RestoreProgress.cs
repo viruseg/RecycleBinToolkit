@@ -26,7 +26,7 @@ public enum RestoreStatus
 /// <param name="Count">Number of entries the operation was asked about.</param>
 /// <param name="Status">What became of the entry.</param>
 /// <param name="Path">Where the entry landed, or the record it came from when it landed nowhere.</param>
-/// <param name="Elapsed">Time from the start of the operation to the moment this report was created.</param>
+/// <param name="Elapsed">Time from the start of the call to the moment this report was created.</param>
 /// <param name="Failure">Why it was skipped or failed, or <see langword="null"/> when nothing went wrong.</param>
 public sealed record RestoreProgress(
     int Index,

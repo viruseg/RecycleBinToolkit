@@ -67,9 +67,9 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 260 registered cases, of which four are load cases, so `--all` runs 256 of them. The rest is
+There are 266 registered cases, of which four are load cases, so `--all` runs 262 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
-cases that recycle one and runs the cases that are about a volume with no bin. **243 pass and 13 skip**,
+cases that recycle one and runs the cases that are about a volume with no bin. **249 pass and 13 skip**,
 with nothing failing, on a volume that has a bin — measured by one `--all` on `D:\` on 2026-10-13.
 
 Two of the thirteen skips are the 8.3 cases: `D:\` has short-name generation off, so `GetShortPathName`
@@ -101,8 +101,8 @@ with them is the document being wrong.
 A run that must not empty the bin says `--exclude EmptySuite`; that drops its thirteen cases, so the counts
 it prints are thirteen lower than a plain `--all` and a document must not quote one run's figures as the
 other's. `--exclude` takes one substring, so a case that empties the bin has to live under that name and
-not merely somewhere this document says it does — which is why the two `ProgressSuite` cases that empty it
-are registered as `EmptySuite` cases instead.
+not merely somewhere this document says it does — which is why the two progress cases that empty it are
+registered as `EmptySuite` cases rather than as `ProgressSuite` ones.
 
 ## How it works
 
@@ -176,16 +176,25 @@ is gone and recorded nowhere, which is the one outcome a Recycle Bin exists to p
 **Retries are per path, not per batch.** A move that fails is a property of one path, and retrying
 the others would repeat work that already succeeded. Only the items that failed are retried.
 
-**A caller's progress handler is never on the engine's thread.** A caller who asked to be told what is
-happening must not be able to hold up what is happening: a Recycle Bin is one directory per volume, and
-a handler running beside the work would contend on it with the work. So `ProgressSink` is an unbounded
-queue drained by a thread of its own, the engine only ever writes to it, and no producer waits. The one
-wait a caller can have is the one they ask for by setting `WaitForProgressCallbacks`. What is promised is
-that two reports are never delivered at once and neither lands on the thread that made the call — not that
-they arrive on one particular thread, which an `async` reader does not promise and a case measured at three
-different ones. `Elapsed` is stamped when the report is made rather than when it is delivered for the same
-reason: a slow handler must not make the next item look slow. **No figure was taken for any of this**, so
-nothing here claims one.
+**A caller's progress handler is never on the engine's thread, and never on the caller's.** A caller who
+asked to be told what is happening must not be able to hold up what is happening: a Recycle Bin is one
+directory per volume, and a handler running beside the work would contend on it with the work. So
+`ProgressSink` is an unbounded queue drained by one thread of its own, the engine only ever writes to it,
+and no producer waits. The one wait a caller can have is the one they ask for by setting
+`WaitForProgressCallbacks`. Three things are load-bearing and all three were measured by
+`ProgressSuite`:
+
+| Promise | What breaks without it |
+| --- | --- |
+| One queue per call, not per settings object | A caller keeping one `RecycleOptions` in a field reaches two calls that overlap, and the first one's completion closes the second one's queue — its reports vanish with nothing raised. |
+| One reader, started eagerly | The first report can come from several engine threads at once; a check-then-start between them puts two pumps on one channel built for one reader, and the caller's handler runs twice over. Measured at 242 overlapping deliveries out of 200 reports. |
+| A real thread, not a long-running task | `TaskScheduler.Default` may run a queued task inline on the thread that queued it, which put the caller's own handler on the caller's own thread. `ProgressSuite.TheHandlerDoesNotRunOnTheCallersThread` caught it running on the caller's thread id for every report. |
+
+What is promised is that two reports are never delivered at once and neither lands on the thread that made
+the call — which is not a promise that a particular thread carries them, since a handler that blocks for a
+while does not pin the thread it started on. `Elapsed` is stamped when the report is made rather than when
+it is delivered for the same reason: a slow handler must not make the next item look slow. **No throughput
+figure was taken for any of this**, so nothing here claims one.
 
 **The per-volume bin is the unit.** Each volume's `$RECYCLE.BIN\<SID>\` is walked directly, so naming
 a volume selects which directories to read and to empty — never a filter over an enumeration that

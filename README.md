@@ -274,15 +274,16 @@ recycled path, a restored entry and an emptied entry have different outcomes to 
 | --- | --- |
 | One report per input item | Includes one refused, repeated, or absent path. `RecycleAsync` and `RestoreAsync` report `Count` equal to the length of what you passed. |
 | `Index` is one counter | Handed out as each item is settled, never reused within a call, and shared by every thread the operation runs on. |
-| `Elapsed` is stamped at creation, not at delivery | A handler that takes a second on item 3 does not make item 4 look slow. |
+| `Elapsed` is stamped at creation, not at delivery | A handler that takes a second on item 3 does not make item 4 look slow. It counts from the start of the call, not from the moment you built the settings. |
 | Delivery order is arrival order | A restore across two volumes or an empty across two disks reports volume B before volume A. `Index` is the ordering, not the stream. |
-| The operation never waits for the handler | It runs to completion on its own thread while your handler is still working. Reports may still arrive after the `await` returns unless `WaitForProgressCallbacks` is set. |
-| Two reports are never delivered at once | And never on the thread that called the operation, so a handler may touch UI state. |
+| The operation never waits for the handler | It runs to completion while your handler is still working. Reports may still arrive after the `await` returns unless `WaitForProgressCallbacks` is set. |
+| The handler runs on a thread of its own | Never on the thread that called the operation, and never on two reports at once. It is *not* a UI thread: marshal to the one yourself. |
 | A cancelled call reports only what it decided | The method raises `OperationCanceledException` and returns no result. |
 | A handler that throws ends delivery | The failure handler is told once and the operation still returns its result. It never reaches the operation. |
 | `EmptyAsync` reads every bin one extra time | Only when `OnItemProcessed` is set, and only to know the total. Leave it `null` and nothing is read that the empty does not already read. |
+| `EmptyAsync` may report more or fewer than `Count` | The total is counted before the sweep, so an entry added meanwhile pushes `Index` past it. Clamp your bar. |
 | A restore does not report a merge's leftovers | A file a merge could not put back goes into the Recycle Bin again. It was never in your list, so it has no index in your count. See `MergedSkipped` in `Conflicts`. |
-| An empty reports no path | An empty says entries left the bin. The ones that did not are named in `RecycleBinEmptyResult.Failures`. |
+| An empty reports no path | It says whether an entry is out of the bin. Which entries would not go is in `RecycleBinEmptyResult.Failures`, named by their record inside the bin rather than by where they were. |
 
 #### `RecycleProgress`
 
@@ -290,7 +291,7 @@ recycled path, a restored entry and an emptied entry have different outcomes to 
 | --- | --- | --- |
 | `Index`, `Count` | `int` | This item's number, and how many the call was asked about. |
 | `Status` | `RecycleStatus` | `Recycled`, `Failed` (attempted, did not happen), `Refused` (not attempted, the file is where you left it), `DeletedPermanently`. |
-| `Path` | `string` | The path as you wrote it. |
+| `Path` | `string` | The path as you wrote it. A batch entry that was `null` is reported as `""`. |
 | `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
 | `Failure` | `RecycleFailure?` | Why it was refused or failed, or `null`. A repeated path is `Refused` with no `Failure`: it was not acted on, and there is no reason to invent. |
 

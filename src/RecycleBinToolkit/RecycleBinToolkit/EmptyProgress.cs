@@ -14,13 +14,17 @@ public enum EmptyStatus
 /// <remarks>
 /// One per entry the operation went after. An empty reports entries leaving the Recycle Bin rather than
 /// where they were, so there is no path here: the entries that did not go are named by
-/// <see cref="RecycleBinEmptyResult.Failures"/>. <see cref="Count"/> may be more than the number of reports
-/// that arrive, because the count is taken before the sweep and an entry added meanwhile is not part of it.
+/// <see cref="RecycleBinEmptyResult.Failures"/>, by their record inside the bin rather than by where they
+/// were. <para>
+/// <see cref="Count"/> is counted before the sweep, and the bin can change between the count and the
+/// sweep: an entry added afterwards pushes <see cref="Index"/> past it, and one taken by somebody else is
+/// counted but never swept. A caller dividing by <see cref="Count"/> should clamp.
+/// </para>
 /// </remarks>
 /// <param name="Index">Position of this entry in the operation's own numbering, starting at 1.</param>
 /// <param name="Count">Entries the operation counted before it began.</param>
 /// <param name="Status">Whether the entry is out of the bin.</param>
-/// <param name="Elapsed">Time from the start of the operation to the moment this report was created.</param>
+/// <param name="Elapsed">Time from the start of the call to the moment this report was created.</param>
 public sealed record EmptyProgress(
     int Index,
     int Count,

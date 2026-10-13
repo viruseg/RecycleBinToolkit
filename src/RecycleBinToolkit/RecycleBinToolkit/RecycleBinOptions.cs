@@ -78,10 +78,9 @@ public abstract class RecycleBinOptions
     internal RestoreFileConflict FileConflict { get; init; } = RestoreFileConflict.Skip;
 
     /// <summary>
-    /// The queue behind a caller's progress handler. Read by
-    /// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleOptions?, CancellationToken)"/>,
-    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/>
-    /// and <see cref="RecycleBin.EmptyAsync(string?, EmptyOptions?, CancellationToken)"/>, and nowhere else.
+    /// The queue behind a caller's progress handler. Read by nothing itself: each operation carries its own
+    /// queue down to its engine, because a settings object can reach two calls that overlap and one queue
+    /// between them would let the first call's completion close the second's.
     /// </summary>
     internal ProgressSink? OnItemProcessed { get; init; }
 
@@ -97,35 +96,27 @@ public abstract class RecycleBinOptions
     /// </summary>
     internal bool WaitForProgressCallbacks { get; init; }
 
-    private ProgressSink? _running;
-
     /// <summary>
-    /// Returns the queue the operation is to write to, or <see langword="null"/> when the caller asked
-    /// for no reports.
+    /// The queue this call is to write to, always a new one, or <see langword="null"/> when the caller
+    /// asked for no reports.
     /// </summary>
+    /// <remarks>
+    /// Always new rather than the one the caller's initialiser built. The same settings object reaches two
+    /// calls whenever a caller keeps one in a field, and those calls may overlap: the first one's
+    /// completion would close the second one's queue, and every report the second made after that would be
+    /// dropped with nothing raised and nothing reported.
+    /// </remarks>
     internal ProgressSink? ArmProgress()
     {
         if (OnItemProcessed is null)
         {
-            _running = null;
             return null;
         }
 
-        // Restart rather than the property itself: a caller who reuses one options instance across two
-        // calls finds the queue the first call completed, and writing into its closed channel would report
-        // nothing at all with nothing raised.
-        var running = OnItemProcessed.Restart();
-        running.Fault = OnProgressFailed;
-
-        _running = running;
-        return running;
+        var armed = OnItemProcessed.Restart();
+        armed.Fault = OnProgressFailed;
+        return armed;
     }
-
-    /// <summary>
-    /// Completes the queue this call armed and, when the caller asked to wait, returns once it has drained.
-    /// </summary>
-    internal Task FinishProgressAsync(bool wait) =>
-        _running?.CompleteAsync(wait) ?? Task.CompletedTask;
 
     /// <summary>
     /// Queues one report about a recycled path, or does nothing at all when nobody asked for reports.
@@ -157,7 +148,7 @@ public abstract class RecycleBinOptions
         PreloadItemDetails = PreloadItemDetails,
         DirectoryConflict = DirectoryConflict,
         FileConflict = FileConflict,
-        OnItemProcessed = _running ?? OnItemProcessed,
+        OnItemProcessed = OnItemProcessed,
         OnProgressFailed = OnProgressFailed,
         WaitForProgressCallbacks = WaitForProgressCallbacks
     };

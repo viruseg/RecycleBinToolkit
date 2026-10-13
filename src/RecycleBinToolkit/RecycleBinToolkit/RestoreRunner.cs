@@ -95,7 +95,7 @@ internal static class RestoreRunner
         // another one inside it for no work — the rule the listing applies to a single volume.
         if (disks.Count == 1)
         {
-            RunDisk(disks[0], options, budget, slots, cancellationToken);
+            RunDisk(disks[0], sink, options, budget, slots, cancellationToken);
         }
         else if (disks.Count > 1)
         {
@@ -109,7 +109,7 @@ internal static class RestoreRunner
                     MaxDegreeOfParallelism = disks.Count,
                     CancellationToken = cancellationToken
                 },
-                index => RunDisk(disks[index], options, budget, slots, cancellationToken));
+                index => RunDisk(disks[index], sink, options, budget, slots, cancellationToken));
         }
 
         return Flatten(slots, items, sink);
@@ -137,8 +137,13 @@ internal static class RestoreRunner
     /// contends for, so they run together.</item>
     /// </list>
     /// </remarks>
+    /// <param name="sink">
+    /// Where each entry's outcome is reported as it is decided, or <see langword="null"/> for a run whose
+    /// reports nobody asked for.
+    /// </param>
     private static void RunDisk(
         RestoreDiskGroup disk,
+        ProgressSink? sink,
         RecycleBinOptions options,
         RestoreBudget budget,
         RestoreOutcome[] slots,
@@ -148,7 +153,7 @@ internal static class RestoreRunner
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            RunVolume(pipeline, options, budget, slots, cancellationToken);
+            RunVolume(pipeline, sink, options, budget, slots, cancellationToken);
         }
     }
 
@@ -199,8 +204,13 @@ internal static class RestoreRunner
     /// until every mover has finished and then re-raised as itself.</item>
     /// </list>
     /// </remarks>
+    /// <param name="sink">
+    /// Where each entry's outcome is reported as it is decided, or <see langword="null"/> for a run whose
+    /// reports nobody asked for.
+    /// </param>
     private static void RunVolume(
         RestoreVolumePipeline pipeline,
+        ProgressSink? sink,
         RecycleBinOptions options,
         RestoreBudget budget,
         RestoreOutcome[] slots,
@@ -231,7 +241,7 @@ internal static class RestoreRunner
                     {
                         try
                         {
-                            MoveFrom(pipeline, options, budget, slots, cancellationToken);
+                            MoveFrom(pipeline, sink, options, budget, slots, cancellationToken);
                         }
                         catch (Exception ex)
                         {
@@ -334,8 +344,10 @@ internal static class RestoreRunner
     /// <see cref="Restore"/>, while this one is the caller stopping the call.
     /// </para>
     /// </remarks>
+        /// <param name="sink">Where each entry's outcome is reported as it is decided, or <see langword="null"/> when nobody asked.</param>
     private static void MoveFrom(
         RestoreVolumePipeline pipeline,
+        ProgressSink? sink,
         RecycleBinOptions options,
         RestoreBudget budget,
         RestoreOutcome[] slots,
@@ -351,6 +363,7 @@ internal static class RestoreRunner
 
                 Restore(
                     entry.Item,
+                    sink,
                     options,
                     budget,
                     slots,
@@ -481,9 +494,11 @@ internal static class RestoreRunner
     /// <item>Nothing here renames, moves or removes what is already on disk except under
     /// <see cref="RestoreAction.Replace"/>, which the caller asked for by name.</item>
     /// </list>
+        /// <param name="sink">Where each entry's outcome is reported as it is decided, or <see langword="null"/> when nobody asked.</param>
     /// </remarks>
     private static void Restore(
         RecycleBinItem item,
+        ProgressSink? sink,
         RecycleBinOptions options,
         RestoreBudget budget,
         RestoreOutcome[] slots,
@@ -542,8 +557,8 @@ internal static class RestoreRunner
                 // record the same way — so this is not retried. What it reports is how many placements were
                 // already made before it, which is zero on the first attempt and the entry's own count on any
                 // after that.
-slots[position] = Failed(originalPath!, item.Size, ex.HResult, attempts: attempt - 1);
-                Settle(slots[position], new RecycleFailure(originalPath!, ex.HResult, attempt - 1, RecycleFailureStage.RestoreFailed));
+                var unplaceable = Failed(originalPath!, item.Size, ex.HResult, attempts: attempt - 1);
+                Settle(unplaceable, new RecycleFailure(originalPath!, ex.HResult, attempt - 1, RecycleFailureStage.RestoreFailed));
                 return;
             }
 
@@ -618,7 +633,7 @@ slots[position] = Failed(originalPath!, item.Size, ex.HResult, attempts: attempt
         void Settle(RestoreOutcome outcome, RecycleFailure? failure)
         {
             slots[position] = outcome;
-            Report(options.OnItemProcessed, outcome, failure);
+            Report(sink, outcome, failure);
         }
     }
 
