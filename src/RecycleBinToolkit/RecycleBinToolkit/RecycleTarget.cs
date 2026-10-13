@@ -76,6 +76,17 @@ internal readonly struct RecycleTarget
         new(InputPath, FullPath, Attributes, Size, recordPath);
 
     /// <summary>
+    /// Returns a copy that has been moved to <paramref name="stagedFullPath"/>, for both spellings.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="WithRecordPath"/>, the item itself is somewhere else, so the path the move reads
+    /// changes too — and the record follows it, because a record naming the path the item no longer
+    /// occupies is a restore that puts a file back over something else.
+    /// </remarks>
+    internal RecycleTarget WithStagedPath(string stagedFullPath) =>
+        new(InputPath, stagedFullPath, Attributes, Size, stagedFullPath);
+
+    /// <summary>
     /// What the filesystem said about the path when it was validated.
     /// </summary>
     /// <remarks>

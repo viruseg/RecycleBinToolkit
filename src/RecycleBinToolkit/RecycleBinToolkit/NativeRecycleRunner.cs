@@ -70,10 +70,22 @@ internal static class NativeRecycleRunner
         var recycled = new List<string>(collapsed.Count);
         var failuresByPath = new Dictionary<string, RecycleFailure>(collapsed.Count, StringComparer.OrdinalIgnoreCase);
         var permanentlyDeleted = new List<string>();
+        var staged = new List<StagedTarget>();
+        var stagedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        using var stager = new LongPathStager();
 
         // A record with a fixed path field cannot name a path past its length, and no retry changes that.
         // Settled once, before the rounds, because it is a property of the record and not of any path.
-        pending = SettleOverLongPaths(collapsed, options, IndexFormat.VersionForWriting, permanentlyDeleted, failuresByPath);
+        pending = SettleOverLongPaths(
+            collapsed,
+            options,
+            IndexFormat.VersionForWriting,
+            stager,
+            staged,
+            stagedPaths,
+            permanentlyDeleted,
+            failuresByPath);
 
         // One bin directory per volume, created at most once for the whole operation, and one sequencer of
         // names beside it for the same reason: twenty thousand paths on one volume need the directory made
@@ -87,37 +99,62 @@ internal static class NativeRecycleRunner
         // is the case a caller who set a budget at all is the one that hits.
         var deadline = stopwatch.Elapsed + options.OverallTimeout;
 
-        for (var round = 1; round <= options.MaxAttempts && pending.Count > 0; round++)
+        IReadOnlyList<string> leftovers;
+
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var stillPending = new List<RecycleTarget>(pending.Count);
-
-            foreach (var target in pending)
+            for (var round = 1; round <= options.MaxAttempts && pending.Count > 0; round++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (TryRecycle(target, bins, cancellationToken, out var failure))
+                var stillPending = new List<RecycleTarget>(pending.Count);
+
+                foreach (var target in pending)
                 {
-                    recycled.Add(target.InputPath);
-                    continue;
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    RecycleFailure? failure = null;
+                    var moved = false;
+
+                    // The seam is asked before the move, not after: a fault that let the payload move and
+                    // then threw the answer away would leave the item in the bin, which is the opposite of
+                    // what a case provoking it needs to see.
+                    if (!FaultAfterStaging || !stagedPaths.Contains(target.InputPath))
+                    {
+                        moved = TryRecycle(target, bins, cancellationToken, out failure);
+                    }
+
+                    if (moved)
+                    {
+                        recycled.Add(target.InputPath);
+                        continue;
+                    }
+
+                    stillPending.Add(target);
+
+                    if (failure is not null)
+                    {
+                        failuresByPath[failure.Path] = new RecycleFailure(failure.Path, failure.HResult, round, failure.Stage);
+                    }
                 }
 
-                stillPending.Add(target);
-                failuresByPath[failure!.Path] = new RecycleFailure(failure.Path, failure.HResult, round, failure.Stage);
-            }
+                pending = stillPending;
 
-            pending = stillPending;
+                if (pending.Count == 0 || round == options.MaxAttempts)
+                {
+                    break;
+                }
 
-            if (pending.Count == 0 || round == options.MaxAttempts)
-            {
-                break;
+                if (!WaitBeforeRetry(options, round, stopwatch, deadline, cancellationToken))
+                {
+                    break;
+                }
             }
-
-            if (!WaitBeforeRetry(options, round, stopwatch, deadline, cancellationToken))
-            {
-                break;
-            }
+        }
+        finally
+        {
+            PutBackUnrecycled(staged, recycled);
+            leftovers = stager.Release();
         }
 
         // The whole batch went, which is the outcome nearly every batch has. Nothing is left to report and
@@ -126,7 +163,7 @@ internal static class NativeRecycleRunner
         // decided. Each of those paths is long and compared case-insensitively, which is why it shows up.
         if (failuresByPath.Count == 0 && pending.Count == 0)
         {
-            return RecycleBinResult.Create(recycled, permanentlyDeleted, [], stopwatch.Elapsed);
+            return RecycleBinResult.Create(recycled, permanentlyDeleted, [], stopwatch.Elapsed, leftovers);
         }
 
         // A path that gave up with no verdict of its own is one the loop stopped before it could record, and
@@ -157,7 +194,7 @@ internal static class NativeRecycleRunner
             }
         }
 
-        return RecycleBinResult.Create(recycled, permanentlyDeleted, reported, stopwatch.Elapsed);
+        return RecycleBinResult.Create(recycled, permanentlyDeleted, reported, stopwatch.Elapsed, leftovers);
     }
 
     /// <summary>
@@ -178,6 +215,9 @@ internal static class NativeRecycleRunner
         IReadOnlyList<RecycleTarget> targets,
         RecycleBinOptions options,
         int version,
+        LongPathStager stager,
+        List<StagedTarget> staged,
+        HashSet<string> stagedPaths,
         List<string> permanentlyDeleted,
         Dictionary<string, RecycleFailure> failuresByPath)
     {
@@ -228,6 +268,16 @@ internal static class NativeRecycleRunner
                 continue;
             }
 
+            // The last answer, and the only one that moves anything. Both spellings follow the item: the
+            // record names the staging path because the original is what would not fit, and a restore
+            // puts the item back there.
+            if (options.LongPathFailureAction == LongPathFailureAction.ShortenPathAndRecycle
+                && TryStageWithBatchRetries(target, stager, staged, stagedPaths, out var stagedTarget))
+            {
+                pending.Add(stagedTarget);
+                continue;
+            }
+
             failuresByPath[target.InputPath] = new RecycleFailure(
                 target.InputPath,
                 PathTooLong,
@@ -237,6 +287,76 @@ internal static class NativeRecycleRunner
 
         return pending;
     }
+
+    /// <summary>
+    /// Stages one path, and returns whether it got there.
+    /// </summary>
+    /// <remarks>
+    /// One attempt per call. The caller gives a whole batch one attempt each before any of them waits, so
+    /// that a contended batch pays the backoff once rather than once per item.
+    /// </remarks>
+    private static bool TryStageWithBatchRetries(
+        RecycleTarget target,
+        LongPathStager stager,
+        List<StagedTarget> staged,
+        HashSet<string> stagedPaths,
+        out RecycleTarget stagedTarget)
+    {
+        var stagedPath = stager.TryStageOnce(target.FullPath);
+
+        if (stagedPath is null)
+        {
+            stagedTarget = default;
+            return false;
+        }
+
+        stagedTarget = target.WithStagedPath(stagedPath);
+        staged.Add(new StagedTarget(stagedTarget, target.FullPath));
+        stagedPaths.Add(target.InputPath);
+        return true;
+    }
+
+    /// <summary>
+    /// Moves back every staged item whose recycle did not go through.
+    /// </summary>
+    /// <remarks>
+    /// Only items that are not in <paramref name="recycledPaths"/>. An item already in the Recycle Bin has
+    /// nothing left at its staging path to move, and trying anyway would fail against a path this library
+    /// has just removed.
+    /// </remarks>
+    private static void PutBackUnrecycled(List<StagedTarget> staged, List<string> recycledPaths)
+    {
+        if (staged.Count == 0 || FaultBeforePutBack)
+        {
+            return;
+        }
+
+        var recycled = new HashSet<string>(recycledPaths, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in staged)
+        {
+            if (!recycled.Contains(entry.Target.InputPath))
+            {
+                LongPathStager.TryRestore(entry.Target.FullPath, entry.OriginalFullPath);
+            }
+        }
+    }
+
+    /// <summary>An item moved to a short path, with where it came from so it can be put back.</summary>
+    private readonly record struct StagedTarget(RecycleTarget Target, string OriginalFullPath);
+
+    /// <summary>
+    /// Whether a staged item's recycle is refused even though nothing is wrong with it.
+    /// </summary>
+    /// <remarks>
+    /// A seam for the suite, which has to witness what happens to an item that could not be recycled and
+    /// could not be moved back. Off in production; there is no other way to reach the branch, because the
+    /// pre-cancelled token the suite used before is refused before this method is entered.
+    /// </remarks>
+    internal static bool FaultAfterStaging { get; set; }
+
+    /// <summary>Whether the put-back of a staged item is skipped, so the staging directory keeps what it holds.</summary>
+    internal static bool FaultBeforePutBack { get; set; }
 
     /// <summary>
     /// Replaces a target's recorded path with the volume's short name for it, when it has one that fits.

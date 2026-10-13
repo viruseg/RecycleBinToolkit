@@ -52,6 +52,11 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(ARefusedLongPathDoesNotCostTheRestOfTheBatch), ARefusedLongPathDoesNotCostTheRestOfTheBatch),
         new TestCase("NativeBinSuite." + nameof(AnOverLongPathTakesItsEightDotThreeAlias), AnOverLongPathTakesItsEightDotThreeAlias),
         new TestCase("NativeBinSuite." + nameof(AnAliasThatIsStillTooLongFallsThroughToThePolicy), AnAliasThatIsStillTooLongFallsThroughToThePolicy),
+        new TestCase("NativeBinSuite." + nameof(ShortenPathAndRecyclePutsTheBytesInTheBin), ShortenPathAndRecyclePutsTheBytesInTheBin),
+        new TestCase("NativeBinSuite." + nameof(ShortenPathAndRecycleRemovesTheStagingDirectory), ShortenPathAndRecycleRemovesTheStagingDirectory),
+        new TestCase("NativeBinSuite." + nameof(AStagedNameStaysWithinWhatTheMachineCanName), AStagedNameStaysWithinWhatTheMachineCanName),
+        new TestCase("NativeBinSuite." + nameof(StagedItemThatCouldNotBeRecycledIsPutBack), StagedItemThatCouldNotBeRecycledIsPutBack),
+        new TestCase("NativeBinSuite." + nameof(StagingKeepsAnythingItCouldNotRecover), StagingKeepsAnythingItCouldNotRecover),
         new TestCase("NativeBinSuite." + nameof(NativeRecycleReportsALockedFileAndLeavesNoIndexRecord), NativeRecycleReportsALockedFileAndLeavesNoIndexRecord),
         new TestCase("NativeBinSuite." + nameof(TheDetectedVersionMatchesTheBoundary), TheDetectedVersionMatchesTheBoundary),
         new TestCase("NativeBinSuite." + nameof(NativeIndexReaderReadsAVersionOneRecord), NativeIndexReaderReadsAVersionOneRecord),
@@ -741,6 +746,246 @@ internal static class NativeBinSuite
         workspace.Dispose();
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The last answer available: move the item to a short path on its own volume and recycle it from
+    /// there. The move is a rename, so it costs nothing whatever the file size, and the item lands in the
+    /// Recycle Bin of the volume it came from.
+    /// </summary>
+    private static async Task ShortenPathAndRecyclePutsTheBytesInTheBin(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the item to land in");
+
+        var stagingBefore = CountHelperDirectories();
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var path = CreateDeepFile(NativeIndexFile.LegacyPathCapacity + 50);
+            var size = new FileInfo(path).Length;
+            var options = new RecycleOptions { LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle };
+
+            var result = await RecycleBin.RecycleAsync([path], options, context.CancellationToken).ConfigureAwait(false);
+
+            Check.True(result.Succeeded, $"the item is recycled (first failure: {Describe(result.FirstFailure)})");
+            Check.False(File.Exists(path), "and is gone from the path the caller named");
+
+            var staged = FindStagedRecord(size);
+            Check.True(staged.StartsWith(StagingRootPrefix, StringComparison.OrdinalIgnoreCase),
+                $"the record names the path the item was staged at, because the original is what would not fit ({staged})");
+            Check.Equal(0, result.LeftoverStagingDirectories.Count, "and the operation reports nothing left behind");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        Check.Equal(stagingBefore, CountHelperDirectories(), "and the staging directory is gone afterwards");
+        Check.Equal(0, CountHelperDirectories() - stagingBefore, "nothing was left behind in the volume root");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A staging directory is this library's to make and this library's to remove. One left behind in the
+    /// volume root after a clean run is litter in a place a user looks at.
+    /// </summary>
+    private static async Task ShortenPathAndRecycleRemovesTheStagingDirectory(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the item to land in");
+
+        var stagingBefore = CountHelperDirectories();
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var path = CreateDeepFile(NativeIndexFile.LegacyPathCapacity + 50);
+            var options = new RecycleOptions { LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle };
+
+            var result = await RecycleBin.RecycleAsync([path], options, context.CancellationToken).ConfigureAwait(false);
+
+            Check.True(result.Succeeded, $"the item is recycled (first failure: {Describe(result.FirstFailure)})");
+            Check.Equal(0, result.LeftoverStagingDirectories.Count, "and the result reports nothing left behind");
+            Check.True(result.Succeeded, "which is what makes it a success rather than a qualified one");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        Check.Equal(stagingBefore, CountHelperDirectories(), "and the volume root holds no staging directory afterwards");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The staged name is a GUID plus the item's extension. A long extension is the way that name stops
+    /// being short, and a staged path that does not fit brings back the problem staging was meant to solve.
+    /// </summary>
+    private static async Task AStagedNameStaysWithinWhatTheMachineCanName(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the item to land in");
+
+        // One path component cannot exceed 255 characters, so the extension is long enough to matter and short
+        // enough that the file name is legal.
+        var longExtension = "." + new string('a', 200);
+
+        IndexFormat.ForceVersionOne = true;
+        try
+        {
+            var path = CreateFile("long-extension" + longExtension);
+            var size = new FileInfo(path).Length;
+            var options = new RecycleOptions { LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle };
+
+            var result = await RecycleBin.RecycleAsync([path], options, context.CancellationToken).ConfigureAwait(false);
+
+            Check.True(result.Succeeded, $"the item is recycled (first failure: {Describe(result.FirstFailure)})");
+
+            var staged = FindStagedRecord(size);
+
+            Check.True(
+                Path.GetExtension(staged).Length < longExtension.Length,
+                $"the staged name drops the extension rather than carrying all {longExtension.Length} characters of it ({Path.GetExtension(staged).Length})");
+            Check.True(staged.Length < path.Length, $"and the staged path is shorter than the one the caller passed ({staged.Length} of {path.Length})");
+            Check.True(staged.Length <= NativeIndexFile.LegacyPathCapacity, $"and fits the record ({staged.Length} of {NativeIndexFile.LegacyPathCapacity})");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An item that was staged and then could not be recycled goes back where it came from. Leaving it at
+    /// the staging path would lose the caller's file to a directory this library created and then removed.
+    /// </summary>
+    private static async Task StagedItemThatCouldNotBeRecycledIsPutBack(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the attempt to be measured against");
+
+        var path = CreateDeepFile(NativeIndexFile.LegacyPathCapacity + 50);
+        var options = new RecycleOptions { LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle };
+
+        IndexFormat.ForceVersionOne = true;
+        NativeRecycleRunner.FaultAfterStaging = true;
+        try
+        {
+            var result = await RecycleBin.RecycleAsync([path], options, context.CancellationToken).ConfigureAwait(false);
+
+            Check.False(result.Succeeded, "the item was not recycled");
+            Check.True(File.Exists(path), "and it is back at the path the caller named");
+        }
+        finally
+        {
+            NativeRecycleRunner.FaultAfterStaging = false;
+            IndexFormat.ForceVersionOne = false;
+            DeleteStagingDirectories();
+        }
+
+        Check.Equal(0, CountHelperDirectories(), "and the staging directory it lived in is gone");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An item that could neither be recycled nor moved back is not deleted to tidy up. The directory stays,
+    /// the result says so, and the caller's data is still on their disk where they can find it.
+    /// </summary>
+    private static async Task StagingKeepsAnythingItCouldNotRecover(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the attempt to be measured against");
+
+        var path = CreateDeepFile(NativeIndexFile.LegacyPathCapacity + 50);
+        var options = new RecycleOptions { LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle };
+
+        IndexFormat.ForceVersionOne = true;
+        NativeRecycleRunner.FaultAfterStaging = true;
+        NativeRecycleRunner.FaultBeforePutBack = true;
+        try
+        {
+            var result = await RecycleBin.RecycleAsync([path], options, context.CancellationToken).ConfigureAwait(false);
+
+            Check.False(result.Succeeded, "the item was not recycled, so this is not a success");
+
+            var leftovers = Directory
+                .EnumerateDirectories(ScratchWorkspace.VolumeRoot, LongPathStager.NamePrefix + "*", SearchOption.TopDirectoryOnly)
+                .ToArray();
+
+            Check.Equal(1, leftovers.Length, "and exactly one staging directory is still there");
+            Check.Equal(1, result.LeftoverStagingDirectories.Count, "which the result names rather than swallowing");
+            Check.Equal(leftovers[0], result.LeftoverStagingDirectories[0], "by the path it is at");
+
+            var stranded = Directory.EnumerateFileSystemEntries(leftovers[0], "*", SearchOption.AllDirectories).ToArray();
+            Check.True(stranded.Length > 0, "holding the caller's data rather than having been emptied to look tidy");
+        }
+        finally
+        {
+            NativeRecycleRunner.FaultBeforePutBack = false;
+            NativeRecycleRunner.FaultAfterStaging = false;
+            IndexFormat.ForceVersionOne = false;
+            DeleteStagingDirectories();
+        }
+
+        workspace.Dispose();
+    }
+
+    /// <summary>The single staging directory on this run's volume, or a path that is certainly not there.</summary>
+    private static string StagingRoot => StagingRootPrefix + "none";
+
+    /// <summary>What every path this operation stages begins with.</summary>
+    private static string StagingRootPrefix =>
+        Path.Combine(ScratchWorkspace.VolumeRoot, LongPathStager.NamePrefix);
+
+    /// <summary>
+    /// The path the entry this operation staged was recorded under, found by which record in the bin names
+    /// a staging path and carries the size this operation moved.
+    /// </summary>
+    /// <remarks>
+    /// The staging directory itself is gone by the time a case looks — a clean run removes it — so the
+    /// record is what is left of where the item was, and that is also what a restore would read.
+    /// </remarks>
+    private static string FindStagedRecord(long size)
+    {
+        foreach (var path in IndexRecords())
+        {
+            if (NativeIndexFile.TryRead(path, out var record)
+                && record.Size == size
+                && record.OriginalPath.StartsWith(StagingRootPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return record.OriginalPath;
+            }
+        }
+
+        throw new CheckFailedException($"no record in {BinDirectory} of size {size} names a staging path under {StagingRootPrefix}");
+    }
+
+    /// <summary>
+    /// Removes the staging directories this run provoked. The library creates them; a case cleans them up.
+    /// </summary>
+    private static void DeleteStagingDirectories()
+    {
+        if (!Directory.Exists(ScratchWorkspace.VolumeRoot))
+        {
+            return;
+        }
+
+        foreach (var directory in Directory.EnumerateDirectories(ScratchWorkspace.VolumeRoot, LongPathStager.NamePrefix + "*", SearchOption.TopDirectoryOnly))
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     /// <summary>

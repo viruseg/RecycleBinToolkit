@@ -125,19 +125,21 @@ public sealed class RecycleBinResult
         IReadOnlyList<string> recycledPaths,
         IReadOnlyList<string> permanentlyDeletedPaths,
         IReadOnlyList<RecycleFailure> failures,
-        TimeSpan elapsed)
+        TimeSpan elapsed,
+        IReadOnlyList<string> leftoverStagingDirectories)
     {
         RecycledPaths = recycledPaths;
         PermanentlyDeletedPaths = permanentlyDeletedPaths;
         Failures = failures;
+        LeftoverStagingDirectories = leftoverStagingDirectories;
         Elapsed = elapsed;
     }
 
     /// <summary>
     /// <see langword="true"/> when every requested path is gone from disk: recycled, or deleted permanently
-    /// because the caller asked for that.
+    /// because the caller asked for that, and nothing was stranded.
     /// </summary>
-    public bool Succeeded => Failures.Count == 0;
+    public bool Succeeded => Failures.Count == 0 && LeftoverStagingDirectories.Count == 0;
 
     /// <summary>Paths, as supplied, that were recycled.</summary>
     public IReadOnlyList<string> RecycledPaths { get; }
@@ -154,6 +156,18 @@ public sealed class RecycleBinResult
     /// </summary>
     public IReadOnlyList<RecycleFailure> Failures { get; }
 
+    /// <summary>
+    /// Staging directories this operation created and could not remove because something was still inside
+    /// them. Empty unless that happened.
+    /// </summary>
+    /// <remarks>
+    /// A path here holds the caller's own data, on their disk, in a directory this library made. It is
+    /// part of the outcome rather than a log line because a result reporting a clean success while their
+    /// file sits in a directory they did not create is the outcome this library exists to prevent — and
+    /// <see cref="Succeeded"/> counts it as a failure for the same reason.
+    /// </remarks>
+    public IReadOnlyList<string> LeftoverStagingDirectories { get; }
+
     /// <summary>Time the operation took, including retries.</summary>
     public TimeSpan Elapsed { get; }
 
@@ -165,12 +179,16 @@ public sealed class RecycleBinResult
     /// <param name="permanentlyDeletedPaths">Paths deleted permanently instead of recycled.</param>
     /// <param name="failures">Paths that were not handled.</param>
     /// <param name="elapsed">Time the operation took.</param>
+    /// <param name="leftoverStagingDirectories">
+    /// Staging directories left holding something. <see langword="null"/> means there were none.
+    /// </param>
     public static RecycleBinResult Create(
         IReadOnlyList<string> recycledPaths,
         IReadOnlyList<string> permanentlyDeletedPaths,
         IReadOnlyList<RecycleFailure> failures,
-        TimeSpan elapsed) =>
-        new(recycledPaths, permanentlyDeletedPaths, failures, elapsed);
+        TimeSpan elapsed,
+        IReadOnlyList<string>? leftoverStagingDirectories = null) =>
+        new(recycledPaths, permanentlyDeletedPaths, failures, elapsed, leftoverStagingDirectories ?? []);
 
     /// <summary>
     /// Returns a copy whose failures are exactly <paramref name="failures"/>, keeping every other part of
@@ -184,7 +202,7 @@ public sealed class RecycleBinResult
     /// </remarks>
     /// <param name="failures">The failures the copy should carry, in the order they should be read.</param>
     internal RecycleBinResult WithFailures(IReadOnlyList<RecycleFailure> failures) =>
-        new(RecycledPaths, PermanentlyDeletedPaths, failures, Elapsed);
+        new(RecycledPaths, PermanentlyDeletedPaths, failures, Elapsed, LeftoverStagingDirectories);
 
     /// <summary>
     /// Returns a copy whose permanently deleted paths are exactly <paramref name="permanentlyDeletedPaths"/>,
@@ -195,5 +213,5 @@ public sealed class RecycleBinResult
     /// own removals come before the operation's, because they happened before the batch was moved at all.
     /// </param>
     internal RecycleBinResult WithPermanentlyDeleted(IReadOnlyList<string> permanentlyDeletedPaths) =>
-        new(RecycledPaths, permanentlyDeletedPaths, Failures, Elapsed);
+        new(RecycledPaths, permanentlyDeletedPaths, Failures, Elapsed, LeftoverStagingDirectories);
 }
