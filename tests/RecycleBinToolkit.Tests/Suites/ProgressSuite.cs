@@ -27,6 +27,8 @@ internal static class ProgressSuite
         new TestCase("ProgressSuite." + nameof(AnEmptyBatchReportsNothingAndDoesNotHang), AnEmptyBatchReportsNothingAndDoesNotHang),
         new TestCase("ProgressSuite." + nameof(OneOptionsInstanceServesTwoCalls), OneOptionsInstanceServesTwoCalls),
         new TestCase("ProgressSuite." + nameof(ACancelledCallStillFinishesItsQueue), ACancelledCallStillFinishesItsQueue),
+        new TestCase("ProgressSuite." + nameof(EveryRestoredEntryReportsOnce), EveryRestoredEntryReportsOnce),
+        new TestCase("ProgressSuite." + nameof(AMergesPutBackIsNotReported), AMergesPutBackIsNotReported),
     ];
 
     /// <summary>
@@ -527,6 +529,137 @@ internal static class ProgressSuite
             .ConfigureAwait(false);
 
         Check.True(Volatile.Read(ref reported) < files.Count, $"and the batch really was abandoned (got {Volatile.Read(ref reported)} of {files.Count})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// Every entry a caller handed over is reported once, and every report carries the entry's own number
+    /// from one counter the engine's parallel volumes share.
+    /// </summary>
+    private static async Task EveryRestoredEntryReportsOnce(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var volumeRoot = ScratchWorkspace.VolumeRoot;
+
+        var files = workspace.CreateRandomFiles(6, 4096);
+        var recycled = await RecycleBin.RecycleAsync(files, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.True(recycled.Succeeded, $"the files reached the bin (first failure: {recycled.FirstFailure?.Stage})");
+
+        var entries = Listing
+            .OnlyEntries(
+                await RecycleBin.GetItemsAsync(volumeRoot, new GetItemsOptions { PreloadItemDetails = true }, context.CancellationToken)
+                    .ConfigureAwait(false),
+                volumeRoot)
+            .Where(item => files.Any(file => string.Equals(file, item.OriginalPath, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+
+        Check.Equal(files.Count, entries.Length, "every one of them came back out of the listing");
+
+        var reported = new List<RestoreProgress>();
+        var options = new RestoreOptions
+        {
+            OnItemProcessed = progress =>
+            {
+                lock (reported)
+                {
+                    reported.Add(progress);
+                }
+            },
+            WaitForProgressCallbacks = true,
+        };
+
+        var result = await RecycleBin.RestoreAsync(entries, options, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(files.Count, result.ItemsRestored, $"every entry went back (failures: {string.Join(", ", result.Failures.Select(f => f.Stage))})");
+
+        var events = Snapshot(reported);
+
+        Check.Equal(files.Count, events.Count, "one report per entry handed over, across whatever volumes ran at once");
+        Check.Equal(
+            string.Join(", ", Enumerable.Range(1, files.Count)),
+            string.Join(", ", events.Select(e => e.Index).Order()),
+            "numbered from one shared counter, each number handed out once");
+        Check.True(events.All(progress => progress.Count == files.Count), "against the number of entries asked about");
+        Check.True(events.All(progress => progress.Status == RestoreStatus.Restored), "and every one of them restored");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A merge that could not put a file back sends it to the Recycle Bin again. Those files were never in
+    /// the caller's list, so reporting them would push the reports' own index past the count the caller is
+    /// holding — for items they never asked about.
+    /// </summary>
+    private static async Task AMergesPutBackIsNotReported(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a directory to merge into one already on disk");
+
+        var tree = Path.Combine(ScratchWorkspace.Root, "tree");
+        Directory.CreateDirectory(tree);
+        await File.WriteAllTextAsync(Path.Combine(tree, "collides.bin"), "incoming", context.CancellationToken)
+            .ConfigureAwait(false);
+        await File.WriteAllTextAsync(Path.Combine(tree, "free.bin"), "incoming too", context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var recycled = await RecycleBin
+            .RecycleAsync([tree], new RecycleOptions { ThrowOnError = false }, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.True(recycled.Succeeded, $"the directory reached the bin (first failure: {recycled.FirstFailure?.Stage})");
+
+        // Put back at the path the directory was deleted from, holding one of the files it is about to be
+        // merged over. That file is the one the merge cannot place, which is what sends it to the bin again.
+        Directory.CreateDirectory(tree);
+        await File.WriteAllTextAsync(Path.Combine(tree, "collides.bin"), "already here", context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var volumeRoot = ScratchWorkspace.VolumeRoot;
+        var entry = Listing
+            .OnlyEntries(
+                await RecycleBin.GetItemsAsync(volumeRoot, new GetItemsOptions { PreloadItemDetails = true }, context.CancellationToken)
+                    .ConfigureAwait(false),
+                volumeRoot)
+            .FirstOrDefault(item => item.IsDirectory && string.Equals(item.OriginalPath, tree, StringComparison.OrdinalIgnoreCase));
+
+        Check.NotNull(entry, "the directory came back out of the listing");
+
+        var reported = new List<RestoreProgress>();
+        var options = new RestoreOptions
+        {
+            DirectoryConflict = RestoreDirectoryConflict.MergeSkip,
+            OnItemProcessed = progress =>
+            {
+                lock (reported)
+                {
+                    reported.Add(progress);
+                }
+            },
+            WaitForProgressCallbacks = true,
+        };
+
+        var restored = await RecycleBin.RestoreAsync([entry!], options, context.CancellationToken).ConfigureAwait(false);
+
+        // Without this the case would pass on a merge that placed everything, and there would be no put-back
+        // for the assertion below to be about.
+        Check.True(
+            restored.Conflicts.Any(conflict => conflict.Action == RecycleRestoreConflictAction.MergedSkipped),
+            $"a file the merge could not place went back to the bin ({string.Join(", ", restored.Conflicts.Select(c => c.Action))})");
+
+        var events = Snapshot(reported);
+
+        Check.Equal(1, events.Count, "one entry in, one report out, however many of its files went back to the bin");
+        Check.Equal(RestoreStatus.Merged, events[0].Status, "and it is reported as merged rather than restored");
+        Check.Equal(1, events[0].Count, "against a count of the entries handed over, not of the files involved");
 
         workspace.Dispose();
     }

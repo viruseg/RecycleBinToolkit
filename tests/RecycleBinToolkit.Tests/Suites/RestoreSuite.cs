@@ -3222,7 +3222,7 @@ internal static class RestoreSuite
         await cancelling.CancelAsync();
 
         var thrown = Check.Throws<OperationCanceledException>(
-            () => RestoreRunner.Run(items, RestoreOptions.Default, cancelling.Token),
+            () => RestoreRunner.Run(items, RestoreOptions.Default, sink: null, cancelling.Token),
             "the engine raises rather than reporting entries it never decided about");
 
         Check.Equal(cancelling.Token, thrown.CancellationToken, "carrying the token the caller cancelled");

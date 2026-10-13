@@ -299,15 +299,27 @@ public static class RecycleBin
 
         var effective = options ?? RestoreOptions.Default;
 
+        // Armed here and not in the volume-group overload, which flattens and forwards: a sink built on
+        // the way in and a second one on the way through would leave half the queue unwatched.
+        var sink = effective.ArmProgress();
+        sink?.SetCount(items.Count);
+
         // Started before the work is queued so that Elapsed covers the wait for a pool thread as well as
         // the restore itself.
         var stopwatch = Stopwatch.StartNew();
 
-        var restored = await Task
-            .Run(() => RestoreRunner.Run(items, effective, cancellationToken), cancellationToken)
-            .ConfigureAwait(false);
+        try
+        {
+            var restored = await Task
+                .Run(() => RestoreRunner.Run(items, effective, sink, cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
 
-        return restored.WithElapsed(stopwatch.Elapsed);
+            return restored.WithElapsed(stopwatch.Elapsed);
+        }
+        finally
+        {
+            await effective.FinishProgressAsync(effective.WaitForProgressCallbacks).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Restores every entry in every volume group of a listing.</summary>

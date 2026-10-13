@@ -63,9 +63,14 @@ internal static class RestoreRunner
     /// library promises the raise and nothing about the stopping point.</item>
     /// </list>
     /// </remarks>
+    /// <param name="sink">
+    /// Where each entry's outcome is reported as it is decided, or <see langword="null"/> for a run whose
+    /// reports nobody asked for.
+    /// </param>
     internal static RecycleBinRestoreResult Run(
         IReadOnlyList<RecycleBinItem> items,
         RecycleBinOptions options,
+        ProgressSink? sink,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(items);
@@ -107,7 +112,7 @@ internal static class RestoreRunner
                 index => RunDisk(disks[index], options, budget, slots, cancellationToken));
         }
 
-        return Flatten(slots, items);
+        return Flatten(slots, items, sink);
     }
 
     /// <summary>
@@ -506,7 +511,7 @@ internal static class RestoreRunner
             // answered by a mover of another volume.
             if (!settled.TryAdd(item, 0))
             {
-                slots[position] = Failed(originalPath, item.Size, hResult: 0, attempts: 0);
+                Settle(Failed(originalPath, item.Size, hResult: 0, attempts: 0), new RecycleFailure(originalPath, 0, 0, RecycleFailureStage.RestoreFailed));
                 return;
             }
         }
@@ -516,7 +521,8 @@ internal static class RestoreRunner
             // got to use and the caller needs to see. Only a record that could not be read leaves nothing to
             // name, because that record is the one thing saying where the entry was deleted from, and its own
             // $I path is what is left.
-            slots[position] = Failed(originalPath ?? item.IndexPath, item.Size, ex.HResult, attempts: 0);
+            var failed = Failed(originalPath ?? item.IndexPath, item.Size, ex.HResult, attempts: 0);
+            Settle(failed, new RecycleFailure(failed.Path, ex.HResult, 0, RecycleFailureStage.RestoreFailed));
             return;
         }
 
@@ -536,7 +542,8 @@ internal static class RestoreRunner
                 // record the same way — so this is not retried. What it reports is how many placements were
                 // already made before it, which is zero on the first attempt and the entry's own count on any
                 // after that.
-                slots[position] = Failed(originalPath!, item.Size, ex.HResult, attempts: attempt - 1);
+slots[position] = Failed(originalPath!, item.Size, ex.HResult, attempts: attempt - 1);
+                Settle(slots[position], new RecycleFailure(originalPath!, ex.HResult, attempt - 1, RecycleFailureStage.RestoreFailed));
                 return;
             }
 
@@ -544,9 +551,9 @@ internal static class RestoreRunner
             {
                 switch (decision.Action)
                 {
-                case RestoreAction.Move when Merges(item, decision, options):
-                    slots[position] = Merge(item, decision.TargetPath, options, putBack, attempt, cancellationToken);
-                    break;
+                    case RestoreAction.Move when Merges(item, decision, options):
+                        Settle(Merge(item, decision.TargetPath, options, putBack, attempt, cancellationToken), failure: null);
+                        break;
 
                     // The three that put a payload down share one arm, because they differ only in the kind
                     // they report and in whether the move is an overwrite — and a retry loop is what they have
@@ -554,18 +561,28 @@ internal static class RestoreRunner
                     case RestoreAction.Move:
                     case RestoreAction.Replace:
                     case RestoreAction.Rename:
-                        slots[position] = PlaceDown(item, ref decision, originalPath!, attempt);
+                        Settle(PlaceDown(item, ref decision, originalPath!, attempt), failure: null);
                         break;
 
                     default:
-                        slots[position] = new RestoreOutcome(
-                            IsRefusal(item, options) ? RestoreOutcomeKind.Refused : RestoreOutcomeKind.Skipped,
-                            decision.TargetPath,
-                            item.Size)
-                        {
-                            OccupiedByDirectory = decision.OccupiedByDirectory
-                        };
+                    {
+                        // The kind is the only difference between the two, and reading it rather than
+                        // re-deciding it here is what keeps this arm and RestoreRunner.Flatten answering alike.
+                        var refused = IsRefusal(item, options);
+
+                        Settle(
+                            new RestoreOutcome(
+                                refused ? RestoreOutcomeKind.Refused : RestoreOutcomeKind.Skipped,
+                                decision.TargetPath,
+                                item.Size)
+                            {
+                                OccupiedByDirectory = decision.OccupiedByDirectory
+                            },
+                            refused
+                                ? new RecycleFailure(decision.TargetPath, 0, 0, RecycleFailureStage.RestoreConflictRefused)
+                                : null);
                         break;
+                    }
                 }
 
                 return;
@@ -590,9 +607,46 @@ internal static class RestoreRunner
                 cancellationToken.ThrowIfCancellationRequested();
 
                 slots[position] = Failed(decision.TargetPath, item.Size, ex.HResult, attempt);
+                Settle(slots[position], new RecycleFailure(decision.TargetPath, ex.HResult, attempt, RecycleFailureStage.RestoreFailed));
                 return;
             }
         }
+
+        // Every entry's answer is written once, and the report goes out with it rather than from Flatten
+        // afterwards: Flatten runs when the whole call is over, and a call that restores thirty thousand
+        // entries would then hand the caller all thirty thousand reports at once.
+        void Settle(RestoreOutcome outcome, RecycleFailure? failure)
+        {
+            slots[position] = outcome;
+            Report(options.OnItemProcessed, outcome, failure);
+        }
+    }
+
+    /// <summary>
+    /// Queues one report about a restored entry, or does nothing at all when nobody asked for reports.
+    /// </summary>
+    /// <remarks>
+    /// The status is read off the outcome rather than off the branch that produced it, because
+    /// <see cref="Flatten"/> answers the same question once and a second answer here would be free to
+    /// drift from it.
+    /// </remarks>
+    private static void Report(ProgressSink? sink, RestoreOutcome outcome, RecycleFailure? failure)
+    {
+        if (sink is null)
+        {
+            return;
+        }
+
+        var status = outcome.Kind switch
+        {
+            RestoreOutcomeKind.Merged => RestoreStatus.Merged,
+            RestoreOutcomeKind.Skipped => RestoreStatus.Skipped,
+            RestoreOutcomeKind.Refused => RestoreStatus.Skipped,
+            RestoreOutcomeKind.Failed => RestoreStatus.Failed,
+            _ => RestoreStatus.Restored
+        };
+
+        sink.Report(new RestoreProgress(sink.NextIndex(), sink.Count, status, outcome.Path, sink.Elapsed, failure));
     }
 
     /// <summary>
@@ -1552,7 +1606,14 @@ internal static class RestoreRunner
     /// the engine rather than a thing a run can arrange from outside.
     /// </para>
     /// </remarks>
-    private static RecycleBinRestoreResult Flatten(RestoreOutcome[] slots, IReadOnlyList<RecycleBinItem> items)
+    /// <param name="sink">
+    /// Where an entry nothing decided is reported. Every other outcome has already gone out as it was
+    /// reached, which is why only this one needs it.
+    /// </param>
+    private static RecycleBinRestoreResult Flatten(
+        RestoreOutcome[] slots,
+        IReadOnlyList<RecycleBinItem> items,
+        ProgressSink? sink)
     {
         var restoredPaths = new List<string>(slots.Length);
         var conflicts = new List<RecycleRestoreConflict>();
@@ -1603,11 +1664,20 @@ internal static class RestoreRunner
                     break;
 
                 case RestoreOutcomeKind.Undecided:
-                    failures.Add(new RecycleFailure(
+                    // The one outcome nothing ever writes, so there is no write to hang the report on. It is
+                    // reported here, where the entry's own record is known — the only place it is — and it
+                    // lands last because nothing else is left by then.
+                    var failure = new RecycleFailure(
                         items[position].IndexPath,
                         0,
                         0,
-                        RecycleFailureStage.RestoreFailed));
+                        RecycleFailureStage.RestoreFailed);
+
+                    failures.Add(failure);
+                    Report(
+                        sink,
+                        new RestoreOutcome(RestoreOutcomeKind.Failed, items[position].IndexPath, 0),
+                        failure);
                     break;
             }
         }
