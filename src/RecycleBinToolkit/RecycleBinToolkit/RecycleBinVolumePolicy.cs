@@ -107,7 +107,7 @@ internal static class RecycleBinVolumePolicy
     /// <see cref="RecycleBinAvailabilityReason.VolumeNotFound"/> ignores the setting: the volume holding
     /// the path is not mounted, so there is nothing to hand over and nothing to destroy. A path that is
     /// itself missing is a different case, and it is rejected earlier, at
-    /// <see cref="RecycleFailureStage.PathValidation"/>.
+    /// <see cref="RecyclePathFailureStage.PathValidation"/>.
     /// </para>
     /// </remarks>
     internal static bool RefusesRecycle(RecycleBinAvailabilityReason reason, NoRecycleBinAction action) =>

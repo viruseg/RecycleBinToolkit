@@ -24,7 +24,7 @@ internal static class RecycleBinThrowHelper
     /// Reports an item that never reached the Recycle Bin, preserving the error code both on
     /// the exception and on its <see cref="Exception.InnerException"/>.
     /// </summary>
-    internal static void ThrowRecycleFailed(RecycleFailure failure) =>
+    internal static void ThrowRecycleFailed(RecycleFailure<RecyclePathFailureStage> failure) =>
         throw new RecycleFailedException(failure);
 
     /// <summary>
@@ -36,7 +36,7 @@ internal static class RecycleBinThrowHelper
     /// location that works, and saying so is the whole answer.
     /// </remarks>
     [DoesNotReturn]
-    internal static void ThrowVolumeNotAddressableByGuid(RecycleFailure failure) =>
+    internal static void ThrowVolumeNotAddressableByGuid(RecycleFailure<RecyclePathFailureStage> failure) =>
         throw new NotSupportedException(
 $"'{failure.Path}' names its volume by GUID, which this library cannot measure, empty or " +
             "report against, so it was refused before anything was asked. Address the same location by drive " +
@@ -52,7 +52,7 @@ $"'{failure.Path}' names its volume by GUID, which this library cannot measure, 
     /// Nothing was moved and the file is where it was.
     /// </remarks>
     [DoesNotReturn]
-    internal static void ThrowPathTooLong(RecycleFailure failure) =>
+    internal static void ThrowPathTooLong(RecycleFailure<RecyclePathFailureStage> failure) =>
         throw new PathTooLongException(
             $"'{failure.Path}' cannot be recorded in the Recycle Bin on this machine, because its index record has a fixed-size " +
             $"path field. The file was left in place. Set LongPathFailureAction to DeletePermanently to remove it instead, " +
@@ -64,7 +64,7 @@ $"'{failure.Path}' names its volume by GUID, which this library cannot measure, 
 /// </summary>
 internal sealed class RecycleFailedException : IOException
 {
-    internal RecycleFailedException(RecycleFailure failure)
+    internal RecycleFailedException(RecycleFailure<RecyclePathFailureStage> failure)
         : base(
             BuildMessage(failure),
             // The file system's own code is carried as an inner exception because it is the only exception
@@ -80,12 +80,12 @@ internal sealed class RecycleFailedException : IOException
     }
 
     /// <summary>The failure record this exception was built from.</summary>
-    public RecycleFailure Failure { get; }
+    public RecycleFailure<RecyclePathFailureStage> Failure { get; }
 
-    private static string BuildMessage(RecycleFailure failure) =>
+    private static string BuildMessage(RecycleFailure<RecyclePathFailureStage> failure) =>
         $"Could not move to the Recycle Bin after {failure.Attempts} attempt(s): " +
         $"stage={failure.Stage}, hresult=0x{failure.HResult:X8}, path='{failure.Path}'.";
 
-    private static string BuildComMessage(RecycleFailure failure) =>
+    private static string BuildComMessage(RecycleFailure<RecyclePathFailureStage> failure) =>
         $"The file system reported 0x{failure.HResult:X8} for '{failure.Path}' at stage {failure.Stage}.";
 }

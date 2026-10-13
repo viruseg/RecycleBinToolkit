@@ -89,9 +89,6 @@ internal static class RestoreSuite
         Check.Equal(RestoreDirectoryConflict.MergeReplace, normalized.DirectoryConflict, "directory policy survives normalization");
         Check.Equal(RestoreFileConflict.Rename, normalized.FileConflict, "file policy survives normalization");
 
-        Check.Equal(10, (int)RecycleFailureStage.RestoreFailed, "RestoreFailed keeps clear of the removed Shell stages");
-        Check.Equal(11, (int)RecycleFailureStage.RestoreConflictRefused, "RestoreConflictRefused follows it");
-
         var conflict = new RecycleRestoreConflict("b", true, RecycleRestoreConflictAction.Skipped);
         Check.Equal(0, (int)RecycleRestoreConflictAction.Skipped, "Skipped keeps number 0");
         Check.Equal(1, (int)RecycleRestoreConflictAction.RestoredRenamed, "RestoredRenamed takes number 1");
@@ -116,7 +113,7 @@ internal static class RestoreSuite
 
         // A conflict alone does not make the result fail, so the false branch is only reachable through
         // a failure — and through any of them, whatever the reason recorded on it.
-        var failed = new RecycleBinRestoreResult([], [conflict], [new RecycleFailure("c", 0, 1, RecycleFailureStage.RestoreFailed)], 0, 0, TimeSpan.Zero);
+        var failed = new RecycleBinRestoreResult([], [conflict], [new RecycleFailure<RestoreFailureStage>("c", 0, 1, RestoreFailureStage.RestoreFailed)], 0, 0, TimeSpan.Zero);
         Check.False(failed.Succeeded, "one failure makes the result not have succeeded");
         Check.Equal(1, failed.Failures.Count, "and the failure is carried");
 
@@ -862,7 +859,7 @@ internal static class RestoreSuite
     /// from a skip, which is the one thing the two policies are apart.
     /// <para>
     /// The code and the round count are zero because nothing was attempted: the refusal is settled before any
-    /// move, which is what <see cref="RecycleFailure.Attempts"/> reports as zero everywhere else too.
+    /// move, which is what <see cref="RecycleFailure{TStage}.Attempts"/> reports as zero everywhere else too.
     /// </para>
     /// </remarks>
     private static async Task ATakenFilePathIsRefusedAsBothAConflictAndAFailure(TestContext context)
@@ -901,7 +898,7 @@ internal static class RestoreSuite
 
         Check.Equal(1, result.Failures.Count, "and it is a failure as well");
         Check.Equal(target, result.Failures[0].Path, "under the path that was refused");
-        Check.Equal(RecycleFailureStage.RestoreConflictRefused, result.Failures[0].Stage, "at the stage a refusal is reported at");
+        Check.Equal(RestoreFailureStage.RestoreConflictRefused, result.Failures[0].Stage, "at the stage a refusal is reported at");
         Check.Equal(0, result.Failures[0].HResult, "nothing was attempted, so the file system has no code to report");
         Check.Equal(0, result.Failures[0].Attempts, "and nothing was tried");
         Check.Equal(1, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry stays in the bin, so the refusal is worth a second attempt");
@@ -1096,7 +1093,7 @@ internal static class RestoreSuite
     /// <item>One attempt, for the reason <c>AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin</c> gives.
     /// How often a refusal that will not change is asked again is
     /// <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's, and that
-    /// is why the case says nothing about <see cref="RecycleFailure.Attempts"/>.</item>
+    /// is why the case says nothing about <see cref="RecycleFailure{TStage}.Attempts"/>.</item>
     /// </list>
     /// </remarks>
     private static async Task AnEntryWhosePayloadIsGoneIsAFailureAndNothingElse(TestContext context)
@@ -1130,7 +1127,7 @@ internal static class RestoreSuite
 
         Check.Equal(1, result.Failures.Count, "exactly one failure");
         Check.Equal(target, result.Failures[0].Path, "under the path the entry wanted");
-        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "reported as a restore failure");
+        Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[0].Stage, "reported as a restore failure");
         Check.True(
             (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
             $"the file system's own code rather than none: 0x{result.Failures[0].HResult:X8}");
@@ -1187,7 +1184,7 @@ internal static class RestoreSuite
 
         Check.Equal(1, result.Failures.Count, "and the repeat is reported");
         Check.Equal(target, result.Failures[0].Path, "under the path the entry came from");
-        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "as a restore failure");
+        Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[0].Stage, "as a restore failure");
         Check.Equal(0, result.Failures[0].HResult, "with no code of its own, because the filesystem was never asked");
         Check.Equal(0, result.Failures[0].Attempts, "and nothing was attempted for it");
         Check.False(result.Succeeded, "so a call that was handed one entry twice does not report having done what it was asked");
@@ -1235,7 +1232,7 @@ internal static class RestoreSuite
 
         Check.Equal(1, result.Failures.Count, "the entry is reported rather than raised out of the call");
         Check.Equal(neverWritten.IndexPath, result.Failures[0].Path, "under the only path an entry carries without reading its record");
-        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a restore failure is reported");
+        Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a restore failure is reported");
         Check.True(
             (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
             $"and with the file system's own code for a record that is not there: 0x{result.Failures[0].HResult:X8}");
@@ -1487,7 +1484,7 @@ internal static class RestoreSuite
 
         Check.Equal(1, result.Failures.Count, "and it is a failure as well");
         Check.Equal(shape.Root, result.Failures[0].Path, "under the path that was refused");
-        Check.Equal(RecycleFailureStage.RestoreConflictRefused, result.Failures[0].Stage, "at the stage a refusal is reported at");
+        Check.Equal(RestoreFailureStage.RestoreConflictRefused, result.Failures[0].Stage, "at the stage a refusal is reported at");
         Check.Equal(0, result.Failures[0].HResult, "nothing was attempted, so the file system has no code to report");
         Check.Equal(0, result.Failures[0].Attempts, "and nothing was tried");
 
@@ -1993,12 +1990,12 @@ internal static class RestoreSuite
                 "every refusal is reported, because all three happened: "
                 + string.Join(" | ", result.Failures.Select(f => $"{f.Stage} {f.Attempts}x 0x{f.HResult:X8} {f.Path}")));
             Check.Equal(shape.KeepPath, result.Failures[0].Path, "the move's refusal, under the path the file wanted and not the directory's");
-            Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move is reported at");
+            Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move is reported at");
             Check.True(result.Failures[0].Attempts > 0, $"and it is the move that was attempted ({result.Failures[0].Attempts})");
             Check.Equal(shape.KeepPath, result.Failures[1].Path, "and the put-back's, under the same file");
-            Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[1].Stage, "at the same stage: a file this library could not put anywhere");
+            Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[1].Stage, "at the same stage: a file this library could not put anywhere");
             Check.Equal(shape.Root, result.Failures[2].Path, "and the directory's own, which is what withheld the removal of the payload");
-            Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[2].Stage, "also at the stage a restore that did not finish is reported at");
+            Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[2].Stage, "also at the stage a restore that did not finish is reported at");
 
             Check.Equal(0, result.ItemsRestored, "so the directory is not reported as restored");
             Check.Equal(0, result.RestoredPaths.Count, "and is not named as restored");
@@ -2081,7 +2078,7 @@ internal static class RestoreSuite
 
         Check.False(result.Succeeded, "the default merge policy cannot merge into a file, so the call reports having failed");
         Check.Equal(1, result.Failures.Count, "the directory is the one failure");
-        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move arrives");
+        Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move arrives");
         Check.Equal(root, result.Failures[0].Path, "under the path it wanted");
         Check.Equal(0, result.Conflicts.Count, "and no conflict is reported, because nothing settled anything");
         Check.Equal(0, result.ItemsRestored, "nothing left the bin");
@@ -2220,7 +2217,7 @@ internal static class RestoreSuite
     /// <item>One attempt, for the reason <c>AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin</c> gives.
     /// How often a refusal that will not change is asked again is
     /// <see cref="AMoveRefusedForAsLongAsItIsHeldIsRetriedUpToMaxAttempts"/>'s claim, not this one's, and that
-    /// is why the case says nothing about <see cref="RecycleFailure.Attempts"/>.</item>
+    /// is why the case says nothing about <see cref="RecycleFailure{TStage}.Attempts"/>.</item>
     /// </list>
     /// </remarks>
     private static async Task AFileRestoringOntoADirectoryIsAFailureAndTouchesNothing(TestContext context)
@@ -2258,7 +2255,7 @@ internal static class RestoreSuite
 
         Check.Equal(1, result.Failures.Count, "the file is reported as one failure");
         Check.Equal(target, result.Failures[0].Path, "under the path it wanted");
-        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a failed move is reported");
+        Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a failed move is reported");
         Check.True(
             (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
             $"carrying the file system's own code rather than none: 0x{result.Failures[0].HResult:X8}");
@@ -2321,7 +2318,7 @@ internal static class RestoreSuite
 
         Check.Equal(1, result.Failures.Count, "and only the other one failed");
         Check.Equal(stale, result.Failures[0].Path, "reported under its own path");
-        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a failed move is reported");
+        Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a failed move is reported");
         Check.False(result.Succeeded, "so the result still says the batch did not do everything it was asked");
 
         Check.False(File.Exists(stale), "while nothing was invented at the destination of the one that could not be moved");
@@ -2375,7 +2372,7 @@ internal static class RestoreSuite
 
             Check.Equal(1, result.Failures.Count, "the entry is reported as one failure");
             Check.Equal(target, result.Failures[0].Path, "under the path it wanted");
-            Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a restore that did not finish is reported");
+            Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a restore that did not finish is reported");
             Check.True(
                 (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
                 $"with the file system's own code for a record that is held: 0x{result.Failures[0].HResult:X8}");
@@ -2452,7 +2449,7 @@ internal static class RestoreSuite
         Check.Equal(1, result.Failures.Count, "one failure, however many attempts it took");
         Check.Equal(3, result.Failures[0].Attempts, "and it reports the real number of attempts it made");
         Check.Equal(target, result.Failures[0].Path, "under the path the entry wanted");
-        Check.Equal(RecycleFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move is reported at");
+        Check.Equal(RestoreFailureStage.RestoreFailed, result.Failures[0].Stage, "at the stage a refused move is reported at");
         Check.True(
             (result.Failures[0].HResult & unchecked((int)0x80000000)) != 0,
             $"carrying the file system's own code for a held destination: 0x{result.Failures[0].HResult:X8}");
@@ -2879,7 +2876,7 @@ internal static class RestoreSuite
 
         foreach (var failure in result.Failures)
         {
-            Check.Equal(RecycleFailureStage.RestoreFailed, failure.Stage, $"{failure.Path} is reported as a restore failure");
+            Check.Equal(RestoreFailureStage.RestoreFailed, failure.Stage, $"{failure.Path} is reported as a restore failure");
 
             // An entry the engine never asked about carries no code, and that is what makes this the
             // assertion it is rather than a count.
@@ -2970,7 +2967,7 @@ internal static class RestoreSuite
     /// is not there has no entries to restore and no volume to say which one could not be answered.
     /// </summary>
     /// <remarks>
-    /// A failure entry would be the alternative, and it is the wrong shape: <see cref="RecycleFailure.Path"/>
+    /// A failure entry would be the alternative, and it is the wrong shape: <see cref="RecycleFailure{TStage}.Path"/>
     /// is a path, and there is not one here to name — the group is absent rather than empty.
     /// <list type="bullet">
     /// <item>The group beside the null carries an entry that exists, so a runner that flattened first and

@@ -4,7 +4,7 @@ namespace RecycleBinToolkit;
 /// <remarks>
 /// No value writes outside the directory the caller named, and nothing already on disk is renamed or moved.
 /// A destination occupied by a <em>file</em> is a conflict like any other: the merge values have no tree to
-/// merge into, so the move is refused and reported at <see cref="RecycleFailureStage.RestoreFailed"/>, where
+/// merge into, so the move is refused and reported at <see cref="RestoreFailureStage.RestoreFailed"/>, where
 /// <see cref="RenameDirectory"/> takes a free name instead.
 /// </remarks>
 public enum RestoreDirectoryConflict

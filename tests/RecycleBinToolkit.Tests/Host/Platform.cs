@@ -1,6 +1,5 @@
 using System.Runtime.Versioning;
 
-// These tests drive the Windows Shell COM interop directly and only run on Windows; Program.cs
-// exits early elsewhere. Declaring it for the whole assembly keeps the platform-compatibility
-// analyzer accurate without repeating an attribute at every call site.
+// Declared for the whole assembly so the platform-compatibility analyzer stays accurate: the lowest build
+// this suite drives is the one that reads a version 2 record, and Program.cs exits early below it.
 [assembly: SupportedOSPlatform("windows10.0.14393")]

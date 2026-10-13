@@ -130,7 +130,7 @@ internal static class VolumeSuite
     /// The answer is the same for all three operations that take a root, which is what makes it a rule
     /// rather than three coincidences: <see cref="RecycleBin.GetStatusAsync"/> names the volume as not
     /// found, and the two that act name the path as one that was not a volume root — the same
-    /// <see cref="RecycleFailureStage.PathValidation"/> each already returns for any other path inside a
+    /// <see cref="RecyclePathFailureStage.PathValidation"/> each already returns for any other path inside a
     /// volume. <see cref="RecycleBin.GetItemsAsync"/> is included because refusing a non-root there is
     /// recent, and a caller's first sign of that rule would be an exception rather than an empty listing.
     /// </para>
@@ -157,9 +157,9 @@ internal static class VolumeSuite
         Check.Equal(0, listed.Items.Count, "a listing of one returns nothing, because no volume was resolved to list");
         Check.Equal(1, listed.Failures.Count, "and says the path was not a volume root");
         Check.Equal(
-            RecycleFailureStage.PathValidation,
+            ListFailureStage.Enumeration,
             listed.Failures[0].Stage,
-            "at the stage the same refusal already arrives with, rather than raising from the path API");
+            "in the listing's own terms, because a listing reports only that it could not read a volume");
 
         var emptied = await RecycleBin.EmptyAsync(NulInRoot, cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
@@ -168,8 +168,8 @@ internal static class VolumeSuite
         Check.Equal(0, emptied.ItemsRemoved, "and removes nothing");
         Check.Equal(1, emptied.Failures.Count, "and says the path was not a volume root");
         Check.Equal(
-            RecycleFailureStage.PathValidation,
+            EmptyFailureStage.Enumeration,
             emptied.Failures[0].Stage,
-            "the same way the listing refused it, so all three answer one input the same way");
+            "in the empty's own terms: the same refusal, under a stage of its own rather than one borrowed from a recycle");
     }
 }

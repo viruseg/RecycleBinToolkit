@@ -12,7 +12,7 @@ public sealed class RecycleBinContents
     /// <param name="elapsed">Time the listing took.</param>
     public RecycleBinContents(
         IReadOnlyList<RecycleBinVolumeContents> items,
-        IReadOnlyList<RecycleFailure> failures,
+        IReadOnlyList<RecycleFailure<ListFailureStage>> failures,
         TimeSpan elapsed)
     {
         Items = items;
@@ -38,8 +38,8 @@ public sealed class RecycleBinContents
     /// </summary>
     public IReadOnlyList<RecycleBinVolumeContents> Items { get; }
 
-    /// <summary>Entries that could not be read, at stage <see cref="RecycleFailureStage.Enumeration"/>.</summary>
-    public IReadOnlyList<RecycleFailure> Failures { get; }
+    /// <summary>Records in a Recycle Bin that could not be read.</summary>
+    public IReadOnlyList<RecycleFailure<ListFailureStage>> Failures { get; }
 
     /// <summary>Time the listing took.</summary>
     public TimeSpan Elapsed { get; }

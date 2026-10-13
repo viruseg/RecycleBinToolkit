@@ -230,7 +230,7 @@ internal static class ListerSuite
     /// <remarks>
     /// <see cref="RecycleBin.GetStatusAsync"/> answers the same input with
     /// <see cref="RecycleBinAvailabilityReason.VolumeNotFound"/> and <see cref="RecycleBin.EmptyAsync"/>
-    /// with a <see cref="RecycleFailureStage.PathValidation"/> failure naming the path. A listing that
+    /// with a <see cref="ListFailureStage.PathValidation"/> failure naming the path. A listing that
     /// returned neither left a caller with no way to tell a mistyped root from an empty bin.
     /// </remarks>
     private static async Task APathInsideAVolumeIsNotAVolumeToList(TestContext context)
@@ -251,7 +251,7 @@ internal static class ListerSuite
         Check.Equal(1, contents.Failures.Count, "and the caller is told the path was not one");
 
         var failure = contents.Failures[0];
-        Check.Equal(RecycleFailureStage.PathValidation, failure.Stage, "as a path that was not a volume root");
+        Check.Equal(ListFailureStage.Enumeration, failure.Stage, "as a volume whose Recycle Bin could not be walked, the path not being one");
         Check.Equal(ScratchWorkspace.Root, failure.Path, "naming the path the caller passed");
 
         workspace.Dispose();

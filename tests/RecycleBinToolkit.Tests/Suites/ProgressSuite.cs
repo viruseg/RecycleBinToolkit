@@ -126,7 +126,7 @@ internal static class ProgressSuite
 
         Check.Equal(RecycleStatus.Refused, StatusOf(events, missing, RecycleStatus.Refused), "a path that named nothing is refused, not failed");
         Check.NotNull(FailureOf(events, missing, RecycleStatus.Refused), "and carries the failure saying so");
-        Check.Equal(RecycleFailureStage.PathValidation, FailureOf(events, missing, RecycleStatus.Refused)!.Stage, "which is that nothing was there");
+        Check.Equal(RecyclePathFailureStage.PathValidation, FailureOf(events, missing, RecycleStatus.Refused)!.Stage, "which is that nothing was there");
 
         foreach (var file in files)
         {
@@ -975,7 +975,7 @@ internal static class ProgressSuite
             .Select(progress => progress.Status)
             .FirstOrDefault(status => status == wanted);
 
-    private static RecycleFailure? FailureOf(IReadOnlyList<RecycleProgress> events, string path, RecycleStatus wanted) =>
+    private static RecycleFailure<RecyclePathFailureStage>? FailureOf(IReadOnlyList<RecycleProgress> events, string path, RecycleStatus wanted) =>
         events.First(progress =>
             string.Equals(progress.Path, path, StringComparison.OrdinalIgnoreCase) && progress.Status == wanted).Failure;
 }

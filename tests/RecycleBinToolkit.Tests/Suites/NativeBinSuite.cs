@@ -503,7 +503,7 @@ internal static class NativeBinSuite
 
             var failure = result.FirstFailure;
             Check.NotNull(failure, "and is reported as a failure");
-            Check.Equal(RecycleFailureStage.LongPathNotRecyclable, failure.Stage, "at the stage that says the length is the obstacle");
+            Check.Equal(RecyclePathFailureStage.LongPathNotRecyclable, failure.Stage, "at the stage that says the length is the obstacle");
             Check.Equal(unchecked((int)0x800700CE), failure.HResult, "carrying the code for a name past what the system will take");
             Check.Equal(0, failure.Attempts, "and nothing was attempted");
             Check.True(File.Exists(path), "the file is exactly where the caller left it");
@@ -638,7 +638,7 @@ internal static class NativeBinSuite
             Check.False(File.Exists(fitting), "and is gone from disk");
             Check.Equal(1, result.Failures.Count, "and only the path that does not fit is refused");
             Check.Equal(overLong, result.Failures[0].Path, "and it is named as itself");
-            Check.Equal(RecycleFailureStage.LongPathNotRecyclable, result.Failures[0].Stage, "at the stage that says the length is the obstacle");
+            Check.Equal(RecyclePathFailureStage.LongPathNotRecyclable, result.Failures[0].Stage, "at the stage that says the length is the obstacle");
         }
         finally
         {
@@ -735,7 +735,7 @@ internal static class NativeBinSuite
             var result = RecycleBin.RecycleAsync([path], RecycleOptions.Default, context.CancellationToken).GetAwaiter().GetResult();
 
             Check.False(result.Succeeded, "so the path is refused rather than recorded with an alias that does not fit");
-            Check.Equal(RecycleFailureStage.LongPathNotRecyclable, result.FirstFailure?.Stage, "at the stage that says the length is the obstacle");
+            Check.Equal(RecyclePathFailureStage.LongPathNotRecyclable, result.FirstFailure?.Stage, "at the stage that says the length is the obstacle");
             Check.True(Directory.Exists(path), "and the path is exactly where the caller left it");
         }
         finally
@@ -1010,7 +1010,7 @@ internal static class NativeBinSuite
 
             Check.False(result.Succeeded, "a file that cannot be moved is not reported as recycled");
             Check.Equal(1, result.Failures.Count, "and is named as a failure");
-            Check.Equal(RecycleFailureStage.Performing, result.Failures[0].Stage, "at the stage where the move failed");
+            Check.Equal(RecyclePathFailureStage.Performing, result.Failures[0].Stage, "at the stage where the move failed");
         }
 
         Check.Equal(indexesBefore, IndexRecords().Count, "the record written before the move was taken away again");
@@ -2476,7 +2476,7 @@ var deepestEntries = Directory.GetFileSystemEntries(walk);
         }
 
         Check.Equal(1, contents.Failures.Count, "exactly one entry is reported as unreadable");
-        Check.Equal(RecycleFailureStage.Enumeration, contents.Failures[0].Stage, "at the stage where a listing reports what it could not read");
+        Check.Equal(ListFailureStage.Enumeration, contents.Failures[0].Stage, "at the stage where a listing reports what it could not read");
         Check.Equal(Listing.Flat(baseline).Count - 1, Listing.Flat(contents).Count, "and every other entry is still returned");
 
         workspace.Dispose();
@@ -3219,6 +3219,6 @@ using var workspace = new ScratchWorkspace();
         return content;
     }
 
-    private static string Describe(RecycleFailure? failure) =>
+    private static string Describe(RecycleFailure<RecyclePathFailureStage>? failure) =>
         failure is null ? "none" : $"{failure.Stage} 0x{failure.HResult:X8} {failure.Path}";
 }

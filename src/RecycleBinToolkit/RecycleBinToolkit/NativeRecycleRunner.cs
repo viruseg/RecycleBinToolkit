@@ -84,7 +84,7 @@ internal static class NativeRecycleRunner
         ReportDroppedDuplicates(targets, collapsed, sink);
         var pending = collapsed;
         var recycled = new List<string>(collapsed.Count);
-        var failuresByPath = new Dictionary<string, RecycleFailure>(collapsed.Count, StringComparer.OrdinalIgnoreCase);
+        var failuresByPath = new Dictionary<string, RecycleFailure<RecyclePathFailureStage>>(collapsed.Count, StringComparer.OrdinalIgnoreCase);
         var permanentlyDeleted = new List<string>();
         var staged = new List<StagedTarget>();
         var stagedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -135,7 +135,7 @@ internal static class NativeRecycleRunner
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    RecycleFailure? failure = null;
+                    RecycleFailure<RecyclePathFailureStage>? failure = null;
                     var moved = false;
 
                     // The seam is asked before the move, not after: a fault that let the payload move and
@@ -161,7 +161,7 @@ internal static class NativeRecycleRunner
 
                     if (failure is not null)
                     {
-                        failuresByPath[failure.Path] = new RecycleFailure(failure.Path, failure.HResult, round, failure.Stage);
+                        failuresByPath[failure.Path] = new RecycleFailure<RecyclePathFailureStage>(failure.Path, failure.HResult, round, failure.Stage);
                     }
                 }
 
@@ -205,7 +205,7 @@ internal static class NativeRecycleRunner
                 target.InputPath,
                 failuresByPath.TryGetValue(target.InputPath, out var reason)
                     ? reason
-                    : new RecycleFailure(target.InputPath, 0, options.MaxAttempts, RecycleFailureStage.Performing));
+                    : new RecycleFailure<RecyclePathFailureStage>(target.InputPath, 0, options.MaxAttempts, RecyclePathFailureStage.Performing));
         }
 
         // A path that gave up with no verdict of its own is one the loop stopped before it could record, and
@@ -222,7 +222,7 @@ internal static class NativeRecycleRunner
         // The batch as it was collapsed, not collapsed again: the loop replaced the pending list with the
         // subset it left behind, and hashing every long path through OrdinalIgnoreCase a second time to
         // arrive at the identical list is a pass this does not need to make.
-        var reported = new List<RecycleFailure>(failuresByPath.Count);
+        var reported = new List<RecycleFailure<RecyclePathFailureStage>>(failuresByPath.Count);
 
         foreach (var target in collapsed)
         {
@@ -232,7 +232,7 @@ internal static class NativeRecycleRunner
             }
             else if (unfinished.Contains(target.InputPath))
             {
-                reported.Add(new RecycleFailure(target.InputPath, 0, options.MaxAttempts, RecycleFailureStage.Performing));
+                reported.Add(new RecycleFailure<RecyclePathFailureStage>(target.InputPath, 0, options.MaxAttempts, RecyclePathFailureStage.Performing));
             }
         }
 
@@ -293,7 +293,7 @@ internal static class NativeRecycleRunner
         List<StagedTarget> staged,
         HashSet<string> stagedPaths,
         List<string> permanentlyDeleted,
-        Dictionary<string, RecycleFailure> failuresByPath)
+        Dictionary<string, RecycleFailure<RecyclePathFailureStage>> failuresByPath)
     {
         if (version != IndexFormat.Legacy)
         {
@@ -336,11 +336,11 @@ internal static class NativeRecycleRunner
                 // The file system gave a reason, so report that rather than blaming the length. A delete
                 // that silently did nothing has no reason to carry, and reporting it as too long would
                 // send an integrator looking at the one thing that was not the problem.
-                failuresByPath[target.InputPath] = new RecycleFailure(
+                failuresByPath[target.InputPath] = new RecycleFailure<RecyclePathFailureStage>(
                     target.InputPath,
                     refused,
                     0,
-                    RecycleFailureStage.PermanentDeleteFailed);
+                    RecyclePathFailureStage.PermanentDeleteFailed);
 
                 // A delete that was attempted and refused. The length is what brought the path here; it is
                 // not what stopped the removal, and a caller told otherwise looks at the wrong thing.
@@ -362,11 +362,11 @@ internal static class NativeRecycleRunner
                 continue;
             }
 
-            failuresByPath[target.InputPath] = new RecycleFailure(
+            failuresByPath[target.InputPath] = new RecycleFailure<RecyclePathFailureStage>(
                 target.InputPath,
                 PathTooLong,
                 0,
-                RecycleFailureStage.LongPathNotRecyclable);
+                RecyclePathFailureStage.LongPathNotRecyclable);
 
             // Refused rather than failed because nothing was attempted: the file is where the caller left
             // it, and the only answer is that the record could not name it.
@@ -406,7 +406,7 @@ internal static class NativeRecycleRunner
         List<StagedTarget> staged,
         ProgressSink? sink,
         HashSet<string> stagedPaths,
-        Dictionary<string, RecycleFailure> failuresByPath)
+        Dictionary<string, RecycleFailure<RecyclePathFailureStage>> failuresByPath)
     {
         for (var attempt = 1; attempt <= StageAttempts && awaitingStaging.Count > 0; attempt++)
         {
@@ -436,11 +436,11 @@ internal static class NativeRecycleRunner
 
         foreach (var target in awaitingStaging)
         {
-            var failure = new RecycleFailure(
+            var failure = new RecycleFailure<RecyclePathFailureStage>(
                 target.InputPath,
                 PathTooLong,
                 0,
-                RecycleFailureStage.LongPathNotRecyclable);
+                RecyclePathFailureStage.LongPathNotRecyclable);
 
             failuresByPath[target.InputPath] = failure;
 
@@ -543,13 +543,13 @@ internal static class NativeRecycleRunner
     /// order leaves data that is gone and recorded nowhere, which is the one outcome a Recycle Bin exists to
     /// prevent.
     /// </remarks>
-    private static bool TryRecycle(RecycleTarget target, Dictionary<string, (string Path, BinStemSequencer Stems)> bins, int version, CancellationToken cancellationToken, out RecycleFailure? failure)
+    private static bool TryRecycle(RecycleTarget target, Dictionary<string, (string Path, BinStemSequencer Stems)> bins, int version, CancellationToken cancellationToken, out RecycleFailure<RecyclePathFailureStage>? failure)
     {
         var root = Path.GetPathRoot(target.FullPath);
 
         if (string.IsNullOrEmpty(root))
         {
-            failure = new RecycleFailure(target.InputPath, 0, 0, RecycleFailureStage.PathValidation);
+            failure = new RecycleFailure<RecyclePathFailureStage>(target.InputPath, 0, 0, RecyclePathFailureStage.PathValidation);
             return false;
         }
 
@@ -588,7 +588,7 @@ internal static class NativeRecycleRunner
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
-                failure = new RecycleFailure(target.InputPath, ex.HResult, 0, RecycleFailureStage.Performing);
+                failure = new RecycleFailure<RecyclePathFailureStage>(target.InputPath, ex.HResult, 0, RecyclePathFailureStage.Performing);
                 return false;
             }
 
@@ -617,7 +617,7 @@ internal static class NativeRecycleRunner
                     continue;
                 }
 
-                failure = new RecycleFailure(target.InputPath, ex.HResult, 0, RecycleFailureStage.Performing);
+                failure = new RecycleFailure<RecyclePathFailureStage>(target.InputPath, ex.HResult, 0, RecyclePathFailureStage.Performing);
                 return false;
             }
 

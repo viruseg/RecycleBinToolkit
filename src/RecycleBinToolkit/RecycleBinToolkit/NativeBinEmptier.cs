@@ -141,7 +141,7 @@ internal static class NativeBinEmptier
     /// </remarks>
     private static RecycleBinEmptyResult Flatten(IReadOnlyList<string> volumeRoots, VolumeOutcome[] outcomes)
     {
-        var failures = new List<RecycleFailure>();
+        var failures = new List<RecycleFailure<EmptyFailureStage>>();
         var emptied = new List<string>(outcomes.Length);
         long itemsRemoved = 0;
         long bytesFreed = 0;
@@ -183,7 +183,7 @@ internal static class NativeBinEmptier
                     false,
                     0,
                     0,
-                    [new RecycleFailure(volumeRoot, RecycleBinVolumeState.UnreadableVolume, 1, RecycleFailureStage.Enumeration)]);
+                    [new RecycleFailure<EmptyFailureStage>(volumeRoot, RecycleBinVolumeState.UnreadableVolume, 1, EmptyFailureStage.Enumeration)]);
             }
 
             return new VolumeOutcome(true, 0, 0, []);
@@ -224,7 +224,7 @@ internal static class NativeBinEmptier
         // and read every entry before noticing would take as long as the empty it was meant to abandon.
         Parallel.ForEach(needy, options, index => sizes[index] = SizeOfRecord(records[index].IndexPath!));
 
-        var failures = new List<RecycleFailure>();
+        var failures = new List<RecycleFailure<EmptyFailureStage>>();
         Remove(records, sizes, failures, sink, cancellationToken);
 
         // A volume is named as emptied only when nothing on it was left behind: a caller reading
@@ -271,7 +271,7 @@ internal static class NativeBinEmptier
     private static void Remove(
         List<NativeBinEntry> records,
         long[] sizes,
-        List<RecycleFailure> failures,
+        List<RecycleFailure<EmptyFailureStage>> failures,
         ProgressSink? sink,
         CancellationToken cancellationToken)
     {
@@ -310,7 +310,7 @@ internal static class NativeBinEmptier
                 // Somebody is holding an entry open, or this account may not remove it. Neither stops the
                 // rest of the sweep: an entry left behind costs the caller one line in the list, not the
                 // whole empty.
-                failures.Add(new RecycleFailure(indexPath, ex.HResult, 1, RecycleFailureStage.Enumeration));
+                failures.Add(new RecycleFailure<EmptyFailureStage>(indexPath, ex.HResult, 1, EmptyFailureStage.EntryNotRemoved));
                 sizes[i] = -1;
                 Report(sink, EmptyStatus.Failed);
             }
@@ -413,4 +413,4 @@ internal readonly record struct VolumeOutcome(
     bool Emptied,
     long Removed,
     long Freed,
-    List<RecycleFailure> Failures);
+    List<RecycleFailure<EmptyFailureStage>> Failures);

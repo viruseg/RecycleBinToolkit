@@ -503,6 +503,7 @@ internal static class LongPathSuite
 
     private static readonly byte[] Content = new byte[4096];
 
-    private static string Describe(RecycleFailure? failure) =>
+    private static string Describe<TStage>(RecycleFailure<TStage>? failure)
+        where TStage : struct, Enum =>
         failure is null ? "none" : $"{failure.Stage} 0x{failure.HResult:X8} {failure.Path}";
 }

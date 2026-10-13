@@ -13,7 +13,7 @@ public sealed record RecycleBinEmptyResult
         IReadOnlyList<string> volumesEmptied,
         long itemsRemoved,
         long bytesFreed,
-        IReadOnlyList<RecycleFailure> failures,
+        IReadOnlyList<RecycleFailure<EmptyFailureStage>> failures,
         TimeSpan elapsed)
     {
         VolumesEmptied = volumesEmptied;
@@ -41,7 +41,7 @@ public sealed record RecycleBinEmptyResult
     /// In the order the operation covered the volumes, as <see cref="VolumesEmptied"/> is, with each volume's
     /// failures together.
     /// </remarks>
-    public IReadOnlyList<RecycleFailure> Failures { get; }
+    public IReadOnlyList<RecycleFailure<EmptyFailureStage>> Failures { get; }
 
     /// <summary>Time the call took.</summary>
     public TimeSpan Elapsed { get; init; }

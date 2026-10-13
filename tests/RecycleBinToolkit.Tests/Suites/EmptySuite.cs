@@ -100,7 +100,7 @@ internal static class EmptySuite
         Check.Equal(1, result.Failures.Count, "the caller is told the path was not one");
 
         var failure = result.Failures[0];
-        Check.Equal(RecycleFailureStage.PathValidation, failure.Stage, "as a path that was not a volume root");
+        Check.Equal(EmptyFailureStage.Enumeration, failure.Stage, "as a volume whose Recycle Bin could not be walked, the path not being one");
         Check.Equal(string.Empty, failure.Path, "naming the path the caller passed");
     }
 
@@ -280,7 +280,7 @@ internal static class EmptySuite
         Check.Equal(1, result.Failures.Count, "the caller is told the path was not one");
 
         var failure = result.Failures[0];
-        Check.Equal(RecycleFailureStage.PathValidation, failure.Stage, "as a path that was not a volume root");
+        Check.Equal(EmptyFailureStage.Enumeration, failure.Stage, "as a volume whose Recycle Bin could not be walked, the path not being one");
         Check.Equal(ScratchWorkspace.Root, failure.Path, "naming the path the caller passed");
 
         var (countAfter, _) = RecycleBinProbe.Measure(ScratchWorkspace.VolumeRoot);

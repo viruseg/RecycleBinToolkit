@@ -42,7 +42,7 @@ public sealed class RestoreOptions : RecycleBinOptions
     /// </summary>
     /// <remarks>
     /// A merge reports one conflict per file it settled rather than one per entry, and reports a refused file
-    /// at <see cref="RecycleFailureStage.RestoreFailed"/> like any other move that would not happen.
+    /// at <see cref="RestoreFailureStage.RestoreFailed"/> like any other move that would not happen.
     /// </remarks>
     public new RestoreDirectoryConflict DirectoryConflict
     {

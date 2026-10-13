@@ -21,7 +21,7 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(ExtendedPrefixIsStrippedForComparisons), ExtendedPrefixIsStrippedForComparisons),
         new TestCase("ContractSuite." + nameof(JoiningFailuresKeepsTheRestOfTheOutcome), JoiningFailuresKeepsTheRestOfTheOutcome),
         new TestCase("ContractSuite." + nameof(AnAbsurdRetryBudgetDoesNotOverflowTheDeadline), AnAbsurdRetryBudgetDoesNotOverflowTheDeadline),
-        new TestCase("ContractSuite." + nameof(SurvivingStageNumbersAreFrozen), SurvivingStageNumbersAreFrozen),
+        new TestCase("ContractSuite." + nameof(EachOperationsEnumsCarryOnlyItsOwnStages), EachOperationsEnumsCarryOnlyItsOwnStages),
         new TestCase("ContractSuite." + nameof(ProgressStatusNumbersAreFrozen), ProgressStatusNumbersAreFrozen),
         new TestCase("ContractSuite." + nameof(IndeterminateRefusesExactlyLikeNoRecycleBinOnVolume), IndeterminateRefusesExactlyLikeNoRecycleBinOnVolume),
         new TestCase("ContractSuite." + nameof(ATargetCostsNoAllocationOfItsOwn), ATargetCostsNoAllocationOfItsOwn),
@@ -187,12 +187,12 @@ internal static class ContractSuite
     {
         const int refused = unchecked((int)0x80070020);
 
-        var genuine = new RecycleFailure(@"W:\b.bin", refused, 3, RecycleFailureStage.Performing);
+        var genuine = new RecycleFailure<RecyclePathFailureStage>(@"W:\b.bin", refused, 3, RecyclePathFailureStage.Performing);
         Check.True(
             (genuine.HResult & unchecked((int)0x80000000)) != 0,
             "a refusal reads as a failure, which is what the severity bit is for");
 
-        var validation = new RecycleFailure(@"W:\d.bin", 0, 0, RecycleFailureStage.PathValidation);
+        var validation = new RecycleFailure<RecyclePathFailureStage>(@"W:\d.bin", 0, 0, RecyclePathFailureStage.PathValidation);
         Check.Equal(0, validation.HResult, "a validation failure carries no code because nothing was attempted");
 
         return Task.CompletedTask;
@@ -376,25 +376,26 @@ internal static class ContractSuite
 
 
     /// <summary>
-    /// The numbers behind the surviving stage names are part of their contract, so a renumbering that
-    /// still compiles is a breaking change. The gaps — 1, 2, 4, 5 — are stages the removed Shell path
-    /// reported; they stay empty rather than reused.
+    /// Every operation reports failures through its own enumeration, so a stage one operation cannot produce
+    /// is not a member of it and cannot be compared against a failure from another. The exact member set is
+    /// what a case can still assert: that a stage added to the wrong enum is caught here rather than in a
+    /// caller.
     /// </summary>
-    private static Task SurvivingStageNumbersAreFrozen(TestContext context)
+    private static Task EachOperationsEnumsCarryOnlyItsOwnStages(TestContext context)
     {
-        Check.Equal(0, (int)RecycleFailureStage.PathValidation, "PathValidation keeps number 0");
-        Check.Equal(3, (int)RecycleFailureStage.Performing, "Performing keeps number 3");
-        Check.Equal(6, (int)RecycleFailureStage.Enumeration, "Enumeration keeps number 6");
-        Check.Equal(7, (int)RecycleFailureStage.PermanentDeleteFailed, "PermanentDeleteFailed keeps number 7");
-        Check.Equal(8, (int)RecycleFailureStage.NoRecycleBinOnVolume, "NoRecycleBinOnVolume keeps number 8, declared above the two that follow it in the source");
-        Check.Equal(9, (int)RecycleFailureStage.VolumeGuidPathNotAddressable, "VolumeGuidPathNotAddressable takes number 9");
-        Check.Equal(10, (int)RecycleFailureStage.RestoreFailed, "RestoreFailed takes number 10, past every stage that existed before a restore");
-        Check.Equal(11, (int)RecycleFailureStage.RestoreConflictRefused, "RestoreConflictRefused takes number 11, after it");
-        Check.Equal(12, (int)RecycleFailureStage.LongPathNotRecyclable, "LongPathNotRecyclable takes number 12, past every stage that existed before it");
-        Check.Equal(
-            9,
-            Enum.GetValues<RecycleFailureStage>().Length,
-            "nine stages survive, so a new stage that reuses a gap is caught here rather than in a caller's persisted value");
+        Check.True(
+            new[] { "PathValidation", "Performing", "NoRecycleBinOnVolume", "VolumeGuidPathNotAddressable", "PermanentDeleteFailed", "LongPathNotRecyclable" }
+                .AsSpan().SequenceEqual(Enum.GetNames<RecyclePathFailureStage>()),
+            "a recycle reports what stopped it for one path, and nothing from another operation");
+        Check.True(
+            new[] { "Enumeration" }.AsSpan().SequenceEqual(Enum.GetNames<ListFailureStage>()),
+            "a listing reports only that it could not read a volume");
+        Check.True(
+            new[] { "Enumeration", "EntryNotRemoved" }.AsSpan().SequenceEqual(Enum.GetNames<EmptyFailureStage>()),
+            "an empty reports only that it could not read a volume and that one entry stayed behind");
+        Check.True(
+            new[] { "RestoreFailed", "RestoreConflictRefused" }.AsSpan().SequenceEqual(Enum.GetNames<RestoreFailureStage>()),
+            "a restore reports only what stopped it for one entry");
 
         return Task.CompletedTask;
     }
@@ -453,8 +454,8 @@ internal static class ContractSuite
     /// </summary>
     private static Task JoiningFailuresKeepsTheRestOfTheOutcome(TestContext context)
     {
-        var validated = new RecycleFailure(@"W:\absent.bin", 0, 0, RecycleFailureStage.PathValidation);
-        var refused = new RecycleFailure(@"W:\locked.bin", unchecked((int)0x80070005), 2, RecycleFailureStage.Performing);
+        var validated = new RecycleFailure<RecyclePathFailureStage>(@"W:\absent.bin", 0, 0, RecyclePathFailureStage.PathValidation);
+        var refused = new RecycleFailure<RecyclePathFailureStage>(@"W:\locked.bin", unchecked((int)0x80070005), 2, RecyclePathFailureStage.Performing);
 
         var original = RecycleBinResult.Create(
             recycledPaths: [@"W:\recycled.bin"],
@@ -676,8 +677,8 @@ internal static class ContractSuite
 
     private static Task ResultFailsWhenAnyFailure(TestContext context)
     {
-        var first = new RecycleFailure(@"W:\locked.bin", unchecked((int)0x80270027), 3, RecycleFailureStage.Performing);
-        var second = new RecycleFailure(@"W:\gone.bin", unchecked((int)0x80070002), 1, RecycleFailureStage.PathValidation);
+        var first = new RecycleFailure<RecyclePathFailureStage>(@"W:\locked.bin", unchecked((int)0x80270027), 3, RecyclePathFailureStage.Performing);
+        var second = new RecycleFailure<RecyclePathFailureStage>(@"W:\gone.bin", unchecked((int)0x80070002), 1, RecyclePathFailureStage.PathValidation);
 
         var result = RecycleBinResult.Create(["a"], [], [first, second], TimeSpan.Zero);
 
@@ -692,7 +693,7 @@ internal static class ContractSuite
     private static Task ThrowRecycleFailedCarriesHResult(TestContext context)
     {
         const int hresult = unchecked((int)0x80270027);
-        var failure = new RecycleFailure(@"W:\locked.bin", hresult, 3, RecycleFailureStage.Performing);
+        var failure = new RecycleFailure<RecyclePathFailureStage>(@"W:\locked.bin", hresult, 3, RecyclePathFailureStage.Performing);
 
         var thrown = Check.Throws<IOException>(
             () => RecycleBinThrowHelper.ThrowRecycleFailed(failure),

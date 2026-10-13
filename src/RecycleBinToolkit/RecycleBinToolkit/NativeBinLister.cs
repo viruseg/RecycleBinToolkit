@@ -74,7 +74,7 @@ internal static class NativeBinLister
                 index => groups[index] = ReadVolume(volumeRoots[index], options, cancellationToken));
         }
 
-        var failures = new List<RecycleFailure>();
+        var failures = new List<RecycleFailure<ListFailureStage>>();
         var items = new List<RecycleBinVolumeContents>(groups.Length);
 
         foreach (var group in groups)
@@ -92,7 +92,7 @@ internal static class NativeBinLister
     /// <param name="VolumeRoot">Volume root this was read from.</param>
     /// <param name="Items">The entries that volume's bin holds, empty if it holds none.</param>
     /// <param name="Failures">Records on this volume that could not be read.</param>
-    private sealed record VolumeGroup(string VolumeRoot, List<RecycleBinItem> Items, List<RecycleFailure> Failures);
+    private sealed record VolumeGroup(string VolumeRoot, List<RecycleBinItem> Items, List<RecycleFailure<ListFailureStage>> Failures);
 
     private static VolumeGroup ReadVolume(
         string volumeRoot,
@@ -100,7 +100,7 @@ internal static class NativeBinLister
         CancellationToken cancellationToken)
     {
         var items = new List<RecycleBinItem>();
-        var failures = new List<RecycleFailure>();
+        var failures = new List<RecycleFailure<ListFailureStage>>();
 
         EnumerateVolume(volumeRoot, options, items, failures, cancellationToken);
 
@@ -111,7 +111,7 @@ internal static class NativeBinLister
         string volumeRoot,
         RecycleBinOptions options,
         List<RecycleBinItem> items,
-        List<RecycleFailure> failures,
+        List<RecycleFailure<ListFailureStage>> failures,
         CancellationToken cancellationToken)
     {
         var binDirectory = NativeBinLayout.BinDirectory(volumeRoot);
@@ -148,7 +148,7 @@ internal static class NativeBinLister
         IReadOnlyList<NativeBinEntry> entries,
         string volumeRoot,
         RecycleBinOptions options,
-        List<RecycleFailure> failures,
+        List<RecycleFailure<ListFailureStage>> failures,
         CancellationToken cancellationToken)
     {
         var pairs = new List<NativeBinEntry>(entries.Count);
@@ -205,11 +205,11 @@ internal static class NativeBinLister
     private static RecycleBinItem?[] Preload(
         List<NativeBinEntry> pairs,
         string volumeRoot,
-        List<RecycleFailure> failures,
+        List<RecycleFailure<ListFailureStage>> failures,
         CancellationToken cancellationToken)
     {
         var warmed = new RecycleBinItem?[pairs.Count];
-        var unreadable = new List<RecycleFailure>();
+        var unreadable = new List<RecycleFailure<ListFailureStage>>();
 
         var options = new ParallelOptions
         {
@@ -236,7 +236,7 @@ internal static class NativeBinLister
             {
                 lock (unreadable)
                 {
-                    unreadable.Add(new RecycleFailure(pair.IndexPath!, hResult, 1, RecycleFailureStage.Enumeration));
+                    unreadable.Add(new RecycleFailure<ListFailureStage>(pair.IndexPath!, hResult, 1, ListFailureStage.Enumeration));
                 }
             }
         });

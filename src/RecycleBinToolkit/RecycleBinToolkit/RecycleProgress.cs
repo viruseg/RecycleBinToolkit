@@ -37,4 +37,4 @@ public sealed record RecycleProgress(
     RecycleStatus Status,
     string Path,
     TimeSpan Elapsed,
-    RecycleFailure? Failure);
+    RecycleFailure<RecyclePathFailureStage>? Failure);

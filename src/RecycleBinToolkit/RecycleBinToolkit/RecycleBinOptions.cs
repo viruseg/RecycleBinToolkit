@@ -121,7 +121,7 @@ public abstract class RecycleBinOptions
     /// <summary>
     /// Queues one report about a recycled path, or does nothing at all when nobody asked for reports.
     /// </summary>
-    internal static void Report(ProgressSink? sink, RecycleStatus status, string path, RecycleFailure? failure)
+    internal static void Report(ProgressSink? sink, RecycleStatus status, string path, RecycleFailure<RecyclePathFailureStage>? failure)
     {
         if (sink is null)
         {

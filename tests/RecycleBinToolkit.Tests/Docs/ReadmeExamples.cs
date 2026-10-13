@@ -98,7 +98,7 @@ internal static class ReadmeExamples
 
     internal static void ReadHResult()
     {
-        var failure = new RecycleFailure(@"W:\x.bin", unchecked((int)0x80270027), 1, RecycleFailureStage.Performing);
+        var failure = new RecycleFailure<RecyclePathFailureStage>(@"W:\x.bin", unchecked((int)0x80270027), 1, RecyclePathFailureStage.Performing);
 
         bool moveSucceeded = (failure.HResult & unchecked((int)0x80000000)) == 0;
         Console.WriteLine(moveSucceeded);

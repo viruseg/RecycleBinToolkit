@@ -11,7 +11,7 @@ namespace RecycleBinToolkit;
 public enum LongPathFailureAction
 {
     /// <summary>
-    /// Leave the file untouched and report it at <see cref="RecycleFailureStage.LongPathNotRecyclable"/>.
+    /// Leave the file untouched and report it at <see cref="RecyclePathFailureStage.LongPathNotRecyclable"/>.
     /// </summary>
     /// <remarks>
     /// The default, and the only choice that cannot lose data. It raises <see cref="PathTooLongException"/>
@@ -28,7 +28,7 @@ public enum LongPathFailureAction
     /// <remarks>
     /// None of this applies to a path on a volume that cannot recycle it under the two actions that settle
     /// the volume first. <see cref="NoRecycleBinAction.Throw"/> refuses such a path at
-    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> with the file left in place, and
+    /// <see cref="RecyclePathFailureStage.NoRecycleBinOnVolume"/> with the file left in place, and
     /// <see cref="NoRecycleBinAction.DeletePermanently"/> has the volume gate remove it outright, so it
     /// arrives in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/> from there rather than from here.
     /// Under <see cref="NoRecycleBinAction.AllowIndeterminate"/> the path is handed over, and this action

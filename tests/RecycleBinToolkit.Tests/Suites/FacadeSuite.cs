@@ -43,7 +43,7 @@ internal static class FacadeSuite
     /// </summary>
     /// <remarks>
     /// Refused at the path rather than settled against the volume, so nothing is spent on it: no volume
-    /// inspection, no round. <see cref="RecycleFailure.Attempts"/> is therefore zero, which is what
+    /// inspection, no round. <see cref="RecycleFailure{TStage}.Attempts"/> is therefore zero, which is what
     /// "nothing was attempted" means.
     /// <para>
     /// The file is created under the run's own directory and only addressed by GUID afterwards, so the
@@ -96,7 +96,7 @@ internal static class FacadeSuite
 
         Check.False(result.Succeeded, $"a path nothing above the library can read is not recycled (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
         Check.Equal(1, result.Failures.Count, "exactly one failure is reported");
-        Check.Equal(RecycleFailureStage.VolumeGuidPathNotAddressable, result.FirstFailure!.Stage, "the path itself is what could not be used");
+        Check.Equal(RecyclePathFailureStage.VolumeGuidPathNotAddressable, result.FirstFailure!.Stage, "the path itself is what could not be used");
         Check.Equal(0, result.FirstFailure.Attempts, "and it was settled before any round, rather than retried for every attempt the caller asked for");
         Check.Equal(0, result.FirstFailure.HResult, "carrying no code, because nothing was ever asked");
         Check.True(File.Exists(file), "the file is exactly where it was left");
@@ -115,7 +115,7 @@ internal static class FacadeSuite
 
         Check.Equal(1, viaSlashes.Failures.Count, $"the forward-slash spelling is refused too (got {viaSlashes.FirstFailure?.Stage})");
         Check.Equal(
-            RecycleFailureStage.VolumeGuidPathNotAddressable,
+            RecyclePathFailureStage.VolumeGuidPathNotAddressable,
             viaSlashes.FirstFailure!.Stage,
             "and it is the same refusal, which only the check against the normalised path can produce");
         Check.Equal(0, viaSlashes.FirstFailure.Attempts, "with nothing attempted on the way to it");
@@ -157,7 +157,7 @@ internal static class FacadeSuite
 
         Check.False(result.Succeeded, $"a volume with no Recycle Bin cannot report success (recycled {result.RecycledPaths.Count})");
         Check.Equal(1, result.Failures.Count, "the refused path is the only failure reported");
-        Check.Equal(RecycleFailureStage.NoRecycleBinOnVolume, result.FirstFailure!.Stage, "the failure names the volume");
+        Check.Equal(RecyclePathFailureStage.NoRecycleBinOnVolume, result.FirstFailure!.Stage, "the failure names the volume");
         Check.Equal(file, result.FirstFailure.Path, "the failure names the caller's path");
         Check.Equal(0, result.FirstFailure.Attempts, "nothing was attempted, because nothing was handed over");
         Check.Equal(0, result.FirstFailure.HResult, "the refusal is settled from configuration, so it carries no code");
@@ -239,7 +239,7 @@ internal static class FacadeSuite
     }
 
     /// <summary>
-    /// A path that is not there is refused at <see cref="RecycleFailureStage.PathValidation"/> without a
+    /// A path that is not there is refused at <see cref="RecyclePathFailureStage.PathValidation"/> without a
     /// probe, because there is no volume question to ask about a file that does not exist.
     /// </summary>
     /// <remarks>
@@ -265,7 +265,7 @@ internal static class FacadeSuite
         Check.False(result.Succeeded, "a path that is not there cannot succeed");
         Check.Equal(1, result.Failures.Count, "it is reported once");
         Check.Equal(missing, result.FirstFailure!.Path, "naming the path the caller passed");
-        Check.Equal(RecycleFailureStage.PathValidation, result.FirstFailure.Stage, "and it fails at validation, not at the volume that holds it");
+        Check.Equal(RecyclePathFailureStage.PathValidation, result.FirstFailure.Stage, "and it fails at validation, not at the volume that holds it");
         Check.Equal(0, result.FirstFailure.Attempts, "nothing was handed over, because there was nothing to hand over");
         Check.Equal(0, result.FirstFailure.HResult, "no code is involved when nothing was ever asked");
 
@@ -413,8 +413,8 @@ internal static class FacadeSuite
     /// keeps the healthy path out of the failures: the batch overload never raises for a per-item failure, so
     /// the refusal arrives in <see cref="RecycleBinResult.Failures"/> whatever the flag says.</item>
     /// <item>The second volume is a drive letter nothing is mounted on, found on this machine rather than
-    /// named in the source. Its path fails at <see cref="RecycleFailureStage.PathValidation"/> rather than at
-    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/>, because the path is not there either and that
+    /// named in the source. Its path fails at <see cref="RecyclePathFailureStage.PathValidation"/> rather than at
+    /// <see cref="RecyclePathFailureStage.NoRecycleBinOnVolume"/>, because the path is not there either and that
     /// is settled before any volume is asked about.</item>
     /// <item>The case needs a volume that recycles, and says so rather than running on one that does not:
     /// there, both halves are refused by the same gate and the contrast this case is about never
@@ -445,7 +445,7 @@ internal static class FacadeSuite
         Check.False(result.Succeeded, "the refused path still makes the batch report failure");
         Check.Equal(1, result.Failures.Count, "exactly one failure, from the volume that is not there");
         Check.Equal(refused, result.FirstFailure!.Path, "and it is the path the caller supplied for it");
-        Check.Equal(RecycleFailureStage.PathValidation, result.FirstFailure.Stage, "a path on a volume that is not there is refused before the volume is asked about");
+        Check.Equal(RecyclePathFailureStage.PathValidation, result.FirstFailure.Stage, "a path on a volume that is not there is refused before the volume is asked about");
         Check.Equal(1, result.RecycledPaths.Count, "the path on the volume that is there was still recycled");
         Check.Equal(healthy, result.RecycledPaths[0], "and it is the one the caller supplied");
         Check.False(File.Exists(healthy), "so that file is gone from disk");
@@ -595,7 +595,7 @@ internal static class FacadeSuite
     /// contract is the report, not the throw: the batch overload carries
     /// <see cref="RecycleOptions.ThrowOnError"/> but never reads it, so the refusal arrives in
     /// <see cref="RecycleBinResult.Failures"/> whatever the flag says. A stage of
-    /// <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/> here would say the caller had
+    /// <see cref="RecyclePathFailureStage.NoRecycleBinOnVolume"/> here would say the caller had
     /// not consented — the opposite of what was asked, and the reason the stage is checked rather than left.
     /// <para>
     /// A removal is only this library's own on a volume that cannot recycle, so the file is written on the
@@ -628,7 +628,7 @@ internal static class FacadeSuite
             Check.Equal(1, result.Failures.Count, "and it is the only one reported");
             Check.Equal(file, result.FirstFailure!.Path, "naming the caller's path");
             Check.Equal(
-                RecycleFailureStage.PermanentDeleteFailed,
+                RecyclePathFailureStage.PermanentDeleteFailed,
                 result.FirstFailure.Stage,
                 "at the removal itself, not at the volume that held it");
             Check.Equal(
@@ -765,7 +765,7 @@ internal static class FacadeSuite
 
         // The claim is about the code the file system itself gave. A volume whose recycling is settled from
         // configuration is refused before it is reached, and such a refusal carries HResult 0 because there
-        // is no file-system code to report, which is what RecycleFailure.HResult documents. Guarded ahead of
+        // is no file-system code to report, which is what RecycleFailure{TStage}.HResult documents. Guarded ahead of
         // the file so a skip leaves nothing behind.
         ScratchWorkspace.RequireRecycling("a file-system refusal to carry the file system's own error code");
 
@@ -876,7 +876,7 @@ internal static class FacadeSuite
 
         Check.False(result.Succeeded, "a null path without throwOnError reports failure instead of throwing");
         Check.Equal(1, result.Failures.Count, "exactly one failure is reported");
-        Check.Equal(RecycleFailureStage.PathValidation, result.Failures[0].Stage, "the failure is a path validation failure");
+        Check.Equal(RecyclePathFailureStage.PathValidation, result.Failures[0].Stage, "the failure is a path validation failure");
         Check.Equal(0, result.Failures[0].HResult, "no code is involved in a validation failure");
         Check.Equal(0, result.RecycledPaths.Count, "nothing was recycled");
     }
@@ -896,7 +896,7 @@ internal static class FacadeSuite
 
         Check.False(result.Succeeded, "the missing path makes the batch report failure");
         Check.Equal(1, result.Failures.Count, "only the missing path is reported");
-        Check.Equal(RecycleFailureStage.PathValidation, result.FirstFailure!.Stage, "the missing path fails at validation");
+        Check.Equal(RecyclePathFailureStage.PathValidation, result.FirstFailure!.Stage, "the missing path fails at validation");
         Check.Equal(missing, result.FirstFailure.Path, "the failure names the missing path");
         Check.Equal(files.Count, result.RecycledPaths.Count, "every real file was still recycled");
 

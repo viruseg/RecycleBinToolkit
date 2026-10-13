@@ -486,7 +486,7 @@ internal static class RestoreRunner
     /// <see cref="RecycleBinRestoreResult.Failures"/>.</item>
     /// <item>What goes wrong here is an answer rather than an exception. Of two entries named twice one is
     /// moved and the other is reported, and a refusal from the filesystem becomes a
-    /// <see cref="RecycleFailureStage.RestoreFailed"/> carrying the code it raised. Only what the filesystem
+    /// <see cref="RestoreFailureStage.RestoreFailed"/> carrying the code it raised. Only what the filesystem
     /// raises on these paths is caught, so a defect here still surfaces.</item>
     /// <item>The loop is this entry's own. A mover thread holds one entry at a time, so a round shared with
     /// the batch would drive entries already answered, and <see cref="RestoreOutcome.Attempts"/> is the number
@@ -526,7 +526,7 @@ internal static class RestoreRunner
             // answered by a mover of another volume.
             if (!settled.TryAdd(item, 0))
             {
-                Settle(Failed(originalPath, item.Size, hResult: 0, attempts: 0), new RecycleFailure(originalPath, 0, 0, RecycleFailureStage.RestoreFailed));
+                Settle(Failed(originalPath, item.Size, hResult: 0, attempts: 0), new RecycleFailure<RestoreFailureStage>(originalPath, 0, 0, RestoreFailureStage.RestoreFailed));
                 return;
             }
         }
@@ -537,7 +537,7 @@ internal static class RestoreRunner
             // name, because that record is the one thing saying where the entry was deleted from, and its own
             // $I path is what is left.
             var failed = Failed(originalPath ?? item.IndexPath, item.Size, ex.HResult, attempts: 0);
-            Settle(failed, new RecycleFailure(failed.Path, ex.HResult, 0, RecycleFailureStage.RestoreFailed));
+            Settle(failed, new RecycleFailure<RestoreFailureStage>(failed.Path, ex.HResult, 0, RestoreFailureStage.RestoreFailed));
             return;
         }
 
@@ -558,7 +558,7 @@ internal static class RestoreRunner
                 // already made before it, which is zero on the first attempt and the entry's own count on any
                 // after that.
                 var unplaceable = Failed(originalPath!, item.Size, ex.HResult, attempts: attempt - 1);
-                Settle(unplaceable, new RecycleFailure(originalPath!, ex.HResult, attempt - 1, RecycleFailureStage.RestoreFailed));
+                Settle(unplaceable, new RecycleFailure<RestoreFailureStage>(originalPath!, ex.HResult, attempt - 1, RestoreFailureStage.RestoreFailed));
                 return;
             }
 
@@ -594,7 +594,7 @@ internal static class RestoreRunner
                                 OccupiedByDirectory = decision.OccupiedByDirectory
                             },
                             refused
-                                ? new RecycleFailure(decision.TargetPath, 0, 0, RecycleFailureStage.RestoreConflictRefused)
+                                ? new RecycleFailure<RestoreFailureStage>(decision.TargetPath, 0, 0, RestoreFailureStage.RestoreConflictRefused)
                                 : null);
                         break;
                     }
@@ -622,7 +622,7 @@ internal static class RestoreRunner
                 cancellationToken.ThrowIfCancellationRequested();
 
                 slots[position] = Failed(decision.TargetPath, item.Size, ex.HResult, attempt);
-                Settle(slots[position], new RecycleFailure(decision.TargetPath, ex.HResult, attempt, RecycleFailureStage.RestoreFailed));
+                Settle(slots[position], new RecycleFailure<RestoreFailureStage>(decision.TargetPath, ex.HResult, attempt, RestoreFailureStage.RestoreFailed));
                 return;
             }
         }
@@ -630,7 +630,7 @@ internal static class RestoreRunner
         // Every entry's answer is written once, and the report goes out with it rather than from Flatten
         // afterwards: Flatten runs when the whole call is over, and a call that restores thirty thousand
         // entries would then hand the caller all thirty thousand reports at once.
-        void Settle(RestoreOutcome outcome, RecycleFailure? failure)
+        void Settle(RestoreOutcome outcome, RecycleFailure<RestoreFailureStage>? failure)
         {
             slots[position] = outcome;
             Report(sink, outcome, failure);
@@ -645,7 +645,7 @@ internal static class RestoreRunner
     /// <see cref="Flatten"/> answers the same question once and a second answer here would be free to
     /// drift from it.
     /// </remarks>
-    private static void Report(ProgressSink? sink, RestoreOutcome outcome, RecycleFailure? failure)
+    private static void Report(ProgressSink? sink, RestoreOutcome outcome, RecycleFailure<RestoreFailureStage>? failure)
     {
         if (sink is null)
         {
@@ -1137,7 +1137,7 @@ internal static class RestoreRunner
                 // above is this one, and it raises a cancellation of its own between the children it
                 // recurses into. Answered here it would be one file's refusal rather than the caller's own
                 // cancellation, and the raise would go no further.
-                state.Failures.Add(new RecycleFailure(wanted, ex.HResult, 1, RecycleFailureStage.RestoreFailed));
+                state.Failures.Add(new RecycleFailure<RestoreFailureStage>(wanted, ex.HResult, 1, RestoreFailureStage.RestoreFailed));
                 LeaveBehind(entry, wanted, state);
             }
         }
@@ -1221,11 +1221,11 @@ internal static class RestoreRunner
             // rather than inventing one.
             var named = wanted.TryGetValue(failure.Path, out var target) ? target.RecordPath : failure.Path;
 
-            state.Failures.Add(new RecycleFailure(
+            state.Failures.Add(new RecycleFailure<RestoreFailureStage>(
                 named,
                 failure.HResult,
                 failure.Attempts,
-                RecycleFailureStage.RestoreFailed));
+                RestoreFailureStage.RestoreFailed));
         }
 
         return recycled.Failures[0].HResult;
@@ -1260,7 +1260,7 @@ internal static class RestoreRunner
             // of a payload the caller is about to be told is empty. The payload is left whole, and the
             // refusal is reported under the path the entry wanted rather than lost with it.
             state.Incomplete = ex.HResult;
-            state.Failures.Add(new RecycleFailure(wanted, ex.HResult, 1, RecycleFailureStage.RestoreFailed));
+            state.Failures.Add(new RecycleFailure<RestoreFailureStage>(wanted, ex.HResult, 1, RestoreFailureStage.RestoreFailed));
         }
     }
 
@@ -1477,8 +1477,8 @@ internal static class RestoreRunner
         /// Distinct from <see cref="Refused"/> in that no policy turned an occupied path into this: what
         /// arrives here is a payload deleted since the listing, a destination holding the other kind under a
         /// policy that asked to overwrite it, and a record that cannot be read. The stage is the same either
-        /// way — <see cref="RecycleFailureStage.RestoreFailed"/> is where a restore that did not happen is
-        /// reported, and <see cref="RecycleFailureStage.RestoreConflictRefused"/> is where a conflict the
+        /// way — <see cref="RestoreFailureStage.RestoreFailed"/> is where a restore that did not happen is
+        /// reported, and <see cref="RestoreFailureStage.RestoreConflictRefused"/> is where a conflict the
         /// caller asked to be told about is.
         /// <para>
         /// A merge that could not finish lands here too, and is the one case where something <em>was</em>
@@ -1513,7 +1513,7 @@ internal static class RestoreRunner
         /// The code the filesystem raised for this entry, or <c>0</c> when nothing was asked of it.
         /// </summary>
         /// <remarks>
-        /// Carried through exactly as the exception carried it, because <see cref="RecycleFailure.HResult"/>
+        /// Carried through exactly as the exception carried it, because <see cref="RecycleFailure{TStage}.HResult"/>
         /// promises a caller the same code. A kind that never failed never sets it, and neither does a failure
         /// nothing was attempted for.
         /// </remarks>
@@ -1545,7 +1545,7 @@ internal static class RestoreRunner
         /// that could not be placed is reported under that file's own path rather than the directory's, and
         /// the directory's outcome says nothing about whether that happened.
         /// </summary>
-        internal IReadOnlyList<RecycleFailure>? MergeFailures { get; init; }
+        internal IReadOnlyList<RecycleFailure<RestoreFailureStage>>? MergeFailures { get; init; }
     }
 
     /// <summary>
@@ -1567,7 +1567,7 @@ internal static class RestoreRunner
         /// <summary>
         /// The files of the tree the filesystem would not take, each under the path it wanted.
         /// </summary>
-        internal List<RecycleFailure> Failures { get; } = [];
+        internal List<RecycleFailure<RestoreFailureStage>> Failures { get; } = [];
 
         /// <summary>
         /// The entries still inside the payload when the walk finished, which the put-back takes out of it.
@@ -1632,7 +1632,7 @@ internal static class RestoreRunner
     {
         var restoredPaths = new List<string>(slots.Length);
         var conflicts = new List<RecycleRestoreConflict>();
-        var failures = new List<RecycleFailure>();
+        var failures = new List<RecycleFailure<RestoreFailureStage>>();
         long itemsRestored = 0;
         long restoredSize = 0;
 
@@ -1671,22 +1671,22 @@ internal static class RestoreRunner
 
                 case RestoreOutcomeKind.Refused:
                     conflicts.Add(new RecycleRestoreConflict(slot.Path, slot.OccupiedByDirectory, RecycleRestoreConflictAction.Skipped));
-                    failures.Add(new RecycleFailure(slot.Path, 0, 0, RecycleFailureStage.RestoreConflictRefused));
+                    failures.Add(new RecycleFailure<RestoreFailureStage>(slot.Path, 0, 0, RestoreFailureStage.RestoreConflictRefused));
                     break;
 
                 case RestoreOutcomeKind.Failed:
-                    failures.Add(new RecycleFailure(slot.Path, slot.HResult, slot.Attempts, RecycleFailureStage.RestoreFailed));
+                    failures.Add(new RecycleFailure<RestoreFailureStage>(slot.Path, slot.HResult, slot.Attempts, RestoreFailureStage.RestoreFailed));
                     break;
 
                 case RestoreOutcomeKind.Undecided:
                     // The one outcome nothing ever writes, so there is no write to hang the report on. It is
                     // reported here, where the entry's own record is known — the only place it is — and it
                     // lands last because nothing else is left by then.
-                    var failure = new RecycleFailure(
+                    var failure = new RecycleFailure<RestoreFailureStage>(
                         items[position].IndexPath,
                         0,
                         0,
-                        RecycleFailureStage.RestoreFailed);
+                        RestoreFailureStage.RestoreFailed);
 
                     failures.Add(failure);
                     Report(

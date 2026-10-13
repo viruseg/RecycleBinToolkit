@@ -19,7 +19,7 @@ public enum NoRecycleBinAction
 
     /// <summary>
     /// Delete the path permanently. It is reported in <see cref="RecycleBinResult.PermanentlyDeletedPaths"/>.
-    /// A file system that refuses reports <see cref="RecycleFailureStage.PermanentDeleteFailed"/> and leaves
+    /// A file system that refuses reports <see cref="RecyclePathFailureStage.PermanentDeleteFailed"/> and leaves
     /// the file untouched.
     /// </summary>
     DeletePermanently = 2

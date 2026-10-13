@@ -37,4 +37,4 @@ public sealed record RestoreProgress(
     RestoreStatus Status,
     string Path,
     TimeSpan Elapsed,
-    RecycleFailure? Failure);
+    RecycleFailure<RestoreFailureStage>? Failure);

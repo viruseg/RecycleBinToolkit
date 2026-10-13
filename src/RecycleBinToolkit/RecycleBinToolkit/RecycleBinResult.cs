@@ -1,130 +1,12 @@
 namespace RecycleBinToolkit;
 
-/// <summary>Where in the pipeline an item failed.</summary>
-/// <remarks>
-/// Values are numbered explicitly and the numbers are part of the contract: an implicit value renumbers every
-/// member declared after an insertion, which compiles everywhere and breaks every caller that persisted one.
-/// The gaps are stages the removed Shell path reported and are never reused.
-/// </remarks>
-public enum RecycleFailureStage
-{
-    /// <summary>The path was empty, malformed, or pointed at nothing.</summary>
-    PathValidation = 0,
-
-    /// <summary>The move to the Recycle Bin failed for this item.</summary>
-    Performing = 3,
-
-    /// <summary>
-    /// The volume cannot recycle the path and the caller asked for a Recycle Bin. Nothing was attempted:
-    /// <see cref="RecycleFailure.Attempts"/> is <c>0</c> and the file is untouched.
-    /// </summary>
-    NoRecycleBinOnVolume = 8,
-
-    /// <summary>
-    /// An entry in the Recycle Bin could not be read or removed. Reachable only from
-    /// <see cref="RecycleBin.GetItemsAsync"/> and <see cref="RecycleBin.EmptyAsync(string?, EmptyOptions?, CancellationToken)"/>.
-    /// </summary>
-    Enumeration = 6,
-
-    /// <summary>
-    /// <see cref="NoRecycleBinAction.DeletePermanently"/> was asked for and the file system refused. The file
-    /// is untouched.
-    /// </summary>
-    PermanentDeleteFailed = 7,
-
-    /// <summary>
-    /// The path names its volume by GUID, as <c>\\?\Volume{GUID}\…</c>, which has no drive letter to be
-    /// measured or reported against. Nothing was attempted: <see cref="RecycleFailure.Attempts"/> is <c>0</c>.
-    /// </summary>
-    VolumeGuidPathNotAddressable = 9,
-
-    /// <summary>
-    /// An entry could not be restored: its payload would not move, its record would not go, or the record could
-    /// not be read. Reachable only from <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem},
-    /// RestoreOptions?, System.Threading.CancellationToken)"/>.
-    /// </summary>
-    /// <remarks>
-    /// - The entry is still in the Recycle Bin, which makes a retry worth making — except where the payload
-    ///   already moved and only its record was left, where the next attempt meets a conflict.
-    /// - While a directory is being merged, a file of its tree that could not be dealt with reaches this
-    ///   stage under that file's own path. The directory reaches it only when the merge could not finish.
-    /// - One file can account for two records under the same path. Group by path rather than counting.
-    /// </remarks>
-    RestoreFailed = 10,
-
-    /// <summary>
-    /// An occupied path that the caller refused to resolve by setting <see cref="RestoreFileConflict.Error"/>
-    /// or <see cref="RestoreDirectoryConflict.Error"/>. Nothing on disk was touched, the entry stays in the
-    /// Recycle Bin, and <see cref="RecycleFailure.Attempts"/> and <see cref="RecycleFailure.HResult"/> are
-    /// both <c>0</c>.
-    /// </summary>
-    /// <remarks>
-    /// Every other policy settles an occupied path and reports it in
-    /// <see cref="RecycleBinRestoreResult.Conflicts"/>. Two reach no conflict at all:
-    /// <see cref="RestoreFileConflict.Replace"/>, which takes the occupant's place, and a <c>Merge*</c> value
-    /// against a destination holding a file, which fails rather than settling anything.
-    /// </remarks>
-    RestoreConflictRefused = 11,
-
-    /// <summary>
-    /// A path the Recycle Bin's index record cannot name, offered and refused. Nothing was moved:
-    /// <see cref="RecycleFailure.Attempts"/> is <c>0</c> and the file is untouched.
-    /// </summary>
-    /// <remarks>
-    /// Reachable only where the record in use has a fixed-size path field. Where
-    /// <see cref="LongPathFailureAction.DeletePermanently"/> was set the path is removed instead, and a
-    /// refusal from the file system under it arrives as <see cref="PermanentDeleteFailed"/> rather than
-    /// blamed on the length.
-    /// </remarks>
-    LongPathNotRecyclable = 12
-}
-
-/// <summary>One item that was not handled.</summary>
-public sealed class RecycleFailure
-{
-    /// <summary>Creates a failure record.</summary>
-    /// <param name="path">The path exactly as the caller supplied it.</param>
-    /// <param name="hResult">
-    /// Error code, or <c>0</c> when nothing was attempted. Carried through unchanged.
-    /// </param>
-    /// <param name="attempts">How many attempts were made.</param>
-    /// <param name="stage">Where in the pipeline the failure occurred.</param>
-    public RecycleFailure(string path, int hResult, int attempts, RecycleFailureStage stage)
-    {
-        Path = path;
-        HResult = hResult;
-        Attempts = attempts;
-        Stage = stage;
-    }
-
-    /// <summary>The path exactly as the caller supplied it.</summary>
-    public string Path { get; }
-
-    /// <summary>The file system's own code for this item, or <c>0</c> when nothing was attempted.</summary>
-    /// <remarks>
-    /// Check <c>(HResult &amp; 0x80000000) != 0</c> to tell a refusal from a success code.
-    /// </remarks>
-    public int HResult { get; }
-
-    /// <summary>Attempts made for this path.</summary>
-    /// <remarks>
-    /// <c>0</c> means nothing was attempted: a path that never validated, one whose volume cannot recycle it,
-    /// one naming its volume by GUID, one deleted permanently on the caller's instruction, an entry whose
-    /// record could not be read, or an entry named twice that the first had already answered.
-    /// </remarks>
-    public int Attempts { get; }
-
-    /// <summary>Where in the pipeline the failure occurred.</summary>
-    public RecycleFailureStage Stage { get; }
-}
-
 /// <summary>The outcome of one batch <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleOptions?, CancellationToken)"/> call.</summary>
 public sealed class RecycleBinResult
 {
     private RecycleBinResult(
         IReadOnlyList<string> recycledPaths,
         IReadOnlyList<string> permanentlyDeletedPaths,
-        IReadOnlyList<RecycleFailure> failures,
+        IReadOnlyList<RecycleFailure<RecyclePathFailureStage>> failures,
         TimeSpan elapsed,
         IReadOnlyList<string> leftoverStagingDirectories)
     {
@@ -154,7 +36,7 @@ public sealed class RecycleBinResult
     /// <summary>
     /// Paths that were not handled. Empty when <see cref="Succeeded"/> is <see langword="true"/>.
     /// </summary>
-    public IReadOnlyList<RecycleFailure> Failures { get; }
+    public IReadOnlyList<RecycleFailure<RecyclePathFailureStage>> Failures { get; }
 
     /// <summary>
     /// Staging directories this operation created and could not remove because something was still inside
@@ -172,7 +54,7 @@ public sealed class RecycleBinResult
     public TimeSpan Elapsed { get; }
 
     /// <summary>The first recorded failure, or <see langword="null"/> when there is none.</summary>
-    public RecycleFailure? FirstFailure => Failures.Count > 0 ? Failures[0] : null;
+    public RecycleFailure<RecyclePathFailureStage>? FirstFailure => Failures.Count > 0 ? Failures[0] : null;
 
     /// <summary>Creates a result.</summary>
     /// <param name="recycledPaths">Paths confirmed recycled, as supplied.</param>
@@ -185,7 +67,7 @@ public sealed class RecycleBinResult
     public static RecycleBinResult Create(
         IReadOnlyList<string> recycledPaths,
         IReadOnlyList<string> permanentlyDeletedPaths,
-        IReadOnlyList<RecycleFailure> failures,
+        IReadOnlyList<RecycleFailure<RecyclePathFailureStage>> failures,
         TimeSpan elapsed,
         IReadOnlyList<string>? leftoverStagingDirectories = null) =>
         new(recycledPaths, permanentlyDeletedPaths, failures, elapsed, leftoverStagingDirectories ?? []);
@@ -201,7 +83,7 @@ public sealed class RecycleBinResult
     /// needs to learn that a file was deleted permanently.
     /// </remarks>
     /// <param name="failures">The failures the copy should carry, in the order they should be read.</param>
-    internal RecycleBinResult WithFailures(IReadOnlyList<RecycleFailure> failures) =>
+    internal RecycleBinResult WithFailures(IReadOnlyList<RecycleFailure<RecyclePathFailureStage>> failures) =>
         new(RecycledPaths, PermanentlyDeletedPaths, failures, Elapsed, LeftoverStagingDirectories);
 
     /// <summary>

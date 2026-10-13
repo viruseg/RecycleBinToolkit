@@ -213,7 +213,7 @@ Missing parent folders of a destination are created for entries that are actuall
 policy leaves in the bin creates nothing.
 
 `MaxAttempts` bounds how often a refused move is retried, and
-[`RecycleFailure.Attempts`](#recyclefailure) reports how many were given. `OverallTimeout` is one budget
+[`RecycleFailure<TStage>.Attempts`](#recyclefailure) reports how many were given. `OverallTimeout` is one budget
 for the whole call — not per entry, not per volume — and covers the waiting. `MaxAttempts = 1` answers
 the first refusal without retrying.
 
@@ -295,7 +295,7 @@ The report `RecycleAsync` raises for one path, carrying its position in the batc
 | `Status` | `RecycleStatus` | The outcome for this path. See [`RecycleStatus`](#recyclestatus). |
 | `Path` | `string` | The path as you wrote it. A batch entry that was `null` is reported as `""`. |
 | `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
-| `Failure` | `RecycleFailure?` | Why it was refused or failed, or `null`. A repeated path is `Refused` with no `Failure`: it was not acted on, and there is no reason to invent. |
+| `Failure` | `RecycleFailure<RecyclePathFailureStage>?` | Why it was refused or failed, or `null`. A repeated path is `Refused` with no `Failure`: it was not acted on, and there is no reason to invent. |
 
 #### `RestoreProgress`
 
@@ -307,7 +307,7 @@ The report `RestoreAsync` raises for one entry, carrying its position in the bat
 | `Status` | `RestoreStatus` | The outcome for this entry. See [`RestoreStatus`](#restorestatus). |
 | `Path` | `string` | Where the entry landed, or the record it came from when it landed nowhere. |
 | `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
-| `Failure` | `RecycleFailure?` | Why it was skipped or failed, or `null`. |
+| `Failure` | `RecycleFailure<RestoreFailureStage>?` | Why it was skipped or failed, or `null`. |
 
 #### `EmptyProgress`
 
@@ -454,9 +454,9 @@ The immutable result of one `RecycleAsync` batch call.
 | `RecycledPaths` | `IReadOnlyList<string>` | Paths recycled, exactly as supplied. |
 | `PermanentlyDeletedPaths` | `IReadOnlyList<string>` | Paths removed permanently under an explicit policy. Empty unless that happened. |
 | `LeftoverStagingDirectories` | `IReadOnlyList<string>` | Staging directories left holding something, so the caller's data is still on their disk. Empty unless that happened. |
-| `Failures` | `IReadOnlyList<RecycleFailure>` | Paths that were not handled. Empty when `Succeeded`. |
+| `Failures` | `IReadOnlyList<RecycleFailure<RecyclePathFailureStage>>` | Paths that were not handled. Empty when `Succeeded`. |
 | `Elapsed` | `TimeSpan` | Time the call took. |
-| `FirstFailure` | `RecycleFailure?` | The first failure recorded, or `null`. |
+| `FirstFailure` | `RecycleFailure<RecyclePathFailureStage>?` | The first failure recorded, or `null`. |
 | `Create(...)` | `static RecycleBinResult` | Constructs a result. |
 
 > `Succeeded` means **gone from disk**, not necessarily recycled. A permanently deleted path counts as
@@ -468,23 +468,35 @@ var result = RecycleBinResult.Create(["a"], [], [], TimeSpan.Zero);
 Console.WriteLine($"{result.Succeeded} {result.Elapsed} {result.FirstFailure is null}");
 ```
 
-### `RecycleFailure`
+### `RecycleFailure<TStage>`
 
-One item that was not handled.
+One item a call did not handle. `TStage` is the enumeration of the operation that reported it, so a
+stage that operation cannot produce will not compile.
+
+| Type argument | Reported by |
+| --- | --- |
+| `RecyclePathFailureStage` | `RecycleBinResult.Failures`, `RecycleProgress.Failure` |
+| `ListFailureStage` | `RecycleBinContents.Failures` |
+| `EmptyFailureStage` | `RecycleBinEmptyResult.Failures` |
+| `RestoreFailureStage` | `RecycleBinRestoreResult.Failures`, `RestoreProgress.Failure` |
 
 | Member | Type | Description |
 | --- | --- | --- |
-| `Path` | `string` | The path exactly as supplied. |
+| `Path` | `string` | The path the failure is about, in full. |
 | `HResult` | `int` | The file system's error code, or `0` when nothing was attempted. |
 | `Attempts` | `int` | Attempts made for the item. `0` means nothing was attempted. |
-| `Stage` | `RecycleFailureStage` | Where it failed. |
+| `Stage` | `TStage` | Where it failed, in the terms of the operation that reported it. |
 | `RecycleFailure(...)` | constructor | Constructs a failure record. |
+
+What `Path` names depends on `Stage`, not on the class. For `RecyclePathFailureStage` it is the path
+you supplied; for the other three it is a volume root or a path inside a Recycle Bin, neither of
+which you named.
 
 **Reading `HResult`.** Success and failure are told apart by the severity bit, not by comparing with
 zero.
 
 ```csharp
-var failure = new RecycleFailure(@"W:\x.bin", unchecked((int)0x80270027), 1, RecycleFailureStage.Performing);
+var failure = new RecycleFailure<RecyclePathFailureStage>(@"W:\x.bin", unchecked((int)0x80270027), 1, RecyclePathFailureStage.Performing);
 
 bool moveSucceeded = (failure.HResult & unchecked((int)0x80000000)) == 0;
 Console.WriteLine(moveSucceeded);
@@ -492,9 +504,9 @@ Console.WriteLine(moveSucceeded);
 
 A locked file reports `0x80270027` at stage `Performing`.
 
-### `RecycleFailureStage`
+### `RecyclePathFailureStage`
 
-The step of the operation where an item failed.
+The step a `RecycleAsync` call stopped at for one path.
 
 | Value | Meaning |
 | --- | --- |
@@ -502,11 +514,34 @@ The step of the operation where an item failed.
 | `Performing` | The move to the Recycle Bin failed for this item. |
 | `NoRecycleBinOnVolume` | The volume cannot recycle the path and the caller asked for a Recycle Bin. Nothing was attempted: `Attempts` and `HResult` are `0`, and the file is untouched. |
 | `PermanentDeleteFailed` | `NoRecycleBinAction.DeletePermanently` was asked for and the file system refused — a handle is held, the attributes are read-only. The file is untouched. |
-| `Enumeration` | A Recycle Bin entry could not be read or removed, or a volume could not be read. Reachable only from `GetItemsAsync` and `EmptyAsync`. |
 | `VolumeGuidPathNotAddressable` | The path names its volume by GUID, as `\\?\Volume{GUID}\…`, which has no drive letter to be measured, emptied or reported against. Nothing was attempted: `Attempts` and `HResult` are `0`. Address the same location by drive letter or mount point. |
-| `RestoreFailed` | Reachable only from `RestoreAsync`: a record could not be read, a payload would not move, or a record would not be deleted. See below. |
-| `RestoreConflictRefused` | Reachable only from `RestoreAsync`, under `FileConflict` or `DirectoryConflict` set to `Error`: the path was occupied, nothing was touched, and the entry stays in the bin. `Attempts` and `HResult` are `0`. |
 | `LongPathNotRecyclable` | The Recycle Bin cannot record this path and the caller asked for it to be recycled. Nothing was attempted: `Attempts` is `0`, `HResult` is `0x800700CE`, and the file is untouched. See [Long paths](#long-paths). |
+
+### `ListFailureStage`
+
+The step a `GetItemsAsync` or `LoadItemDetails` call stopped at for one volume.
+
+| Value | Meaning |
+| --- | --- |
+| `Enumeration` | Nothing usable came back from that volume: it could not be walked at all, or one record on it could not be read and every other entry was. `Path` names the volume root or the record, never the path the deleted item was originally at. |
+
+### `EmptyFailureStage`
+
+The step an `EmptyAsync` call stopped at for one volume.
+
+| Value | Meaning |
+| --- | --- |
+| `Enumeration` | The volume's Recycle Bin could not be walked or read. Nothing is claimed about what is left on it, and the volume is not in `VolumesEmptied`. `Path` names the volume root or the record. |
+| `EntryNotRemoved` | One entry on the volume could not be removed — something is holding it open, or this account may not remove it. It is still in the Recycle Bin, its size is not in `BytesFreed`, and the volume is not in `VolumesEmptied` because something was left behind on it. The rest of the volume was emptied. |
+
+### `RestoreFailureStage`
+
+The step a `RestoreAsync` call stopped at for one entry.
+
+| Value | Meaning |
+| --- | --- |
+| `RestoreFailed` | A record could not be read, a payload would not move, or a record would not be deleted. See the notes below. |
+| `RestoreConflictRefused` | Under `FileConflict` or `DirectoryConflict` set to `Error`: the path was occupied, nothing was touched, and the entry stays in the bin. `Attempts` and `HResult` are `0`. |
 
 Under `RestoreFailed`:
 
@@ -635,7 +670,7 @@ The outcome of a listing. Immutable.
 | Member | Type | Description |
 | --- | --- | --- |
 | `Items` | `IReadOnlyList<RecycleBinVolumeContents>` | One group per volume read, in the order the volumes were asked about. A volume with an empty bin is still one of the groups. |
-| `Failures` | `IReadOnlyList<RecycleFailure>` | Entries that could not be read, at stage `Enumeration`. |
+| `Failures` | `IReadOnlyList<RecycleFailure<ListFailureStage>>` | Entries that could not be read, at stage `Enumeration`. |
 | `Elapsed` | `TimeSpan` | Time the listing took. |
 | `TotalSize` | `long` | Sum of `Size` over every group's entries. Derived from `items` on construction. |
 | `LoadItemDetails(CancellationToken)` | `void` | Reads every item's lazy fields now. See below. |
@@ -672,7 +707,7 @@ The immutable result of one `EmptyAsync` call.
 | `VolumesEmptied` | `IReadOnlyList<string>` | Volume roots covered, each with a trailing separator, in the order covered. |
 | `ItemsRemoved` | `long` | Number of entries removed. |
 | `BytesFreed` | `long` | Total bytes those entries occupied. |
-| `Failures` | `IReadOnlyList<RecycleFailure>` | Volumes that could not be emptied or measured. One volume's failures are together, in coverage order. |
+| `Failures` | `IReadOnlyList<RecycleFailure<EmptyFailureStage>>` | Volumes that could not be emptied or measured. One volume's failures are together, in coverage order. |
 | `Elapsed` | `TimeSpan` | Time the call took. |
 | `RecycleBinEmptyResult(...)` | constructor | Constructs a result. |
 
@@ -696,7 +731,7 @@ The immutable result of one `RestoreAsync` call.
 | --- | --- | --- |
 | `RestoredPaths` | `IReadOnlyList<string>` | Full path of each entry that was restored. |
 | `Conflicts` | `IReadOnlyList<RecycleRestoreConflict>` | Collisions encountered, and how each was resolved. |
-| `Failures` | `IReadOnlyList<RecycleFailure>` | Entries that failed to restore. Empty when `Succeeded` is `true`. |
+| `Failures` | `IReadOnlyList<RecycleFailure<RestoreFailureStage>>` | Entries that failed to restore. Empty when `Succeeded` is `true`. |
 | `ItemsRestored` | `long` | Number of entries moved out of the Recycle Bin. Never more than the number passed in. |
 | `RestoredSize` | `long` | Total size in bytes of the restored entries, from their records. |
 | `Elapsed` | `TimeSpan` | Time the call took. |

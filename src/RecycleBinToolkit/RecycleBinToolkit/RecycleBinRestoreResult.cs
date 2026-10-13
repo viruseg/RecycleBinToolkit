@@ -22,7 +22,7 @@ public sealed class RecycleBinRestoreResult
     public RecycleBinRestoreResult(
         IReadOnlyList<string> restoredPaths,
         IReadOnlyList<RecycleRestoreConflict> conflicts,
-        IReadOnlyList<RecycleFailure> failures,
+        IReadOnlyList<RecycleFailure<RestoreFailureStage>> failures,
         long itemsRestored,
         long restoredSize,
         TimeSpan elapsed)
@@ -79,7 +79,7 @@ public sealed class RecycleBinRestoreResult
     /// file.</item>
     /// </list>
     /// </remarks>
-    public IReadOnlyList<RecycleFailure> Failures { get; }
+    public IReadOnlyList<RecycleFailure<RestoreFailureStage>> Failures { get; }
 
     /// <summary>Number of entries that left the Recycle Bin.</summary>
     public long ItemsRestored { get; }

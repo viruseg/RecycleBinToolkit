@@ -56,7 +56,7 @@ internal static class RecycleBatch
             return result;
         }
 
-        var merged = new List<RecycleFailure>(gateFailures.Count + result.Failures.Count);
+        var merged = new List<RecycleFailure<RecyclePathFailureStage>>(gateFailures.Count + result.Failures.Count);
         merged.AddRange(gateFailures);
         merged.AddRange(result.Failures);
 
@@ -65,14 +65,14 @@ internal static class RecycleBatch
             .WithPermanentlyDeleted([.. permanentlyDeleted, .. result.PermanentlyDeletedPaths]);
     }
 
-    private static (List<RecycleTarget> Targets, List<RecycleFailure> Failures, List<string> PermanentlyDeleted) BuildTargets(
+    private static (List<RecycleTarget> Targets, List<RecycleFailure<RecyclePathFailureStage>> Failures, List<string> PermanentlyDeleted) BuildTargets(
         IReadOnlyList<string?> filePaths,
         RecycleBinOptions options,
         ProgressSink? sink,
         CancellationToken cancellationToken)
     {
         var targets = new List<RecycleTarget>(filePaths.Count);
-        var failures = new List<RecycleFailure>();
+        var failures = new List<RecycleFailure<RecyclePathFailureStage>>();
         var permanentlyDeleted = new List<string>();
 
         for (var i = 0; i < filePaths.Count; i++)
@@ -147,7 +147,7 @@ internal static class RecycleBatch
     /// <param name="sink">Where each refusal is reported, or <see langword="null"/> when nobody asked.</param>
     private static void RefuseVolumesThatCannotRecycle(
         List<RecycleTarget> targets,
-        List<RecycleFailure> failures,
+        List<RecycleFailure<RecyclePathFailureStage>> failures,
         List<string> permanentlyDeleted,
         RecycleBinOptions options,
         ProgressSink? sink)
@@ -199,7 +199,7 @@ internal static class RecycleBatch
 
             // Asked once per volume, not once per path: every target under this root is refused for the
             // same reason. The refusal is settled from configuration, so it carries no code: 0 is what
-            // RecycleFailure.HResult documents for a refusal nothing reported.
+            // RecycleFailure<RecyclePathFailureStage>.HResult documents for a refusal nothing reported.
             const int hResult = 0;
 
             foreach (var target in group)
@@ -217,11 +217,11 @@ internal static class RecycleBatch
                     continue;
                 }
 
-                var failure = new RecycleFailure(
+                var failure = new RecycleFailure<RecyclePathFailureStage>(
                     target.InputPath,
                     hResult,
                     attempts: 0,
-                    RecycleFailureStage.NoRecycleBinOnVolume);
+                    RecyclePathFailureStage.NoRecycleBinOnVolume);
 
                 failures.Add(failure);
                 RecycleBinOptions.Report(sink, RecycleStatus.Refused, target.InputPath, failure);
@@ -277,7 +277,7 @@ internal static class RecycleBatch
         List<RecycleTarget> group,
         HashSet<string> removed,
         List<string> permanentlyDeleted,
-        List<RecycleFailure> failures,
+        List<RecycleFailure<RecyclePathFailureStage>> failures,
         ProgressSink? sink)
     {
         foreach (var target in group)
@@ -300,20 +300,20 @@ internal static class RecycleBatch
             // path to go. Saying so is the whole answer available, and saying it as PermanentDeleteFailed
             // keeps the reason the caller gave visible rather than blaming the volume they were never
             // asked about.
-            var failure = new RecycleFailure(target.InputPath, hResult, attempts: 0, RecycleFailureStage.PermanentDeleteFailed);
+            var failure = new RecycleFailure<RecyclePathFailureStage>(target.InputPath, hResult, attempts: 0, RecyclePathFailureStage.PermanentDeleteFailed);
 
             failures.Add(failure);
             RecycleBinOptions.Report(sink, RecycleStatus.Failed, target.InputPath, failure);
         }
     }
 
-    private static RecycleFailure? TryCreateTarget(string? rawPath, out RecycleTarget? target)
+    private static RecycleFailure<RecyclePathFailureStage>? TryCreateTarget(string? rawPath, out RecycleTarget? target)
     {
         target = null;
 
         if (string.IsNullOrWhiteSpace(rawPath))
         {
-            return new RecycleFailure(rawPath ?? string.Empty, 0, 0, RecycleFailureStage.PathValidation);
+            return new RecycleFailure<RecyclePathFailureStage>(rawPath ?? string.Empty, 0, 0, RecyclePathFailureStage.PathValidation);
         }
 
         string fullPath;
@@ -323,7 +323,7 @@ internal static class RecycleBatch
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException)
         {
-            return new RecycleFailure(rawPath, ex.HResult, 0, RecycleFailureStage.PathValidation);
+            return new RecycleFailure<RecyclePathFailureStage>(rawPath, ex.HResult, 0, RecyclePathFailureStage.PathValidation);
         }
 
         // Checked on the normalised path as well as on what the caller typed, because
@@ -332,12 +332,12 @@ internal static class RecycleBatch
         // and retried for every attempt the caller asked for.
         if (RecycleTarget.IsVolumeGuidPath(rawPath) || RecycleTarget.IsVolumeGuidPath(fullPath))
         {
-            return new RecycleFailure(rawPath, 0, 0, RecycleFailureStage.VolumeGuidPathNotAddressable);
+            return new RecycleFailure<RecyclePathFailureStage>(rawPath, 0, 0, RecyclePathFailureStage.VolumeGuidPathNotAddressable);
         }
 
         if (!TryDescribe(fullPath, out var attributes, out var size))
         {
-            return new RecycleFailure(rawPath, 0, 0, RecycleFailureStage.PathValidation);
+            return new RecycleFailure<RecyclePathFailureStage>(rawPath, 0, 0, RecyclePathFailureStage.PathValidation);
         }
 
         target = new RecycleTarget(rawPath, fullPath, attributes, size);

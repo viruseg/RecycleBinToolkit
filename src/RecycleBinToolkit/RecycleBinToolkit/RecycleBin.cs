@@ -94,7 +94,7 @@ public static class RecycleBin
     /// <returns>
     /// The outcome of the batch, naming every path that was not handled in
     /// <see cref="RecycleBinResult.Failures"/>. A path refused because its volume cannot recycle it
-    /// arrives there at stage <see cref="RecycleFailureStage.NoRecycleBinOnVolume"/>, and the paths on
+    /// arrives there at stage <see cref="RecyclePathFailureStage.NoRecycleBinOnVolume"/>, and the paths on
     /// every other volume in the batch are still recycled.
     /// </returns>
     /// <exception cref="OperationCanceledException">
@@ -154,15 +154,15 @@ public static class RecycleBin
 
         switch (failure.Stage)
         {
-            case RecycleFailureStage.VolumeGuidPathNotAddressable:
+            case RecyclePathFailureStage.VolumeGuidPathNotAddressable:
                 RecycleBinThrowHelper.ThrowVolumeNotAddressableByGuid(failure);
                 break;
 
-            case RecycleFailureStage.PathValidation when !string.IsNullOrEmpty(failure.Path):
+            case RecyclePathFailureStage.PathValidation when !string.IsNullOrEmpty(failure.Path):
                 RecycleBinThrowHelper.ThrowFileNotFound(failure.Path);
                 break;
 
-            case RecycleFailureStage.LongPathNotRecyclable:
+            case RecyclePathFailureStage.LongPathNotRecyclable:
                 RecycleBinThrowHelper.ThrowPathTooLong(failure);
                 break;
 
@@ -176,7 +176,7 @@ public static class RecycleBin
     /// <param name="volumeRoot">
     /// Volume root to read, such as <c>"X:\"</c>, or <see langword="null"/> for every volume. A path
     /// inside a volume is not a volume root: it is refused at stage
-    /// <see cref="RecycleFailureStage.PathValidation"/> rather than answered for the whole volume
+    /// <see cref="RecyclePathFailureStage.PathValidation"/> rather than answered for the whole volume
     /// containing it.
     /// </param>
     /// <param name="options">
@@ -208,7 +208,7 @@ public static class RecycleBin
         {
             return new RecycleBinContents(
                 [],
-                [new RecycleFailure(volumeRoot!, VolumeNotFound, 0, RecycleFailureStage.PathValidation)],
+                [new RecycleFailure<ListFailureStage>(volumeRoot!, VolumeNotFound, 0, ListFailureStage.Enumeration)],
                 stopwatch.Elapsed);
         }
 
@@ -284,7 +284,7 @@ public static class RecycleBin
                 [],
                 0,
                 0,
-                [new RecycleFailure(volumeRoot!, VolumeNotFound, 0, RecycleFailureStage.PathValidation)],
+                [new RecycleFailure<EmptyFailureStage>(volumeRoot!, VolumeNotFound, 0, EmptyFailureStage.Enumeration)],
                 TimeSpan.Zero);
         }
 
@@ -339,7 +339,7 @@ public static class RecycleBin
     /// What every entry became, in the order the entries were passed in. A move the file system refuses is
     /// tried again up to <see cref="RestoreOptions.MaxAttempts"/> times, under one
     /// <see cref="RestoreOptions.OverallTimeout"/> budget for the whole call; what stays held is reported
-    /// carrying the attempts it was given in <see cref="RecycleFailure.Attempts"/>.
+    /// carrying the attempts it was given in <see cref="RecycleFailure{TStage}.Attempts"/>.
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="items"/> is <see langword="null"/>.</exception>
     /// <exception cref="OperationCanceledException">
