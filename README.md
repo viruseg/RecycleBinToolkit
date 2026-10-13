@@ -287,34 +287,37 @@ recycled path, a restored entry and an emptied entry have different outcomes to 
 
 #### `RecycleProgress`
 
+The report `RecycleAsync` raises for one path, carrying its position in the batch. Immutable.
+
 | Member | Type | Description |
 | --- | --- | --- |
 | `Index`, `Count` | `int` | This item's number, and how many the call was asked about. |
-| `Status` | `RecycleStatus` | `Recycled`, `Failed` (attempted, did not happen), `Refused` (not attempted, the file is where you left it), `DeletedPermanently`. |
+| `Status` | `RecycleStatus` | What became of the path. See [`RecycleStatus`](#recyclestatus). |
 | `Path` | `string` | The path as you wrote it. A batch entry that was `null` is reported as `""`. |
 | `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
 | `Failure` | `RecycleFailure?` | Why it was refused or failed, or `null`. A repeated path is `Refused` with no `Failure`: it was not acted on, and there is no reason to invent. |
 
 #### `RestoreProgress`
 
+The report `RestoreAsync` raises for one entry, carrying its position in the batch. Immutable.
+
 | Member | Type | Description |
 | --- | --- | --- |
 | `Index`, `Count` | `int` | This entry's number, and how many the call was asked about. |
-| `Status` | `RestoreStatus` | `Restored`, `Merged`, `Skipped` (your conflict policy left it in the bin — not a failure), `Failed`. |
+| `Status` | `RestoreStatus` | What became of the entry. See [`RestoreStatus`](#restorestatus). |
 | `Path` | `string` | Where the entry landed, or the record it came from when it landed nowhere. |
 | `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
 | `Failure` | `RecycleFailure?` | Why it was skipped or failed, or `null`. |
 
 #### `EmptyProgress`
 
+The report `EmptyAsync` raises for one entry, carrying its position in the count. Immutable.
+
 | Member | Type | Description |
 | --- | --- | --- |
 | `Index`, `Count` | `int` | This entry's number, and how many were counted before the sweep began. |
-| `Status` | `EmptyStatus` | `Removed` (out of the bin) or `Failed` (still there). |
+| `Status` | `EmptyStatus` | What became of the entry. See [`EmptyStatus`](#emptystatus). |
 | `Elapsed` | `TimeSpan` | From the start of the call to the moment this report was created. |
-
-`Removed` and `ItemsRemoved` can disagree, and did before this existed: an entry whose size could not be
-worked out leaves the bin without being counted.
 
 ```csharp
 var options = new RecycleOptions
@@ -475,6 +478,7 @@ One item that was not handled.
 | `HResult` | `int` | The file system's error code, or `0` when nothing was attempted. |
 | `Attempts` | `int` | Attempts made for the item. `0` means nothing was attempted. |
 | `Stage` | `RecycleFailureStage` | Where it failed. |
+| `RecycleFailure(...)` | constructor | Constructs a failure record. |
 
 **Reading `HResult`.** Success and failure are told apart by the severity bit, not by comparing with
 zero.
@@ -489,6 +493,8 @@ Console.WriteLine(moveSucceeded);
 A locked file reports `0x80270027` at stage `Performing`.
 
 ### `RecycleFailureStage`
+
+The step of the operation where an item failed.
 
 | Value | Meaning |
 | --- | --- |
@@ -509,6 +515,19 @@ Under `RestoreFailed`:
   twice can produce two failures under the same path — group by path for one failure per file.
 - The entry is still in the bin, so a retry is worth making, unless the payload already moved and the
   file is on disk.
+
+### `RecycleStatus`
+
+The outcome of one path in a `RecycleAsync` call.
+
+| Value | Meaning |
+| --- | --- |
+| `Recycled` | The path is in the Recycle Bin. |
+| `Failed` | The move was attempted and did not happen. `RecycleProgress.Failure` carries why. |
+| `Refused` | The path was never attempted and is still where the caller left it. A repeated path in one batch is refused too. |
+| `DeletedPermanently` | The path was deleted outright rather than recycled, under `NoRecycleBinAction.DeletePermanently` or `LongPathFailureAction.DeletePermanently`. It is listed in `PermanentlyDeletedPaths`, never in `RecycledPaths`. |
+
+Only `Recycled` and `DeletedPermanently` mean the path is gone from disk.
 
 ### `LongPathFailureAction`
 
@@ -600,6 +619,15 @@ The listing is not filtered by original path: every entry returned was deleted f
 > One original path can appear more than once. Deleting the same file twice leaves two entries with two
 > deletion times, and both are listed.
 
+#### Equality
+
+| | |
+| --- | --- |
+| Two entries are equal | When they are the same stored entry — the same record in the bin |
+| What is compared | The record's own path, without regard to case. `OriginalPath` and `DeletedAt` are not read to compare |
+| One file deleted twice | Two records, so two entries that are not equal. `Distinct()` keeps both |
+| `Distinct()` over two listings | Collapses the entries that are the same record, so a second listing adds nothing to what you already hold |
+
 ### `RecycleBinContents`
 
 The outcome of a listing. Immutable.
@@ -609,8 +637,9 @@ The outcome of a listing. Immutable.
 | `Items` | `IReadOnlyList<RecycleBinVolumeContents>` | One group per volume read, in the order the volumes were asked about. A volume with an empty bin is still one of the groups. |
 | `Failures` | `IReadOnlyList<RecycleFailure>` | Entries that could not be read, at stage `Enumeration`. |
 | `Elapsed` | `TimeSpan` | Time the listing took. |
-| `TotalSize` | `long` | Sum of `Size` over every group's entries. |
+| `TotalSize` | `long` | Sum of `Size` over every group's entries. Derived from `items` on construction. |
 | `LoadItemDetails(CancellationToken)` | `void` | Reads every item's lazy fields now. See below. |
+| `RecycleBinContents(...)` | constructor | Constructs a listing. |
 
 #### `RecycleBinVolumeContents`
 
@@ -620,6 +649,7 @@ What one volume's Recycle Bin holds.
 | --- | --- | --- |
 | `VolumeRoot` | `string` | Volume root the entries were read from, such as `"X:\\"`. |
 | `Items` | `IReadOnlyList<RecycleBinItem>` | The entries that volume's bin holds, in directory order. |
+| `RecycleBinVolumeContents(...)` | constructor | Constructs the group for one volume. |
 
 #### Loading every item's details
 
@@ -644,6 +674,19 @@ The immutable result of an empty.
 | `BytesFreed` | `long` | Total bytes those entries occupied. |
 | `Failures` | `IReadOnlyList<RecycleFailure>` | Volumes that could not be emptied or measured. One volume's failures are together, in coverage order. |
 | `Elapsed` | `TimeSpan` | Time the call took. |
+| `RecycleBinEmptyResult(...)` | constructor | Constructs a result. |
+
+### `EmptyStatus`
+
+The outcome of one entry in an `EmptyAsync` call.
+
+| Value | Meaning |
+| --- | --- |
+| `Removed` | The entry is out of the Recycle Bin. |
+| `Failed` | The entry is still there. `RecycleBinEmptyResult.Failures` carries why. |
+
+`Removed` and `ItemsRemoved` can disagree, and did before this existed: an entry whose size could not be
+worked out leaves the bin without being counted.
 
 ### `RecycleBinRestoreResult`
 
@@ -658,6 +701,7 @@ The immutable result of a restore.
 | `RestoredSize` | `long` | Total size in bytes of the restored entries, from their records. |
 | `Elapsed` | `TimeSpan` | Time the call took. |
 | `Succeeded` | `bool` | `true` when `Failures` is empty. `Conflicts` does not affect it. |
+| `RecycleBinRestoreResult(...)` | constructor | Constructs a result. |
 
 **Guarantees**
 
@@ -698,11 +742,14 @@ rather than raised: the caller chose a policy, and the restore carries on with t
 | `Path` | `string` | The path the item wanted, or under `RestoredRenamed` and `MergedRenamed` the path it landed at. |
 | `OccupiedByDirectory` | `bool` | Whether the occupant is a directory rather than a file. |
 | `Action` | `RecycleRestoreConflictAction` | How the conflict was resolved. |
+| `RecycleRestoreConflict(...)` | constructor | Constructs a conflict record. |
 
 Under `MergedRenamed` the record names a file inside a merged directory, so it is not in
 `RestoredPaths` — that list holds the directory's one path.
 
 #### `RecycleRestoreConflictAction`
+
+How a restore resolved one occupied path.
 
 | Value | Meaning |
 | --- | --- |
@@ -711,6 +758,21 @@ Under `MergedRenamed` the record names a file inside a merged directory, so it i
 | `MergedSkipped` | A merge left a colliding file alone; the incoming file went back into the bin as an entry of its own. Under `MergeSkip` this is one record for the directory. `Path` is the directory's path. |
 | `MergedReplaced` | A merge overwrote a colliding file. One record per file, under `MergeReplace`. `Path` is the path it was overwritten at. |
 | `MergedRenamed` | A merge set an incoming file down under a free name of its own, `report.txt` becoming `report (1).txt`. One record per file, under `MergeRename`. `Path` is where the file landed. |
+
+### `RestoreStatus`
+
+The outcome of one entry in a `RestoreAsync` call.
+
+| Value | Meaning |
+| --- | --- |
+| `Restored` | The entry is back on disk under its own path. |
+| `Merged` | The entry was a directory and its contents went into a directory that was already at that path. |
+| `Skipped` | The entry is still in the bin because `FileConflict` or `DirectoryConflict` said to leave it there. Not a failure. |
+| `Failed` | The entry is still in the bin and the restore did not get it out. `RestoreProgress.Failure` carries why. |
+
+`Skipped` and `Failed` both leave the entry in the bin. `Failed` always reports a `Failure`;
+`Skipped` reports one only under an `Error` conflict policy, at stage `RestoreConflictRefused`, and that is
+the only way a skipped entry makes `Succeeded` `false`.
 
 ### `RestoreFileConflict`
 
@@ -762,6 +824,8 @@ The outcome of a status check. Immutable.
 | `IsEnabled` | `bool` | `true` only when `Reason` is `Enabled`. |
 
 ### `RecycleBinAvailabilityReason`
+
+Why a volume's Recycle Bin is or is not in use. Which value applies decides what a caller can do about it.
 
 | Value | Meaning |
 | --- | --- |
