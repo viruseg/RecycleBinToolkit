@@ -59,4 +59,39 @@ public sealed class RestoreOptions : RecycleBinOptions
         get => base.FileConflict;
         init => base.FileConflict = value;
     }
+
+    /// <summary>
+    /// Called once per entry handed to the operation, on a thread of its own, so the restore does not wait
+    /// for it. Defaults to <see langword="null"/>, which reports nothing and costs nothing.
+    /// </summary>
+    /// <remarks>
+    /// A file a merge could not put back is not reported: the caller never handed it over, so it has no
+    /// number in the caller's list. Reports may still arrive after the call returns unless
+    /// <see cref="WaitForProgressCallbacks"/> is set.
+    /// </remarks>
+    public new Action<RestoreProgress>? OnItemProcessed
+    {
+        get => (base.OnItemProcessed as RestoreProgressSink)?.Handler;
+        init => base.OnItemProcessed = value is null ? null : new RestoreProgressSink(value);
+    }
+
+    /// <summary>
+    /// Called once with whatever <see cref="OnItemProcessed"/> threw, after which that handler is not
+    /// called again. Defaults to <see langword="null"/>, which drops it.
+    /// </summary>
+    public new Action<Exception>? OnProgressFailed
+    {
+        get => base.OnProgressFailed;
+        init => base.OnProgressFailed = value;
+    }
+
+    /// <summary>
+    /// Whether the call returns only once every report has been delivered. Defaults to
+    /// <see langword="false"/>, so the restore is never held up by the handler.
+    /// </summary>
+    public new bool WaitForProgressCallbacks
+    {
+        get => base.WaitForProgressCallbacks;
+        init => base.WaitForProgressCallbacks = value;
+    }
 }

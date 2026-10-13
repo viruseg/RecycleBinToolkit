@@ -78,6 +78,56 @@ public abstract class RecycleBinOptions
     internal RestoreFileConflict FileConflict { get; init; } = RestoreFileConflict.Skip;
 
     /// <summary>
+    /// The queue behind a caller's progress handler. Read by
+    /// <see cref="RecycleBin.RecycleAsync(IReadOnlyList{string?}, RecycleOptions?, CancellationToken)"/>,
+    /// <see cref="RecycleBin.RestoreAsync(IReadOnlyList{RecycleBinItem}, RestoreOptions?, CancellationToken)"/>
+    /// and <see cref="RecycleBin.EmptyAsync(string?, CancellationToken)"/>, and nowhere else.
+    /// </summary>
+    internal ProgressSink? OnItemProcessed { get; init; }
+
+    /// <summary>
+    /// What to do about a progress handler that threw. Read by the three operations that deliver
+    /// reports, and nowhere else.
+    /// </summary>
+    internal Action<Exception>? OnProgressFailed { get; init; }
+
+    /// <summary>
+    /// Whether the three operations drain the queue before returning. Read by the same three, and by
+    /// nothing inside them.
+    /// </summary>
+    internal bool WaitForProgressCallbacks { get; init; }
+
+    private ProgressSink? _running;
+
+    /// <summary>
+    /// Returns the queue the operation is to write to, or <see langword="null"/> when the caller asked
+    /// for no reports.
+    /// </summary>
+    internal ProgressSink? ArmProgress()
+    {
+        if (OnItemProcessed is null)
+        {
+            _running = null;
+            return null;
+        }
+
+        // Restart rather than the property itself: a caller who reuses one options instance across two
+        // calls finds the queue the first call completed, and writing into its closed channel would report
+        // nothing at all with nothing raised.
+        var running = OnItemProcessed.Restart();
+        running.Fault = OnProgressFailed;
+
+        _running = running;
+        return running;
+    }
+
+    /// <summary>
+    /// Completes the queue this call armed and, when the caller asked to wait, returns once it has drained.
+    /// </summary>
+    internal Task FinishProgressAsync(bool wait) =>
+        _running?.CompleteAsync(wait) ?? Task.CompletedTask;
+
+    /// <summary>
     /// Returns a copy with out-of-range values clamped into a usable range.
     /// </summary>
     // Every property is named here, because a property this initialiser does not mention is not clamped
@@ -93,7 +143,10 @@ public abstract class RecycleBinOptions
         LongPathFailureAction = LongPathFailureAction,
         PreloadItemDetails = PreloadItemDetails,
         DirectoryConflict = DirectoryConflict,
-        FileConflict = FileConflict
+        FileConflict = FileConflict,
+        OnItemProcessed = _running ?? OnItemProcessed,
+        OnProgressFailed = OnProgressFailed,
+        WaitForProgressCallbacks = WaitForProgressCallbacks
     };
 
     /// <summary>

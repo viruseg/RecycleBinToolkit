@@ -549,6 +549,23 @@ internal static class ContractSuite
             "DirectoryConflict default on the restore type");
         Check.Equal(RestoreFileConflict.Skip, RestoreOptions.Default.FileConflict, "FileConflict default on the restore type");
 
+Check.False(RecycleOptions.Default.WaitForProgressCallbacks, "WaitForProgressCallbacks default on the recycle type");
+        Check.False(RestoreOptions.Default.WaitForProgressCallbacks, "WaitForProgressCallbacks default on the restore type");
+        Check.False(EmptyOptions.Default.WaitForProgressCallbacks, "WaitForProgressCallbacks default on the empty type");
+
+        // A subscriber nobody asked for must cost one null check per item and no thread, which is why no
+        // operation builds a queue before it finds one to build.
+        foreach (var type in new RecycleBinOptions[]
+                 {
+                     RecycleOptions.Default,
+                     RestoreOptions.Default,
+                     EmptyOptions.Default,
+                 })
+        {
+            Check.True(type.OnItemProcessed is null, $"{type.GetType().Name} starts with no progress handler");
+            Check.True(type.OnProgressFailed is null, $"{type.GetType().Name} starts with no progress failure handler");
+        }
+
         return Task.CompletedTask;
     }
 
@@ -561,16 +578,18 @@ internal static class ContractSuite
     /// <remarks>
     /// The second assertion compares the union of what the three types expose against the base's properties
     /// by name, so a ninth knob added to the base and left off every one of them is a failure rather than a
-    /// pass with a longer list, and so is a rename that leaves the counts equal. It says nothing about a
-    /// fourth type: these three are named here, and one added later is not measured until it is written here.
+    /// pass with a longer list, and so is a rename that leaves the counts equal. It says nothing about a type
+    /// added later than this one: the four named here are the four that exist, and one added after them is not
+    /// measured until it is written here.
     /// </remarks>
     private static Task OptionsTypesExposeOnlyWhatTheirOperationReads(TestContext context)
     {
         var expected = new Dictionary<Type, string>
         {
-            [typeof(RecycleOptions)] = "InitialRetryDelay,LongPathFailureAction,MaxAttempts,NoRecycleBinAction,OverallTimeout,ThrowOnError",
-            [typeof(RestoreOptions)] = "DirectoryConflict,FileConflict,InitialRetryDelay,MaxAttempts,OverallTimeout",
+            [typeof(RecycleOptions)] = "InitialRetryDelay,LongPathFailureAction,MaxAttempts,NoRecycleBinAction,OnItemProcessed,OnProgressFailed,OverallTimeout,ThrowOnError,WaitForProgressCallbacks",
+            [typeof(RestoreOptions)] = "DirectoryConflict,FileConflict,InitialRetryDelay,MaxAttempts,OnItemProcessed,OnProgressFailed,OverallTimeout,WaitForProgressCallbacks",
             [typeof(GetItemsOptions)] = "PreloadItemDetails",
+            [typeof(EmptyOptions)] = "OnItemProcessed,OnProgressFailed,WaitForProgressCallbacks",
         };
 
         var exposed = new HashSet<string>(StringComparer.Ordinal);

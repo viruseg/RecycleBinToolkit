@@ -72,4 +72,38 @@ public sealed class RecycleOptions : RecycleBinOptions
         get => base.LongPathFailureAction;
         init => base.LongPathFailureAction = value;
     }
+
+    /// <summary>
+    /// Called once per path handed to the operation, on a thread of its own, so the operation does not wait
+    /// for it. Defaults to <see langword="null"/>, which reports nothing and costs nothing.
+    /// </summary>
+    /// <remarks>
+    /// Every path in the batch is reported, including one that was refused, repeated, or named nothing.
+    /// Reports may still arrive after the call returns unless <see cref="WaitForProgressCallbacks"/> is set.
+    /// </remarks>
+    public new Action<RecycleProgress>? OnItemProcessed
+    {
+        get => (base.OnItemProcessed as RecycleProgressSink)?.Handler;
+        init => base.OnItemProcessed = value is null ? null : new RecycleProgressSink(value);
+    }
+
+    /// <summary>
+    /// Called once with whatever <see cref="OnItemProcessed"/> threw, after which that handler is not
+    /// called again. Defaults to <see langword="null"/>, which drops it.
+    /// </summary>
+    public new Action<Exception>? OnProgressFailed
+    {
+        get => base.OnProgressFailed;
+        init => base.OnProgressFailed = value;
+    }
+
+    /// <summary>
+    /// Whether the call returns only once every report has been delivered. Defaults to
+    /// <see langword="false"/>, so the operation is never held up by the handler.
+    /// </summary>
+    public new bool WaitForProgressCallbacks
+    {
+        get => base.WaitForProgressCallbacks;
+        init => base.WaitForProgressCallbacks = value;
+    }
 }
