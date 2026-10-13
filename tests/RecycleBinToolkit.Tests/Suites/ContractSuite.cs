@@ -22,6 +22,7 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(JoiningFailuresKeepsTheRestOfTheOutcome), JoiningFailuresKeepsTheRestOfTheOutcome),
         new TestCase("ContractSuite." + nameof(AnAbsurdRetryBudgetDoesNotOverflowTheDeadline), AnAbsurdRetryBudgetDoesNotOverflowTheDeadline),
         new TestCase("ContractSuite." + nameof(SurvivingStageNumbersAreFrozen), SurvivingStageNumbersAreFrozen),
+        new TestCase("ContractSuite." + nameof(ProgressStatusNumbersAreFrozen), ProgressStatusNumbersAreFrozen),
         new TestCase("ContractSuite." + nameof(IndeterminateRefusesExactlyLikeNoRecycleBinOnVolume), IndeterminateRefusesExactlyLikeNoRecycleBinOnVolume),
         new TestCase("ContractSuite." + nameof(ATargetCostsNoAllocationOfItsOwn), ATargetCostsNoAllocationOfItsOwn),
         new TestCase("ContractSuite." + nameof(ContentsTotalIsDerivedNotDeclared), ContentsTotalIsDerivedNotDeclared),
@@ -394,6 +395,31 @@ internal static class ContractSuite
             9,
             Enum.GetValues<RecycleFailureStage>().Length,
             "nine stages survive, so a new stage that reuses a gap is caught here rather than in a caller's persisted value");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The numbers behind the three progress enums are part of their contract for the same reason the
+    /// stage numbers are: a caller may persist one across versions of this library.
+    /// </summary>
+    private static Task ProgressStatusNumbersAreFrozen(TestContext context)
+    {
+        Check.Equal(0, (int)RecycleStatus.Recycled, "Recycled keeps number 0");
+        Check.Equal(1, (int)RecycleStatus.Failed, "Failed keeps number 1");
+        Check.Equal(2, (int)RecycleStatus.Refused, "Refused keeps number 2");
+        Check.Equal(3, (int)RecycleStatus.DeletedPermanently, "DeletedPermanently keeps number 3");
+        Check.Equal(4, Enum.GetValues<RecycleStatus>().Length, "and nothing else joins the recycle enum");
+
+        Check.Equal(0, (int)RestoreStatus.Restored, "Restored keeps number 0");
+        Check.Equal(1, (int)RestoreStatus.Failed, "Failed keeps number 1");
+        Check.Equal(2, (int)RestoreStatus.Skipped, "Skipped keeps number 2");
+        Check.Equal(3, (int)RestoreStatus.Merged, "Merged keeps number 3");
+        Check.Equal(4, Enum.GetValues<RestoreStatus>().Length, "and nothing else joins the restore enum");
+
+        Check.Equal(0, (int)EmptyStatus.Removed, "Removed keeps number 0");
+        Check.Equal(1, (int)EmptyStatus.Failed, "Failed keeps number 1");
+        Check.Equal(2, Enum.GetValues<EmptyStatus>().Length, "and nothing else joins the empty enum");
 
         return Task.CompletedTask;
     }
