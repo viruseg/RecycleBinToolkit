@@ -16,13 +16,15 @@ internal readonly record struct NativeIndexRecord(string OriginalPath, long Size
 /// Reads and writes the <c>$I</c> records that describe a Recycle Bin's contents.
 /// </summary>
 /// <remarks>
-/// Two formats, and the difference is the whole reason this backend is gated on a Windows build. Version 1
-/// has a fixed 520-byte path field, which is 260 characters and no more — Windows Vista through 8.1 wrote
-/// it, and a path past <c>MAX_PATH</c> could not be described. Version 2 replaced the field with a length
-/// and carries a path of any length; Windows 10 build 14393 was the first Shell that reads it.
+/// Two formats, and the difference is why a record is written in one of them or the other. Version 1 has a
+/// fixed 520-byte path field, which is 260 characters and no more — Windows Vista through 8.1 wrote it, and
+/// a path past <c>MAX_PATH</c> could not be described. Version 2 replaced the field with a length and
+/// carries a path of any length; Windows 10 build 14393 was the first Shell that reads it.
 /// <para>
-/// Version 1 is read because a bin can still hold entries written by an older Windows; it is never written,
-/// because a Shell too old to read it is a Shell whose Restore button would not work on what this wrote.
+/// Both are read, because a bin can hold entries written by either Windows. Which one is written is
+/// <see cref="IndexFormat"/>'s answer and not this class's: the caller does not choose, and a path that
+/// the chosen format cannot name never reaches <see cref="Write"/> — the policy above it either changes
+/// the path or refuses the item.
 /// </para>
 /// </remarks>
 internal static class NativeIndexFile

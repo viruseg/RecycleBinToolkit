@@ -67,11 +67,17 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 217 registered cases, of which four are load cases, so `--all` runs 213 of them. The rest is
+There are 242 registered cases, of which four are load cases, so `--all` runs 238 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
-cases that recycle one and runs the cases that are about a volume with no bin. **203 pass and 10 skip**,
-with nothing failing, on a volume that has a bin — measured by one `--all` on such a volume and by the
-same run on a second one.
+cases that recycle one and runs the cases that are about a volume with no bin. **226 pass and 12 skip**,
+with nothing failing, on a volume that has a bin — measured by one `--all` on `D:\` on 2026-10-13.
+
+Two of the twelve skips are the 8.3 cases: `D:\` has short-name generation off, so `GetShortPathName`
+returns nothing for any path there and the alias route has no fixture to run against. What is measured
+on `D:\` is the fall-through — an alias that is absent goes to the caller's policy, which
+`NativeBinSuite.ThrowRefusesThePathAndLeavesItInPlace` witnesses. What is **not** measured on `D:\` is
+the success branch: that a path whose alias fits is recycled with the alias in its record. Enabling
+short names needs administrator rights, so nobody should read that route as proven from a run here.
 
 **A volume alone on its physical disk is 198 pass and 15 skip**, also nothing failing. Five cases ask the
 machine for a second volume on the same disk or for one on another, through `VolumePresence`, and a run
@@ -79,6 +85,10 @@ on such a volume has neither — so each says it did not run rather than going r
 chose. This is the whole of what `VolumePresence` is for: a letter written into a case asserts one
 machine's partition layout and is green on that machine and red everywhere else, which is the opposite
 of what a portable suite owes its caller.
+
+**That second figure is stale and is not re-measured.** It was taken on a two-volume machine before this
+work and its case count predates the twelve cases added since, so read it as "how many skip on a volume
+with no second volume", not as a number to quote beside the first.
 
 A volume with no bin and a share are both unmeasured
 here: measure before quoting either. `--all` prints the counts, so a count in a document that disagrees
@@ -98,10 +108,13 @@ RecycleBin            the entry point: moves items in, resolves volumes, reports
    └─ RecycleBinVolumePolicy the decision, separated so it can be checked exhaustively
 
 the engine, over whatever the entry point resolved
+   ├─ IndexFormat             which record version this machine reads, asked once per process
    ├─ NativeBinLayout         $RECYCLE.BIN\<SID>\ and the $I/$R name pair
    ├─ NativeIndexFile         version 1 and 2 records, read and written
    ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
    ├─ NativeRecycleRunner     record first, then the move; retries are per path
+   ├─ ShortPathResolver       the 8.3 alias, when the volume has one
+   ├─ LongPathStager          $RCW-<guid>\ on the item's own volume, for a path the record cannot name
    ├─ NativeBinLister         pairs from the walk, every volume at once; records only under PreloadItemDetails
    └─ NativeBinEmptier        payload first, then the record, counted from the walk; one group of volumes per disk
 
@@ -112,6 +125,29 @@ the restore engine, over the entries a listing handed back
 RecycleBinContents.LoadItemDetails  warms a listing after the fact
   └─ ItemDetailLoader        one volume at a time, at that volume's own degree of parallelism
 ```
+
+**The record version follows the machine, and the caller has no say.** There are two formats. Version 2
+carries a counted path and reads on Windows 10 build 14393 and later; version 1 has a fixed 520-byte
+field, which is 259 characters, and reads on everything older. An older Shell does not reject a version 2
+record — it reads it as something it cannot use, so the item appears in the bin and cannot be restored,
+which is the outcome the write gate existed to prevent. So `IndexFormat` asks the machine once per
+process and writes what it can read, and the floor is whatever the platform annotation already said.
+
+**Why the caller cannot choose.** A machine that reads both has nothing to gain from the older one and
+long paths to lose; a machine that reads one has no second option at all. A switch would be a setting
+whose two settings are right on different machines and wrong on each other's.
+
+**Why the long-path machinery is version 1 only.** A version 2 record holds any path Windows can name, so
+there is no path it cannot record and nothing for the policy to decide. Adding the route there would take
+a file that works today and move it to a staging directory so the entry would name a path it never lived
+at. The whole route is therefore inside `SettleOverLongPaths`, which returns immediately on version 2.
+
+**What a restore's put-back records, and why no policy reaches it.** `RestoreRunner` recycles internally
+when a merge cannot place a file. It records the path the entry was deleted from, not the place inside
+`$RECYCLE.BIN` where the payload is lying — that is what `RecycleTarget.RecordPath` is for. A restore puts
+an item where its record says, and `RestoreOptions` carries no destination of its own, so on a version 1
+machine the put-back's path is a path some version 1 record already holds, and every such record fits.
+`LongPathFailureAction` is therefore on `RecycleOptions` and nowhere else.
 
 **Record first, then the move.** A crash between the two leaves the caller's file exactly where it
 was and an index with no payload — litter the next empty collects. The other order leaves data that
@@ -418,21 +454,18 @@ answer is concerned.
 disabled. The Recycle Bin dialog offers no such setting, so nothing can turn it into one, and no
 measurement of what it would do is recorded here — so nothing claims to know.
 
-**The version requirement is a refusal, not a warning.** Windows 10 build 14393 is the first build
-that reads a version 2 index record. An older build does not reject one — it reads it as something
-it cannot use, so the item appears in the bin and cannot be restored from it. `RecycleAsync`
-therefore throws `RecycleBinNativeBackendUnavailableException` (a `PlatformNotSupportedException`)
-before it touches anything, and `ThrowOnError` does not suppress it: there is no path to report and
-no `RecycleFailureStage` that describes it, because nothing failed. `GetItemsAsync` and
-`EmptyAsync` are not gated — reading version 1 records is supported as well as writing version 2,
-and emptying parses nothing — so a machine too old to *write* can still *read* and *clear* at full
-speed.
-
 **Emptying a large bin is file deletion, and it is slow.** Measured: emptying roughly 13,600
 accumulated entries took 216 s. There is no progress callback to report from and no way to make it
 incremental, which is why a caller that needs responsiveness empties one volume at a time. Volumes
 on different physical disks are emptied together, which removes the wait one disk put in front of
 another; that is per disk and not per volume, so the partitions of one disk still take their turn.
+
+**A path past what the record can name is a refusal or a move, never a truncation.** This is a
+property of the older record format rather than a choice, and it is the one place where the Recycle
+Bin's own limits reach a caller. `NativeIndexFile` refuses to write a record whose path will not fit
+and writes nothing rather than shortening it, so the caller gets `LongPathNotRecyclable` and their
+file where they left it. The path in a record is what a restore puts the item back to: a truncated
+one is a wrong answer rather than an approximate one.
 
 ---
 
@@ -462,8 +495,12 @@ only one, and it empties the directory and removes it again in a `finally`, and 
 case that made it. A run on a bin-less volume that leaves a `$RECYCLE.BIN` behind has not found a bug;
 it has found a run of a suite where that case did not finish.
 
-Two things leave the working directory and are not the tests' doing: `EmptySuite` emptying the
-volume's Recycle Bin, which is the only way to assert that an entry really left.
+Three things leave the working directory and are not the tests' doing: `EmptySuite` emptying the
+volume's Recycle Bin, which is the only way to assert that an entry really left; the empty itself; and a
+staging directory the library creates under the volume root when a long path cannot be recorded. A case
+that provokes the third deletes it afterwards, which is cleanup rather than creation — the rule that a
+test creates nothing outside `--scratch` is untouched by it, and the directory exists only because the
+library needs a short path somewhere on the item's own volume.
 
 ### A known limit
 
