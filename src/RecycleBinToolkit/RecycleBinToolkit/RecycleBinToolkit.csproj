@@ -25,10 +25,11 @@
         <PackageTags>recycle-bin trash delete restore empty windows filesystem</PackageTags>
         <Description>A high-performance .NET library for the Windows Recycle Bin: move files and directories into it, list what is in it, restore entries, empty it, and report the outcome of every item. It reads and writes the Recycle Bin's own files — no SHFileOperation, no IFileOperation, no COM.</Description>
         <PackageReleaseNotes>
+            1.1.0: Support for the first version of the Recycle Bin index file, on machines whose Windows reads that one rather than the second
             1.0.0: First release
         </PackageReleaseNotes>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0</AssemblyVersion>
+        <Version>1.1.0</Version>
+        <AssemblyVersion>1.1.0</AssemblyVersion>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <PackageLicenseFile>LICENSE</PackageLicenseFile>
         <IncludeContentInPack>true</IncludeContentInPack>
