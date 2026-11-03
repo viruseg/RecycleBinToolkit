@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="RecycleBinToolkit/RecycleBinToolkit.csproj" />
+  <Project Path="../../RecycleBinToolkit.Example/RecycleBinToolkit.Example.csproj" />
   <Project Path="../../tests/RecycleBinToolkit.Tests/RecycleBinToolkit.Tests.csproj" />
 </Solution>
