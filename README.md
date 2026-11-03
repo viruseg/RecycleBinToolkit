@@ -235,9 +235,10 @@ Empties the Recycle Bin. The first signature below is the one to reach for unles
 | `volumeRoot` | `string?` | Volume root to empty, or `null` for every mounted Fixed or Removable volume in one call. A path inside a volume is not a volume root and is reported in `Failures`. |
 | `cancellationToken` | `CancellationToken` | Cancels the sweep. It stops between entries and raises, so a cancelled call returns no result: what was removed is found by reading the bin. |
 
-**Returns** a `RecycleBinEmptyResult`. `ItemsRemoved` and `BytesFreed` are summed from the records
-being deleted, so a record whose payload is already gone counts as removed. `VolumesEmptied` and
-`Failures` are in the order the volumes were covered.
+**Returns** a `RecycleBinEmptyResult`. Every entry the bin holds leaves it: a pair, a record whose payload is
+already gone, and a payload whose record is gone. `BytesFreed` is measured from the directory entries, so a
+directory contributes no bytes; an entry whose size could not be read leaves the bin and is not counted.
+`VolumesEmptied` and `Failures` are in the order the volumes were covered.
 
 **A read-only entry is removed, not reported.** A recycled item keeps the attributes it had before it was
 deleted, and the file system refuses to delete one carrying the read-only attribute; the empty clears that
@@ -712,8 +713,8 @@ The immutable result of one `EmptyAsync` call.
 | Member | Type | Description |
 | --- | --- | --- |
 | `VolumesEmptied` | `IReadOnlyList<string>` | Volume roots covered, each with a trailing separator, in the order covered. |
-| `ItemsRemoved` | `long` | Number of entries removed. |
-| `BytesFreed` | `long` | Total bytes those entries occupied. |
+| `ItemsRemoved` | `long` | Number of entries removed. An entry is a recycled item's two halves, or whichever half of them the bin still held. |
+| `BytesFreed` | `long` | Total bytes those entries occupied. A directory contributes none: its size is not measured. |
 | `Failures` | `IReadOnlyList<RecycleFailure<EmptyFailureStage>>` | Volumes that could not be emptied or measured. One volume's failures are together, in coverage order. |
 | `Elapsed` | `TimeSpan` | Time the call took. |
 | `RecycleBinEmptyResult(...)` | constructor | Constructs a result. |

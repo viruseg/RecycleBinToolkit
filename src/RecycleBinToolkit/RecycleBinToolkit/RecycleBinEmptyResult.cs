@@ -31,9 +31,17 @@ public sealed record RecycleBinEmptyResult
     public IReadOnlyList<string> VolumesEmptied { get; }
 
     /// <summary>Number of entries that left the Recycle Bin.</summary>
+    /// <remarks>
+    /// An entry is a recycled item's two halves, or whichever half of them the bin still held: a record whose
+    /// payload is gone and a payload whose record is gone both count.
+    /// </remarks>
     public long ItemsRemoved { get; }
 
     /// <summary>Total bytes those entries occupied.</summary>
+    /// <remarks>
+    /// A directory contributes nothing to this figure: its size is not measured, only its entry is removed. An
+    /// entry whose record could not be read is removed but not counted here.
+    /// </remarks>
     public long BytesFreed { get; }
 
     /// <summary>Volumes that could not be emptied or measured.</summary>

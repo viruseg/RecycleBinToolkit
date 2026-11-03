@@ -103,6 +103,8 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeListingIgnoresAPayloadWithoutARecord), NativeListingIgnoresAPayloadWithoutARecord),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyCollectsAnEntryWhosePayloadIsGone), NativeEmptyCollectsAnEntryWhosePayloadIsGone),
         new TestCase("NativeBinSuite." + nameof(NativeEmptyIgnoresADirectoryNamedLikeARecord), NativeEmptyIgnoresADirectoryNamedLikeARecord),
+        new TestCase("NativeBinSuite." + nameof(NativeEmptyCollectsAPayloadWithNoRecord), NativeEmptyCollectsAPayloadWithNoRecord),
+        new TestCase("NativeBinSuite." + nameof(TheCountingPassCountsAPayloadWithNoRecord), TheCountingPassCountsAPayloadWithNoRecord),
         new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsSayWhatHappenedWhenTheRecordIsNotARecord), NativeLazyDetailsSayWhatHappenedWhenTheRecordIsNotARecord),
         new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsCarryTheFileSystemCode), NativeLazyDetailsCarryTheFileSystemCode),
         new TestCase("NativeBinSuite." + nameof(NativeEnumerationPairsHalvesWhateverCaseTheyAreWrittenIn), NativeEnumerationPairsHalvesWhateverCaseTheyAreWrittenIn),
@@ -2777,6 +2779,119 @@ using var workspace = new ScratchWorkspace();
         Check.False(File.Exists(wholeIndex), "the whole entry's record is gone");
         Check.False(File.Exists(wholePayload), "and so is its payload");
         Check.False(File.Exists(orphanIndex), "and the orphaned record is collected, which is the whole point");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A payload whose record is gone is litter the volume pays for for ever. The Shell has nothing to show
+    /// and nothing to restore, and an empty that passes over it leaves the bytes behind while naming the
+    /// volume as emptied.
+    /// </summary>
+    /// <remarks>
+    /// The state is reached from outside the library — a record deleted by hand, a bin carried over from the
+    /// format that kept every entry of a volume in one <c>INFO2</c> file — and the walk already reports it, as
+    /// a payload with no record. This is the sweep half of that pair, against a bin in the scratch root rather
+    /// than the run's volume, for the reason <see cref="NativeEmptyCollectsAnEntryWhosePayloadIsGone"/> gives.
+    /// <para>
+    /// A file and a directory are both fixtures because they are taken by different calls, and the directory
+    /// carries the convention every directory payload carries: nothing measures its tree, so it adds an entry
+    /// and no bytes.
+    /// </para>
+    /// </remarks>
+    private static async Task NativeEmptyCollectsAPayloadWithNoRecord(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var root = Path.Combine(ScratchWorkspace.Root, "stray-volume") + Path.DirectorySeparatorChar;
+        var bin = NativeBinLayout.EnsureBinDirectory(root);
+
+        var deleted = new DateTime(2026, 10, 10, 1, 2, 3, DateTimeKind.Utc);
+
+        var pairedStem = "AAA" + RunTag;
+        var pairedIndex = NativeBinLayout.IndexPath(bin, pairedStem, ".bin");
+        var pairedPayload = NativeBinLayout.PayloadPath(bin, pairedStem, ".bin");
+        File.WriteAllBytes(pairedPayload, Content);
+        NativeIndexFile.Write(pairedIndex, ScratchWorkspace.Root + "\\paired.bin", Content.LongLength, deleted, IndexFormat.Current);
+
+        var strayFileStem = "EEE" + RunTag;
+        var strayFile = NativeBinLayout.PayloadPath(bin, strayFileStem, ".bin");
+        File.WriteAllBytes(strayFile, Content);
+
+        var strayDirectoryStem = "FFF" + RunTag;
+        var strayDirectory = NativeBinLayout.PayloadPath(bin, strayDirectoryStem, ".log");
+        var insideStrayDirectory = Path.Combine(strayDirectory, "inside.bin");
+        Directory.CreateDirectory(strayDirectory);
+        File.WriteAllBytes(insideStrayDirectory, Content);
+
+        var result = await Task
+            .Run(() => NativeBinEmptier.Empty([root], sink: null, context.CancellationToken), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(0, result.Failures.Count, $"the litter is taken rather than reported (got {result.Failures.Count})");
+        Check.Equal(3, result.ItemsRemoved, "the paired entry and both payloads with no record are counted");
+        Check.Equal(
+            2 * Content.LongLength,
+            result.BytesFreed,
+            $"the stray file's bytes are counted, and the directory contributes none as every directory payload does (got {result.BytesFreed})");
+        Check.True(
+            result.VolumesEmptied.Count == 1 && result.VolumesEmptied[0] == root,
+            $"the volume is named as emptied, nothing having been left behind (got [{string.Join(", ", result.VolumesEmptied)}])");
+
+        Check.False(File.Exists(pairedIndex), "the paired entry's record is gone");
+        Check.False(File.Exists(pairedPayload), "and its payload");
+        Check.False(File.Exists(strayFile), "the stray payload is gone");
+        Check.False(Directory.Exists(strayDirectory), "and so is the stray directory");
+        Check.False(File.Exists(insideStrayDirectory), "with the file it held");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The counting pass is the total every progress report divides by, so a sweep that takes more than that
+    /// total makes each report after it a number the caller cannot line up with anything.
+    /// </summary>
+    /// <remarks>
+    /// One fixture carries the two shapes that must not be counted: a paired entry is one entry and not two
+    /// halves, and a <em>directory</em> named like a record is not a record and is not swept.
+    /// </remarks>
+    private static async Task TheCountingPassCountsAPayloadWithNoRecord(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var root = Path.Combine(ScratchWorkspace.Root, "count-volume") + Path.DirectorySeparatorChar;
+        var bin = NativeBinLayout.EnsureBinDirectory(root);
+
+        var deleted = new DateTime(2026, 10, 10, 1, 2, 3, DateTimeKind.Utc);
+
+        var pairedStem = "AAA" + RunTag;
+        var pairedIndex = NativeBinLayout.IndexPath(bin, pairedStem, ".bin");
+        var pairedPayload = NativeBinLayout.PayloadPath(bin, pairedStem, ".bin");
+        File.WriteAllBytes(pairedPayload, Content);
+        NativeIndexFile.Write(pairedIndex, ScratchWorkspace.Root + "\\paired.bin", Content.LongLength, deleted, IndexFormat.Current);
+
+        var strayFile = NativeBinLayout.PayloadPath(bin, "EEE" + RunTag, ".bin");
+        File.WriteAllBytes(strayFile, Content);
+
+        var strayDirectory = NativeBinLayout.PayloadPath(bin, "FFF" + RunTag, ".log");
+        Directory.CreateDirectory(strayDirectory);
+
+        var decoy = Path.Combine(bin, "$IDECOY" + RunTag + ".bin");
+        Directory.CreateDirectory(decoy);
+
+        var counted = await Task
+            .Run(() => NativeBinEmptier.CountEntries([root], context.CancellationToken), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var result = await Task
+            .Run(() => NativeBinEmptier.Empty([root], sink: null, context.CancellationToken), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.Equal(3, counted, "one paired entry and two payloads with no record, the halves of a pair not counted twice");
+        Check.Equal(counted, (int)result.ItemsRemoved, "and the total the reports divide by is the total the sweep takes");
+        Check.True(Directory.Exists(decoy), "a directory named like a record is neither counted nor swept, so it is still there");
 
         workspace.Dispose();
     }

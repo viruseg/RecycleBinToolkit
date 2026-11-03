@@ -9,6 +9,11 @@ namespace RecycleBinToolkit;
 /// The counts come from the walk itself: it says what each entry is and how large its payload is, so an
 /// empty of ninety thousand entries measures them without reading a record.
 /// <para>
+/// Everything the walk finds is taken — a pair, a record whose payload is gone, and a payload whose record is
+/// gone. The last of those three is what a bin holds when something outside the library removed a record: the
+/// Shell shows nothing, restores nothing, and the volume keeps paying for the bytes.
+/// </para>
+/// <para>
 /// Volumes are split by the physical disk behind them and emptied disk by disk: volumes on different
 /// devices run together, because a Recycle Bin is one directory per volume and nothing about one device
 /// holds up another. The volumes of one disk run one after another, because they are two directories
@@ -29,14 +34,15 @@ internal static class NativeBinEmptier
     internal static int CountPasses;
 
     /// <summary>
-    /// How many entries the named volumes' bins hold between them.
+    /// How many entries the named volumes' bins hold between them, an entry being one half of a pair or both.
     /// </summary>
     /// <param name="volumeRoots">Volume roots, each normalised with a trailing separator.</param>
     /// <param name="cancellationToken">Cancels the walk between entries.</param>
     /// <remarks>
     /// A second read of every bin directory, and the reason an empty with a progress handler is slower than
     /// one without. It exists only for a caller who asked to be told how far along the sweep is, and a caller
-    /// who did not never reaches here.
+    /// who did not never reaches here. It counts what the sweep takes, so the total a report divides by is
+    /// not a number the sweep then overshoots.
     /// </remarks>
     internal static int CountEntries(IReadOnlyList<string> volumeRoots, CancellationToken cancellationToken)
     {
@@ -48,7 +54,7 @@ internal static class NativeBinEmptier
 
         foreach (var volumeRoot in volumeRoots)
         {
-            total += NativeBinEntries.CountRecords(NativeBinLayout.BinDirectory(volumeRoot), cancellationToken);
+            total += NativeBinEntries.CountSweptEntries(NativeBinLayout.BinDirectory(volumeRoot), cancellationToken);
         }
 
         return total;
@@ -67,7 +73,8 @@ internal static class NativeBinEmptier
     /// </param>
     /// <returns>
     /// Every volume whose bin directory existed, the exact number of entries removed, their exact total
-    /// size, and one failure per entry that would not go.
+    /// size, and one failure per entry that would not go. An entry is a pair or whichever half of one is
+    /// there; the failure of a payload with no record is named by the payload.
     /// </returns>
     internal static RecycleBinEmptyResult Empty(
         IReadOnlyList<string> volumeRoots,
@@ -189,9 +196,9 @@ internal static class NativeBinEmptier
             return new VolumeOutcome(true, 0, 0, []);
         }
 
-        var records = CollectRecords(binDirectory, cancellationToken);
+        var entries = NativeBinEntries.Collect(binDirectory, cancellationToken);
 
-        if (records.Count == 0)
+        if (entries.Count == 0)
         {
             return new VolumeOutcome(true, 0, 0, []);
         }
@@ -199,7 +206,7 @@ internal static class NativeBinEmptier
         // Measured before anything is deleted, out of bytes that are about to stop existing. A whole pair
         // already carries its size from the walk, so only the entries whose payload is gone have anything
         // left to ask for — and a record is the only thing that can answer.
-        var sizes = new long[records.Count];
+        var sizes = new long[entries.Count];
         var options = new ParallelOptions
         {
             MaxDegreeOfParallelism = VolumeSeekPenalty.DegreeOfParallelism(volumeRoot),
@@ -207,11 +214,11 @@ internal static class NativeBinEmptier
         };
 
         var needy = new List<int>();
-        for (var i = 0; i < records.Count; i++)
+        for (var i = 0; i < entries.Count; i++)
         {
-            if (records[i].PayloadPath is not null)
+            if (entries[i].PayloadPath is not null)
             {
-                sizes[i] = records[i].PayloadIsDirectory ? 0 : records[i].PayloadLength;
+                sizes[i] = entries[i].PayloadIsDirectory ? 0 : entries[i].PayloadLength;
             }
             else
             {
@@ -222,10 +229,10 @@ internal static class NativeBinEmptier
 
         // The token rides on the measuring pass as well as the sweep. A cancelled empty that still opened
         // and read every entry before noticing would take as long as the empty it was meant to abandon.
-        Parallel.ForEach(needy, options, index => sizes[index] = SizeOfRecord(records[index].IndexPath!));
+        Parallel.ForEach(needy, options, index => sizes[index] = SizeOfRecord(entries[index].IndexPath!));
 
         var failures = new List<RecycleFailure<EmptyFailureStage>>();
-        Remove(records, sizes, failures, sink, cancellationToken);
+        Remove(entries, sizes, failures, sink, cancellationToken);
 
         // A volume is named as emptied only when nothing on it was left behind: a caller reading
         // VolumesEmptied is asking whether that volume is empty now, and a bin that kept a locked entry
@@ -269,7 +276,7 @@ internal static class NativeBinEmptier
     /// which volume it was on.
     /// </remarks>
     private static void Remove(
-        List<NativeBinEntry> records,
+        IReadOnlyList<NativeBinEntry> records,
         long[] sizes,
         List<RecycleFailure<EmptyFailureStage>> failures,
         ProgressSink? sink,
@@ -279,8 +286,9 @@ internal static class NativeBinEmptier
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var indexPath = records[i].IndexPath!;
-            var payloadPath = records[i].PayloadPath;
+            var entry = records[i];
+            var indexPath = entry.IndexPath;
+            var payloadPath = entry.PayloadPath;
 
             try
             {
@@ -291,7 +299,10 @@ internal static class NativeBinEmptier
                     ReadOnlyAwareDeleter.Delete(payloadPath);
                 }
 
-                ReadOnlyAwareDeleter.DeleteFile(indexPath);
+                if (indexPath is not null)
+                {
+                    ReadOnlyAwareDeleter.DeleteFile(indexPath);
+                }
 
                 Report(sink, EmptyStatus.Removed);
             }
@@ -301,7 +312,11 @@ internal static class NativeBinEmptier
                 // and the record that named it is the only thing left, so it goes on its own: the entry is
                 // out of the bin either way, which is exactly what was asked for, and calling it a failure
                 // would report a removal as a problem for every entry a concurrent empty had already taken.
-                TryDeleteIndex(indexPath);
+                if (indexPath is not null)
+                {
+                    TryDeleteIndex(indexPath);
+                }
+
                 sizes[i] = -1;
                 Report(sink, EmptyStatus.Removed);
             }
@@ -309,8 +324,9 @@ internal static class NativeBinEmptier
             {
                 // Somebody is holding an entry open, or this account may not remove it. Neither stops the
                 // rest of the sweep: an entry left behind costs the caller one line in the list, not the
-                // whole empty.
-                failures.Add(new RecycleFailure<EmptyFailureStage>(indexPath, ex.HResult, 1, EmptyFailureStage.EntryNotRemoved));
+                // whole empty. A payload nothing describes is named by the payload, its record being gone.
+                failures.Add(new RecycleFailure<EmptyFailureStage>(
+                    indexPath ?? payloadPath!, ex.HResult, 1, EmptyFailureStage.EntryNotRemoved));
                 sizes[i] = -1;
                 Report(sink, EmptyStatus.Failed);
             }
@@ -349,31 +365,6 @@ internal static class NativeBinEmptier
         {
             // A record nothing will ever restore, left where the next empty on this volume finds it.
         }
-    }
-
-    /// <summary>
-    /// Every entry a bin directory holds that has a record to delete, whether its payload is still there or
-    /// not.
-    /// </summary>
-    /// <param name="binDirectory">The volume's bin directory for this user.</param>
-    /// <param name="cancellationToken">Cancels the walk between entries.</param>
-    /// <remarks>
-    /// An entry with a record and no payload is included, because a record with nothing behind it is litter
-    /// that this is what removes. One with neither is not an entry at all and is not here to be swept.
-    /// </remarks>
-    private static List<NativeBinEntry> CollectRecords(string binDirectory, CancellationToken cancellationToken)
-    {
-        var records = new List<NativeBinEntry>();
-
-        foreach (var entry in NativeBinEntries.Collect(binDirectory, cancellationToken))
-        {
-            if (entry.IndexPath is not null)
-            {
-                records.Add(entry);
-            }
-        }
-
-        return records;
     }
 }
 

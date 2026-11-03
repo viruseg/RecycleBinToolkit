@@ -107,7 +107,7 @@ internal static class NativeBinEntries
             },
             options)
         {
-            ShouldIncludePredicate = static (ref FileSystemEntry entry) => IsEntry(ref entry)
+            ShouldIncludePredicate = static (ref FileSystemEntry entry) => IsEntry(entry.FileName, entry.IsDirectory)
         };
 
         foreach (var _ in enumerable)
@@ -129,7 +129,7 @@ internal static class NativeBinEntries
     }
 
     /// <summary>
-    /// Counts the entries a bin directory holds that have a record to delete.
+    /// How many entries a bin directory holds that an empty takes, counting a pair once.
     /// </summary>
     /// <param name="binDirectory">The volume's bin directory for this user.</param>
     /// <param name="cancellationToken">Cancels the walk between entries.</param>
@@ -138,11 +138,16 @@ internal static class NativeBinEntries
     /// bin holds nothing.
     /// </returns>
     /// <remarks>
+    /// An entry is one half of a pair or both, so the two halves are put on one set keyed by the name they
+    /// share: counting names would tell a caller watching the sweep that ninety entries were a hundred and
+    /// eighty. The same name test as the collection's, so which names count as half an entry stays written
+    /// once.
+    /// <para>
     /// Not a call to <see cref="Collect"/> with the result thrown away: that builds a dictionary per half and
-    /// a list per entry, and nothing here pairs anything. The same name test as the collection's, so which
-    /// names count as half an entry stays written once.
+    /// a list per entry, and nothing here pairs anything. One set of the shared part is the whole of the work.
+    /// </para>
     /// </remarks>
-    internal static int CountRecords(string binDirectory, CancellationToken cancellationToken)
+    internal static int CountSweptEntries(string binDirectory, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(binDirectory);
 
@@ -151,7 +156,7 @@ internal static class NativeBinEntries
             return 0;
         }
 
-        var count = 0;
+        var stems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var options = new EnumerationOptions
         {
@@ -165,19 +170,14 @@ internal static class NativeBinEntries
             binDirectory,
             (ref FileSystemEntry entry) =>
             {
-                if (TryReadHalf(entry.FileName, out var marker) && marker == IndexMarker)
-                {
-                    count++;
-                }
-
+                // The predicate has thrown out everything that is not a half of an entry already. What a
+                // pair shares is the name after the marker, and one of those per entry is what is counted.
+                stems.Add(entry.FileName.Slice(MarkerLength).ToString());
                 return true;
             },
             options)
         {
-            // The directory test is what Collect applies and what a counting-only walk has to apply too: a
-            // directory named $I is litter that is not an entry, and counting it would put the total a
-            // progress display divides by above the number of entries actually swept.
-            ShouldIncludePredicate = static (ref FileSystemEntry entry) => IsEntry(ref entry)
+            ShouldIncludePredicate = static (ref FileSystemEntry entry) => IsEntry(entry.FileName, entry.IsDirectory)
         };
 
         foreach (var _ in enumerable)
@@ -185,11 +185,11 @@ internal static class NativeBinEntries
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        return count;
+        return stems.Count;
     }
 
     /// <summary>
-    /// Whether a directory entry is one half of a Recycle Bin entry.
+    /// Whether a name, and whether it is a directory, make one half of a Recycle Bin entry.
     /// </summary>
     /// <remarks>
     /// A record is always a file, so a <em>directory</em> whose name starts with <c>$I</c> is not one and is
@@ -198,15 +198,8 @@ internal static class NativeBinEntries
     /// a failure each time and keeps the volume out of its own results. A directory named <c>$R</c> is a
     /// different matter — a recycled directory's payload is a directory, and that is the ordinary case.
     /// </remarks>
-    private static bool IsEntry(ref FileSystemEntry entry)
-    {
-        if (!TryReadHalf(entry.FileName, out var marker))
-        {
-            return false;
-        }
-
-        return marker == PayloadMarker || !entry.IsDirectory;
-    }
+    private static bool IsEntry(ReadOnlySpan<char> name, bool isDirectory) =>
+        TryReadHalf(name, out var marker) && (marker == PayloadMarker || !isDirectory);
 
     /// <summary>
     /// Reads which half an entry name belongs to.

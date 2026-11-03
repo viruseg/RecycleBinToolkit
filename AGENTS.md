@@ -73,16 +73,16 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 276 registered cases, of which four are load cases, so `--all` runs 272 of them. The rest is
+There are 278 registered cases, of which four are load cases, so `--all` runs 274 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
-cases that recycle one and runs the cases that are about a volume with no bin. **257 pass and 15 skip**,
+cases that recycle one and runs the cases that are about a volume with no bin. **259 pass and 15 skip**,
 with nothing failing, on a volume that has a bin — measured by one `--all` on `E:\` on 2026-11-03.
 Thirteen of the fifteen name a volume with no Recycle Bin, or one whose answer is a doubt rather than a
 refusal; two are the 8.3 cases.
 
 **The same shape measured on `D:\` was 249 pass and 13 skip**, also nothing failing, on 2026-10-13. Two of
 its skips have been joined by the two read-only `DeletePermanently` cases this work added, which skip on any
-volume that has a bin, and its case count is ten lower — so its figures are not to be quoted beside the ones
+volume that has a bin, and its case count is twelve lower — so its figures are not to be quoted beside the ones
 above.
 
 Two of the skips are the 8.3 cases: neither `D:\` nor `E:\` has short-name generation on, so
@@ -185,6 +185,21 @@ merge before a leftover exists.
 **Record first, then the move.** A crash between the two leaves the caller's file exactly where it
 was and an index with no payload — litter the next empty collects. The other order leaves data that
 is gone and recorded nowhere, which is the one outcome a Recycle Bin exists to prevent.
+
+**An empty takes all three shapes a bin holds.** A pair; a record whose payload is gone, which the order above
+leaves behind; and a payload whose record is gone, which comes from outside the library — a record deleted by
+hand, or a bin carried over from the format that kept every entry of a volume in one `INFO2` file. The last is
+the shape a volume keeps paying for: the Shell shows nothing without a record and restores nothing, so those
+bytes are unreachable and permanent unless the sweep takes them.
+
+- `NativeBinEntries.CountSweptEntries` counts the same three shapes, keyed on the name the two halves share, so
+  a pair is one entry and the total a progress report divides by is the total the sweep takes.
+- A payload with no record has no recorded size, so its bytes come from the walk: a file's length, a directory
+  nothing — the convention every directory payload already carries.
+- Where such an entry cannot be removed, the failure names the payload; its record being gone, there is nothing
+  else to name.
+- A legacy `INFO2` bin is the one case where these payloads are data rather than litter: a recovery tool could
+  still read them. This library reads `$I` records only, so it never could.
 
 **Retries are per path, not per batch.** A move that fails is a property of one path, and retrying
 the others would repeat work that already succeeded. Only the items that failed are retried.
@@ -550,6 +565,14 @@ half gone and its record — or, on the restore side, the entry — is the shape
 the tree separately. This is what the attribute clearing removes as a cause, and it is still reachable
 through a hold on a file inside a recycled directory.
 
+**A junction inside a payload tree is refused, and a live one is not followed.** Measured: a tree holding a
+junction whose target is gone answers the recursing delete with `ERROR_ACCESS_DENIED` — not with the missing
+path one might expect — after having taken the ordinary files it passed on the way in. So the entry is left
+half-emptied with its record, the shape above reached without an attribute being involved, and the sweep
+reports it rather than swallowing it. A junction whose target exists is not walked through, and the target and
+its contents stay. What this is *not* is a way for the empty to leave a payload behind: the refusal keeps the
+record, so no payload outlives it. That was the suspicion, and the measurement is what dismissed it.
+
 ---
 
 ## What the tests may touch
@@ -585,12 +608,12 @@ that provokes the third deletes it afterwards, which is cleanup rather than crea
 test creates nothing outside `--scratch` is untouched by it, and the directory exists only because the
 library needs a short path somewhere on the item's own volume.
 
-**A directory recycle can be refused by the machine rather than by the library.** Four `--all` runs on
-`E:\` on 2026-11-03: three printed 257 pass and 15 skip with nothing failing, and one failed two cases that
-recycle a freshly created directory — `RestoreSuite.AMergedTreeWithAReadOnlyDirectoryLeavesNothingInTheBin`
+**A directory recycle can be refused by the machine rather than by the library.** Five `--all` runs on
+`E:\` on 2026-11-03: four printed nothing failing, and one failed two cases that recycle a freshly created
+directory — `RestoreSuite.AMergedTreeWithAReadOnlyDirectoryLeavesNothingInTheBin`
 and the pre-existing `RestoreSuite.AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin` — each at
 `stage=Performing, hresult=0x80070005` on the move into the bin, before either reached an assertion of its
-own. Both pass in isolation and both passed in the other three runs, and the cause was not measured.
+own. Both pass in isolation and both passed in the other four runs, and the cause was not measured.
 `ScratchWorkspace`'s own cleanup documents the shape: the indexer and antivirus hold a handle on a path for
 a few milliseconds after it appears, and a directory move is refused with `ERROR_ACCESS_DENIED` while
 somebody is standing in the tree. That is as far as this goes — the run that showed it was not reproduced
