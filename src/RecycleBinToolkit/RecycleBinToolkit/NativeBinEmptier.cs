@@ -288,10 +288,10 @@ internal static class NativeBinEmptier
                 // deleted the same way — the walk already established that there is no payload to delete.
                 if (payloadPath is not null)
                 {
-                    DeleteEntry(payloadPath);
+                    ReadOnlyAwareDeleter.Delete(payloadPath);
                 }
 
-                File.Delete(indexPath);
+                ReadOnlyAwareDeleter.DeleteFile(indexPath);
 
                 Report(sink, EmptyStatus.Removed);
             }
@@ -337,27 +337,13 @@ internal static class NativeBinEmptier
     }
 
     /// <summary>
-    /// Removes an entry's payload, whichever kind of thing it is.
-    /// </summary>
-    private static void DeleteEntry(string payloadPath)
-    {
-        if (Directory.Exists(payloadPath))
-        {
-            Directory.Delete(payloadPath, recursive: true);
-            return;
-        }
-
-        File.Delete(payloadPath);
-    }
-
-    /// <summary>
     /// Removes the record of an entry whose payload had already gone.
     /// </summary>
     private static void TryDeleteIndex(string indexPath)
     {
         try
         {
-            File.Delete(indexPath);
+            ReadOnlyAwareDeleter.DeleteFile(indexPath);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

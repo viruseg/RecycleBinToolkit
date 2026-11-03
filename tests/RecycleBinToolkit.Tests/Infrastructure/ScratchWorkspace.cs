@@ -427,7 +427,9 @@ internal sealed class ScratchWorkspace : IDisposable
     {
         try
         {
-            foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            // Entries and not just files: a directory carrying the flag refuses removal as a read-only file
+            // does, and a case that builds one leaves the whole scratch tree behind if the sweep walks past it.
+            foreach (var path in Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories))
             {
                 TryClearAttributes(path);
             }

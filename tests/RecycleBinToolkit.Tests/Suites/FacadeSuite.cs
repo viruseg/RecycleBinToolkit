@@ -32,6 +32,8 @@ internal static class FacadeSuite
         new TestCase("FacadeSuite." + nameof(ARepeatedRefusedPathIsRefusedOnce), ARepeatedRefusedPathIsRefusedOnce),
         new TestCase("FacadeSuite." + nameof(DeletePermanentlyRemovesTheFileAndNamesIt), DeletePermanentlyRemovesTheFileAndNamesIt),
         new TestCase("FacadeSuite." + nameof(DeletePermanentlyRemovesADirectory), DeletePermanentlyRemovesADirectory),
+        new TestCase("FacadeSuite." + nameof(DeletePermanentlyRemovesAReadOnlyFile), DeletePermanentlyRemovesAReadOnlyFile),
+        new TestCase("FacadeSuite." + nameof(DeletePermanentlyRemovesAReadOnlyDirectory), DeletePermanentlyRemovesAReadOnlyDirectory),
         new TestCase("FacadeSuite." + nameof(DeletePermanentlyReportsAFileSystemRefusal), DeletePermanentlyReportsAFileSystemRefusal),
         new TestCase("FacadeSuite." + nameof(APathIsNeverBothRecycledAndPermanentlyDeleted), APathIsNeverBothRecycledAndPermanentlyDeleted),
         new TestCase("FacadeSuite." + nameof(AVolumeGuidPathIsSettledOnceRatherThanRetried), AVolumeGuidPathIsSettledOnceRatherThanRetried),
@@ -581,6 +583,105 @@ internal static class FacadeSuite
         Check.Equal(directory, result.PermanentlyDeletedPaths[0], "in the spelling the caller supplied");
         Check.False(Directory.Exists(directory), "the whole tree is gone from disk, contents included");
         Check.Equal(0, result.RecycledPaths.Count, "and it was not recycled, on a volume that cannot recycle");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The option destroys the path outright, and a path carrying the read-only attribute is one the file
+    /// system refuses to destroy — so the flag is the option's problem, not a reason to hand the caller a
+    /// refusal for the outcome they asked for.
+    /// </summary>
+    /// <remarks>
+    /// Measured: <c>DeleteFileW</c> answers a read-only file with <c>ERROR_ACCESS_DENIED</c>. The same
+    /// refusal stops an <see cref="RecycleBin.EmptyAsync(string?, CancellationToken)"/> from emptying a bin
+    /// full of read-only items, and the two are one bug rather than two, which is why they are one rule in
+    /// the library.
+    /// <para>
+    /// The option reaches the removal only on a volume that cannot recycle, so the file is written on the
+    /// volume <c>--scratch</c> named and the case is a skip on a volume that recycles.
+    /// </para>
+    /// </remarks>
+    private static async Task DeletePermanentlyRemovesAReadOnlyFile(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
+
+        var file = Path.Combine(ScratchWorkspace.Root, $"signed-away-readonly-{Environment.ProcessId}.bin");
+        File.WriteAllText(file, "readonly bytes");
+        File.SetAttributes(file, FileAttributes.ReadOnly);
+
+        var options = new RecycleOptions
+        {
+            ThrowOnError = false,
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+        };
+
+        var result = await RecycleBin
+            .RecycleAsync([file], options, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.True(
+            result.Succeeded,
+            $"a read-only file the caller signed away is removed rather than refused (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.Equal(1, result.PermanentlyDeletedPaths.Count, "the removed path is named as removed");
+        Check.Equal(file, result.PermanentlyDeletedPaths[0], "in the spelling the caller supplied");
+        Check.Equal(0, result.Failures.Count, "and the attribute is not a failure to report");
+        Check.False(File.Exists(file), "the file is gone from disk, which is the whole point of the option");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A directory carries the same attribute, and is refused the same way — by an exception of the other
+    /// kind, which is the reason the two shapes cannot be answered by one clause that names only
+    /// <see cref="UnauthorizedAccessException"/>.
+    /// </summary>
+    /// <remarks>
+    /// Measured on this machine: removing a read-only empty directory raises an <see cref="IOException"/>
+    /// with no file system code behind it, where deleting a read-only file raises
+    /// <see cref="UnauthorizedAccessException"/> carrying <c>ERROR_ACCESS_DENIED</c>. A recursive delete of a
+    /// tree meets whichever of the two it reaches first, so a tree is the fixture rather than the directory
+    /// on its own.
+    /// <para>
+    /// As the file case, this needs a volume that cannot recycle and is a skip on one that can.
+    /// </para>
+    /// </remarks>
+    private static async Task DeletePermanentlyRemovesAReadOnlyDirectory(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireNonRecycling("a volume with no Recycle Bin");
+
+        var directory = Path.Combine(ScratchWorkspace.Root, $"signed-away-tree-{Environment.ProcessId}");
+        var innerDirectory = Path.Combine(directory, "inner");
+        var emptyDirectory = Path.Combine(directory, "empty-dir");
+
+        Directory.CreateDirectory(innerDirectory);
+        Directory.CreateDirectory(emptyDirectory);
+        File.WriteAllText(Path.Combine(innerDirectory, "a.txt"), "hello");
+        File.SetAttributes(Path.Combine(innerDirectory, "a.txt"), FileAttributes.ReadOnly);
+        File.SetAttributes(emptyDirectory, FileAttributes.ReadOnly);
+
+        var options = new RecycleOptions
+        {
+            ThrowOnError = false,
+            NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+        };
+
+        var result = await RecycleBin
+            .RecycleAsync([directory], options, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        Check.True(
+            result.Succeeded,
+            $"a read-only tree the caller signed away is removed rather than refused (first failure: {result.FirstFailure?.Stage} 0x{result.FirstFailure?.HResult:X8})");
+        Check.Equal(1, result.PermanentlyDeletedPaths.Count, "the directory is named as removed");
+        Check.Equal(directory, result.PermanentlyDeletedPaths[0], "in the spelling the caller supplied");
+        Check.False(Directory.Exists(directory), "the whole tree is gone, its read-only contents included");
 
         workspace.Dispose();
     }

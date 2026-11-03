@@ -716,7 +716,7 @@ internal static class RestoreRunner
         try
         {
             // Payload first, record second, for the reason this class is documented with.
-            File.Delete(item.IndexPath);
+            ReadOnlyAwareDeleter.DeleteFile(item.IndexPath);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -806,6 +806,16 @@ internal static class RestoreRunner
             catch (Exception ex) when (name < NameCollision.NameAttempts && decision.Action == RestoreAction.Rename && NameCollision.IsTaken(ex))
             {
                 decision = decision with { TargetPath = RestorePathPlanner.WithFreeNumber(wantedPath) };
+            }
+            catch (Exception ex)
+            {
+                // The file the caller chose to replace carries the read-only attribute, and the file system
+                // refuses to overwrite one. Where that is the flag, it is off the destination now and the
+                // move is worth making again; a hold is a different refusal and is reported as it came.
+                if (!overwrite || !ReadOnlyAwareDeleter.TryClearForRefusal(ex, destination))
+                {
+                    throw;
+                }
             }
         }
     }
@@ -1008,8 +1018,8 @@ internal static class RestoreRunner
         {
             try
             {
-                Directory.Delete(item.PayloadPath, recursive: true);
-                File.Delete(item.IndexPath);
+                ReadOnlyAwareDeleter.Delete(item.PayloadPath);
+                ReadOnlyAwareDeleter.DeleteFile(item.IndexPath);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {

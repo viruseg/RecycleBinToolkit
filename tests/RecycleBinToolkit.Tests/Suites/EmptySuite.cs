@@ -26,6 +26,9 @@ internal static class EmptySuite
         new TestCase("EmptySuite." + nameof(AnEmptyPathIsNotAVolumeToEmpty), AnEmptyPathIsNotAVolumeToEmpty),
         new TestCase("EmptySuite." + nameof(AForwardSlashSpellingIsTheVolumeToEmpty), AForwardSlashSpellingIsTheVolumeToEmpty),
         new TestCase("EmptySuite." + nameof(NamingOneVolumeEmptiesThatVolume), NamingOneVolumeEmptiesThatVolume),
+        new TestCase("EmptySuite." + nameof(TheEmptyRemovesAReadOnlyEntry), TheEmptyRemovesAReadOnlyEntry),
+        new TestCase("EmptySuite." + nameof(TheEmptyRemovesAReadOnlyFileInsideARecycledDirectory), TheEmptyRemovesAReadOnlyFileInsideARecycledDirectory),
+        new TestCase("EmptySuite." + nameof(TheEmptyLeavesTheFlagOnAnEntryItCouldNotDelete), TheEmptyLeavesTheFlagOnAnEntryItCouldNotDelete),
         // Progress reporting on the empty, here rather than in ProgressSuite because these two empty the
         // bin, and --exclude takes one substring: a run that must not empty the Recycle Bin says
         // --exclude EmptySuite, which is only that run's meaning while every such case lives under this name.
@@ -68,6 +71,207 @@ internal static class EmptySuite
         Check.Equal(0, emptied.Failures.Count, "with nothing left unreached");
         Check.True(emptied.ItemsRemoved >= files.Count, $"and the entries really left it (got {emptied.ItemsRemoved})");
         Check.True(emptied.BytesFreed >= files.Count * 4096L, $"and their bytes were measured as freed (got {emptied.BytesFreed})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A recycled file keeps the read-only attribute it had outside the bin, and the file system refuses to
+    /// delete a file carrying one, so an entry a caller can restore is an entry the empty still has to take out.
+    /// </summary>
+    /// <remarks>
+    /// Measured on this machine: deleting a read-only file raises <see cref="UnauthorizedAccessException"/>
+    /// carrying <c>ERROR_ACCESS_DENIED</c>. That is why the Shell clears the attribute before it deletes, and
+    /// why a caller whose bin holds read-only items can empty it from Explorer and not from this library. The
+    /// attribute is asserted on the payload inside the bin rather than trusted from the file the case wrote,
+    /// because the whole claim rests on the move into the bin having carried it.
+    /// </remarks>
+    private static async Task TheEmptyRemovesAReadOnlyEntry(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the read-only entry to sit in");
+
+        var file = workspace.CreateRandomFile(4096);
+        var bytes = File.ReadAllBytes(file);
+        File.SetAttributes(file, FileAttributes.ReadOnly);
+
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
+        var recycled = await RecycleBin
+            .RecycleAsync([file], RecycleOptions.Default, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the read-only file reached the Recycle Bin (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
+
+        var listing = await RecycleBin
+            .GetItemsAsync(volumeRoot, GetItemsOptions.Default, context.CancellationToken)
+            .ConfigureAwait(false);
+        var entry = Listing.OnlyEntries(listing, volumeRoot)
+            .FirstOrDefault(i => string.Equals(i.OriginalPath, file, StringComparison.OrdinalIgnoreCase));
+
+        Check.True(entry is not null, $"the read-only entry is in the listing (original path {file})");
+        Check.True(
+            (File.GetAttributes(entry!.PayloadPath) & FileAttributes.ReadOnly) != 0,
+            $"and the payload carries the attribute the delete has to get past (got {File.GetAttributes(entry.PayloadPath)})");
+
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(
+            0,
+            emptied.Failures.Count,
+            emptied.Failures.Count == 0
+                ? "a read-only entry is removed rather than reported"
+                : $"a read-only entry is removed rather than reported (first failure: {emptied.Failures[0].Stage} 0x{emptied.Failures[0].HResult:X8} at {emptied.Failures[0].Path})");
+        Check.Equal(volumeRoot, emptied.VolumesEmptied[0], "and the volume is named as emptied");
+        Check.False(File.Exists(entry.PayloadPath), "the payload is gone from disk");
+        Check.False(File.Exists(entry.IndexPath), "and so is the record that named it");
+        Check.True(
+            emptied.BytesFreed >= bytes.LongLength,
+            $"and its bytes are counted among those freed (got {emptied.BytesFreed} of {bytes.LongLength})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A recycled directory goes as a tree, and a tree is where the read-only attribute is most likely to be
+    /// found: the flag that stopped one file being written travels into the bin with it, and so does a folder
+    /// whose own flag was set.
+    /// </summary>
+    /// <remarks>
+    /// Both shapes are in the fixture because they are refused differently, which was measured rather than
+    /// assumed — a read-only <em>file</em> inside the tree answers the delete with
+    /// <see cref="UnauthorizedAccessException"/>, a read-only <em>directory</em> with an
+    /// <see cref="IOException"/> carrying no file system code at all. Whichever the recursing delete meets
+    /// first is the one it stops on, so an answer to only one of them empties some trees and not others.
+    /// <para>
+    /// A tree is also where a half-removal shows. The standard recursive delete takes out what it can before
+    /// it meets the refusal, so an entry whose record survived would otherwise be listed as restorable with
+    /// part of its contents already gone.
+    /// </para>
+    /// </remarks>
+    private static async Task TheEmptyRemovesAReadOnlyFileInsideARecycledDirectory(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the read-only tree to sit in");
+
+        var directory = Path.Combine(ScratchWorkspace.Root, $"ro-tree-{Environment.ProcessId}");
+        var plain = Path.Combine(directory, "plain.bin");
+        var readonlyFile = Path.Combine(directory, "readonly.bin");
+        var readonlyDirectory = Path.Combine(directory, "readonly-dir");
+
+        Directory.CreateDirectory(readonlyDirectory);
+        File.WriteAllText(plain, "plain bytes");
+        File.WriteAllText(readonlyFile, "readonly bytes");
+        File.SetAttributes(readonlyFile, FileAttributes.ReadOnly);
+        File.SetAttributes(readonlyDirectory, FileAttributes.ReadOnly);
+
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
+        var recycled = await RecycleBin
+            .RecycleAsync([directory], RecycleOptions.Default, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the tree reached the Recycle Bin (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
+
+        var listing = await RecycleBin
+            .GetItemsAsync(volumeRoot, GetItemsOptions.Default, context.CancellationToken)
+            .ConfigureAwait(false);
+        var entry = Listing.OnlyEntries(listing, volumeRoot)
+            .FirstOrDefault(i => string.Equals(i.OriginalPath, directory, StringComparison.OrdinalIgnoreCase));
+
+        Check.True(entry is not null, "the recycled directory is in the listing");
+        Check.True(
+            (File.GetAttributes(Path.Combine(entry!.PayloadPath, "readonly.bin")) & FileAttributes.ReadOnly) != 0,
+            "its payload tree still holds the read-only file");
+        Check.True(
+            (File.GetAttributes(Path.Combine(entry.PayloadPath, "readonly-dir")) & FileAttributes.ReadOnly) != 0,
+            "and the read-only directory");
+
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(
+            0,
+            emptied.Failures.Count,
+            emptied.Failures.Count == 0
+                ? "a tree carrying read-only entries is removed rather than reported"
+                : $"a tree carrying read-only entries is removed rather than reported (first failure: {emptied.Failures[0].Stage} 0x{emptied.Failures[0].HResult:X8} at {emptied.Failures[0].Path})");
+        Check.False(Directory.Exists(entry.PayloadPath), "the whole payload tree is gone from disk");
+        Check.False(File.Exists(entry.IndexPath), "and so is the record that named it");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A hold is not an attribute problem, so an entry the file system would not release because another
+    /// process has it open is refused with the file system's own code and keeps the flag its owner gave it.
+    /// </summary>
+    /// <remarks>
+    /// Measured: deleting a file held open without <c>FILE_SHARE_DELETE</c> raises an
+    /// <see cref="IOException"/> carrying <c>ERROR_SHARING_VIOLATION</c>, not the
+    /// <see cref="UnauthorizedAccessException"/> a read-only file gives. That difference is the whole of this
+    /// case — an empty that cleared attributes on <em>any</em> refusal would strip the flag from a file that
+    /// is still in the bin and still the caller's, and the restore they manage later would put back a file
+    /// that is no longer read-only.
+    /// </remarks>
+    private static async Task TheEmptyLeavesTheFlagOnAnEntryItCouldNotDelete(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        ScratchWorkspace.RequireRecycling("a Recycle Bin for the held entry to sit in");
+
+        var file = workspace.CreateRandomFile(4096);
+        File.SetAttributes(file, FileAttributes.ReadOnly);
+
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
+        var recycled = await RecycleBin
+            .RecycleAsync([file], RecycleOptions.Default, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the file reached the Recycle Bin (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
+
+        var listing = await RecycleBin
+            .GetItemsAsync(volumeRoot, GetItemsOptions.Default, context.CancellationToken)
+            .ConfigureAwait(false);
+        var entry = Listing.OnlyEntries(listing, volumeRoot)
+            .FirstOrDefault(i => string.Equals(i.OriginalPath, file, StringComparison.OrdinalIgnoreCase));
+
+        Check.True(entry is not null, "the entry is in the listing");
+
+        using (new FileStream(entry!.PayloadPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+
+            var failure = emptied.Failures
+                .FirstOrDefault(f => string.Equals(f.Path, entry.IndexPath, StringComparison.OrdinalIgnoreCase));
+
+            Check.True(
+                failure is not null,
+                $"the held entry is reported (failures: {emptied.Failures.Count}, first at {emptied.Failures.FirstOrDefault()?.Path})");
+            Check.Equal(EmptyFailureStage.EntryNotRemoved, failure!.Stage, "as an entry that would not go");
+            Check.Equal(
+                unchecked((int)0x80070020),
+                failure.HResult,
+                $"with the file system's own refusal, the hold and not the attribute (got 0x{failure.HResult:X8})");
+            Check.True(
+                (File.GetAttributes(entry.PayloadPath) & FileAttributes.ReadOnly) != 0,
+                "and the read-only flag is still on the file that stayed");
+            Check.False(
+                emptied.VolumesEmptied.Contains(volumeRoot),
+                "while the volume is not named as emptied, something having been left on it");
+        }
+
+        var after = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+
+        Check.Equal(
+            0,
+            after.Failures.Count,
+            after.Failures.Count == 0
+                ? "and the hold having ended, the next empty takes it"
+                : $"and the hold having ended, the next empty takes it (first failure: {after.Failures[0].Stage} 0x{after.Failures[0].HResult:X8} at {after.Failures[0].Path})");
+        Check.False(File.Exists(entry.PayloadPath), "the payload is gone");
 
         workspace.Dispose();
     }

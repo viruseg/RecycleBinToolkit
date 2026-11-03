@@ -49,6 +49,9 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(ThrowObeysTheGlobalSwitch), ThrowObeysTheGlobalSwitch),
         new TestCase("NativeBinSuite." + nameof(DeletePermanentlyRemovesTheFileAndReportsIt), DeletePermanentlyRemovesTheFileAndReportsIt),
         new TestCase("NativeBinSuite." + nameof(DeletePermanentlyRemovesALongDirectoryToo), DeletePermanentlyRemovesALongDirectoryToo),
+        new TestCase("NativeBinSuite." + nameof(TheDeleterRemovesAReadOnlyFile), TheDeleterRemovesAReadOnlyFile),
+        new TestCase("NativeBinSuite." + nameof(TheDeleterRemovesAReadOnlyTree), TheDeleterRemovesAReadOnlyTree),
+        new TestCase("NativeBinSuite." + nameof(TheDeleterLeavesTheFlagOnAFileItCouldNotRelease), TheDeleterLeavesTheFlagOnAFileItCouldNotRelease),
         new TestCase("NativeBinSuite." + nameof(ARefusedLongPathDoesNotCostTheRestOfTheBatch), ARefusedLongPathDoesNotCostTheRestOfTheBatch),
         new TestCase("NativeBinSuite." + nameof(AnOverLongPathTakesItsEightDotThreeAlias), AnOverLongPathTakesItsEightDotThreeAlias),
         new TestCase("NativeBinSuite." + nameof(AnAliasThatIsStillTooLongFallsThroughToThePolicy), AnAliasThatIsStillTooLongFallsThroughToThePolicy),
@@ -613,6 +616,117 @@ internal static class NativeBinSuite
         }
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The one call three operations delete through, tested where neither the volume nor the bin can get in
+    /// the way of it. A read-only file is refused by the file system rather than by any policy of the
+    /// caller's, so the rule that answers it belongs to the removal and not to the three places that ask for
+    /// one.
+    /// </summary>
+    private static Task TheDeleterRemovesAReadOnlyFile(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var path = Path.Combine(ScratchWorkspace.Root, "readonly-direct.bin");
+        File.WriteAllText(path, "readonly bytes");
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+
+        var refused = Check.Throws<UnauthorizedAccessException>(
+            () => File.Delete(path),
+            "the file system refuses to delete a read-only file, which is what the deleter is for");
+        Check.Equal(
+            unchecked((int)0x80070005),
+            refused.HResult,
+            $"and what it answers is ERROR_ACCESS_DENIED (got 0x{refused.HResult:X8})");
+
+        ReadOnlyAwareDeleter.Delete(path);
+
+        Check.False(File.Exists(path), "the read-only file is gone");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A tree is refused twice over and by two exceptions, which is why one clause naming
+    /// <see cref="UnauthorizedAccessException"/> is not an answer.
+    /// </summary>
+    /// <remarks>
+    /// Measured on this machine: the read-only <em>file</em> inside a tree answers the recursing delete with
+    /// <see cref="UnauthorizedAccessException"/>, and the read-only <em>directory</em> with an
+    /// <see cref="IOException"/> carrying no file system code at all. The recursing delete stops on whichever
+    /// it meets first, and which of the two that is is the order the directory hands entries back in — so the
+    /// exception type is not asserted here, and both shapes are in the fixture.
+    /// </remarks>
+    private static Task TheDeleterRemovesAReadOnlyTree(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var directory = Path.Combine(ScratchWorkspace.Root, "readonly-tree");
+        var nested = Path.Combine(directory, "nested");
+        var empty = Path.Combine(directory, "empty-readonly-dir");
+
+        Directory.CreateDirectory(nested);
+        Directory.CreateDirectory(empty);
+        File.WriteAllText(Path.Combine(nested, "readonly.bin"), "readonly bytes");
+        File.SetAttributes(Path.Combine(nested, "readonly.bin"), FileAttributes.ReadOnly);
+        File.SetAttributes(empty, FileAttributes.ReadOnly);
+
+        Check.True(
+            (File.GetAttributes(empty) & FileAttributes.ReadOnly) != 0,
+            "the tree holds a read-only directory");
+        Check.True(
+            (File.GetAttributes(Path.Combine(nested, "readonly.bin")) & FileAttributes.ReadOnly) != 0,
+            "and a read-only file, at two depths");
+
+        ReadOnlyAwareDeleter.Delete(directory);
+
+        Check.False(Directory.Exists(directory), "and the whole tree is gone, both shapes answered");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A path another process holds is refused with <c>ERROR_SHARING_VIOLATION</c>, which is not an attribute
+    /// problem, and the file keeps the flag its owner gave it.
+    /// </summary>
+    /// <remarks>
+    /// The refusal a read-only file answers with and the refusal a held file answers with are different
+    /// exceptions with different codes, and only the first has an answer. Clearing on the second would strip
+    /// a flag from a file that stays exactly where it was — and a later restore would hand it back without the
+    /// attribute its owner set.
+    /// </remarks>
+    private static Task TheDeleterLeavesTheFlagOnAFileItCouldNotRelease(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var path = Path.Combine(ScratchWorkspace.Root, "held-and-readonly.bin");
+        File.WriteAllText(path, "held bytes");
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var refused = Check.Throws<IOException>(
+                () => ReadOnlyAwareDeleter.Delete(path),
+                "the hold is reported rather than cleared away");
+            Check.Equal(
+                unchecked((int)0x80070020),
+                refused.HResult,
+                $"with the file system's own code for it (got 0x{refused.HResult:X8})");
+
+            Check.True(
+                (File.GetAttributes(path) & FileAttributes.ReadOnly) != 0,
+                "and nothing was written to the attributes of the file that stayed");
+        }
+
+        ReadOnlyAwareDeleter.Delete(path);
+
+        Check.False(File.Exists(path), "once the hold has ended, the same call takes the file");
+
+        return Task.CompletedTask;
     }
 
     /// <summary>

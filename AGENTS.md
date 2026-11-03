@@ -73,21 +73,28 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 266 registered cases, of which four are load cases, so `--all` runs 262 of them. The rest is
+There are 276 registered cases, of which four are load cases, so `--all` runs 272 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
-cases that recycle one and runs the cases that are about a volume with no bin. **249 pass and 13 skip**,
-with nothing failing, on a volume that has a bin — measured by one `--all` on `D:\` on 2026-10-13.
+cases that recycle one and runs the cases that are about a volume with no bin. **257 pass and 15 skip**,
+with nothing failing, on a volume that has a bin — measured by one `--all` on `E:\` on 2026-11-03.
+Thirteen of the fifteen name a volume with no Recycle Bin, or one whose answer is a doubt rather than a
+refusal; two are the 8.3 cases.
 
-Two of the thirteen skips are the 8.3 cases: `D:\` has short-name generation off, so `GetShortPathName`
-returns nothing for any path there and the alias route has no fixture to run against. What is measured
-on `D:\` is the fall-through — an alias that is absent goes to the caller's policy, which
-`NativeBinSuite.ThrowRefusesThePathAndLeavesItInPlace` witnesses. What is **not** measured on `D:\` is
-the success branch: that a path whose alias fits is recycled with the alias in its record. Enabling
+**The same shape measured on `D:\` was 249 pass and 13 skip**, also nothing failing, on 2026-10-13. Two of
+its skips have been joined by the two read-only `DeletePermanently` cases this work added, which skip on any
+volume that has a bin, and its case count is ten lower — so its figures are not to be quoted beside the ones
+above.
+
+Two of the skips are the 8.3 cases: neither `D:\` nor `E:\` has short-name generation on, so
+`GetShortPathName` returns nothing for any path on either and the alias route has no fixture to run
+against. What is measured is the fall-through — an alias that is absent goes to the caller's policy, which
+`NativeBinSuite.ThrowRefusesThePathAndLeavesItInPlace` witnesses. What is **not** measured is the success
+branch: that a path whose alias fits is recycled with the alias in its record. Enabling
 short names needs administrator rights, so nobody should read that route as proven from a run here.
 
-A thirteenth is `ProgressSuite.ARepeatedPathOnARefusingVolumeStillReports`, and it is skipped here for
-the same reason as the ones a bin-less volume skips: it needs a volume with no Recycle Bin, which `D:\`
-does not have. It runs on one that does.
+`ProgressSuite.ARepeatedPathOnARefusingVolumeStillReports` is skipped on both for
+the same reason as the ones a bin-less volume skips: it needs a volume with no Recycle Bin, which neither
+has. It runs on one that does.
 
 **A volume alone on its physical disk is 198 pass and 15 skip**, also nothing failing. Five cases ask the
 machine for a second volume on the same disk or for one on another, through `VolumePresence`, and a run
@@ -104,8 +111,8 @@ A volume with no bin and a share are both unmeasured
 here: measure before quoting either. `--all` prints the counts, so a count in a document that disagrees
 with them is the document being wrong.
 
-A run that must not empty the bin says `--exclude EmptySuite`; that drops its thirteen cases, so the counts
-it prints are thirteen lower than a plain `--all` and a document must not quote one run's figures as the
+A run that must not empty the bin says `--exclude EmptySuite`; that drops its sixteen cases, so the counts
+it prints are sixteen lower than a plain `--all` and a document must not quote one run's figures as the
 other's. `--exclude` takes one substring, so a case that empties the bin has to live under that name and
 not merely somewhere this document says it does — which is why the two progress cases that empty it are
 registered as `EmptySuite` cases rather than as `ProgressSuite` ones.
@@ -513,6 +520,36 @@ and writes nothing rather than shortening it, so the caller gets `LongPathNotRec
 file where they left it. The path in a record is what a restore puts the item back to: a truncated
 one is a wrong answer rather than an approximate one.
 
+**A recycled item keeps the read-only attribute, and the file system refuses to delete one it carries.**
+The Shell clears the attribute before it empties; a delete that does not is refused every time it is
+tried, which is how a volume's bin holding 200 read-only entries (measured on `D:\` on 2026-11-03,
+1.17 GB of them) empties from Explorer and not from `EmptyAsync`. The three refusals a delete meets are
+three different exceptions and all three were measured, which is why `ReadOnlyAwareDeleter` answers the
+shape of the refusal rather than one exception type:
+
+| The path | What the file system answers |
+| --- | --- |
+| A read-only file | `UnauthorizedAccessException`, `0x80070005` (`ERROR_ACCESS_DENIED`) |
+| A read-only directory | `IOException`, `0x80131620`, with no file system code behind it |
+| A file held open without `FILE_SHARE_DELETE` | `IOException`, `0x80070020` (`ERROR_SHARING_VIOLATION`) |
+
+The attribute is written only once a delete or an overwrite has been refused, only where the flag is set,
+and never for the third row — a hold is not an attribute problem, and clearing on that refusal would take
+the flag off a file that stays where its owner left it and would still be in the bin. Where a directory is
+refused the whole tree is walked, because a recursing delete stops at the first entry it cannot take and
+which entry that is depends on the order the directory hands entries back.
+
+One rule, five places: the empty's payload and record deletes, `PermanentDeleter` under either
+`DeletePermanently` option, the restore's record delete and its merge cleanup, and the overwrite
+`RestoreFileConflict.Replace` asks for.
+
+**A refused recursive delete leaves what it already took.** Measured: removing a tree whose subdirectory
+carries the read-only attribute deleted the file inside that subdirectory and then raised, so the tree is
+half gone and its record — or, on the restore side, the entry — is the shape that says it is still there.
+`Directory.Delete(recursive)` has no rollback and there is no way to ask it to check first without walking
+the tree separately. This is what the attribute clearing removes as a cause, and it is still reachable
+through a hold on a file inside a recycled directory.
+
 ---
 
 ## What the tests may touch
@@ -547,6 +584,17 @@ staging directory the library creates under the volume root when a long path can
 that provokes the third deletes it afterwards, which is cleanup rather than creation — the rule that a
 test creates nothing outside `--scratch` is untouched by it, and the directory exists only because the
 library needs a short path somewhere on the item's own volume.
+
+**A directory recycle can be refused by the machine rather than by the library.** Four `--all` runs on
+`E:\` on 2026-11-03: three printed 257 pass and 15 skip with nothing failing, and one failed two cases that
+recycle a freshly created directory — `RestoreSuite.AMergedTreeWithAReadOnlyDirectoryLeavesNothingInTheBin`
+and the pre-existing `RestoreSuite.AMergedTreeThatCannotDealWithAFileLeavesItWholeInTheBin` — each at
+`stage=Performing, hresult=0x80070005` on the move into the bin, before either reached an assertion of its
+own. Both pass in isolation and both passed in the other three runs, and the cause was not measured.
+`ScratchWorkspace`'s own cleanup documents the shape: the indexer and antivirus hold a handle on a path for
+a few milliseconds after it appears, and a directory move is refused with `ERROR_ACCESS_DENIED` while
+somebody is standing in the tree. That is as far as this goes — the run that showed it was not reproduced
+afterwards, so it is an observation and not a finding.
 
 ### A known limit
 

@@ -18,6 +18,7 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(ARecycledFileComesBackToThePathItCameFrom), ARecycledFileComesBackToThePathItCameFrom),
         new TestCase("RestoreSuite." + nameof(ATakenFilePathIsSkippedAndTheEntryStaysInTheBin), ATakenFilePathIsSkippedAndTheEntryStaysInTheBin),
         new TestCase("RestoreSuite." + nameof(ATakenFilePathIsReplacedAndTheEntryLeavesTheBin), ATakenFilePathIsReplacedAndTheEntryLeavesTheBin),
+        new TestCase("RestoreSuite." + nameof(AReadOnlySquatterIsReplacedAndTheEntryLeavesTheBin), AReadOnlySquatterIsReplacedAndTheEntryLeavesTheBin),
         new TestCase("RestoreSuite." + nameof(ATakenFilePathIsRestoredUnderAFreeName), ATakenFilePathIsRestoredUnderAFreeName),
         new TestCase("RestoreSuite." + nameof(ATakenFilePathIsRefusedAsBothAConflictAndAFailure), ATakenFilePathIsRefusedAsBothAConflictAndAFailure),
         new TestCase("RestoreSuite." + nameof(ADirectoryComesBackWithItsTree), ADirectoryComesBackWithItsTree),
@@ -32,6 +33,7 @@ internal static class RestoreSuite
         new TestCase("RestoreSuite." + nameof(ATakenDirectoryPathIsRefusedAsBothAConflictAndAFailure), ATakenDirectoryPathIsRefusedAsBothAConflictAndAFailure),
         new TestCase("RestoreSuite." + nameof(ATakenDirectoryPathIsSetDownUnderAFreeName), ATakenDirectoryPathIsSetDownUnderAFreeName),
         new TestCase("RestoreSuite." + nameof(AMergedTreeLeavesWhatWasThereAndPutsTheRestBack), AMergedTreeLeavesWhatWasThereAndPutsTheRestBack),
+        new TestCase("RestoreSuite." + nameof(AMergedTreeWithAReadOnlyDirectoryLeavesNothingInTheBin), AMergedTreeWithAReadOnlyDirectoryLeavesNothingInTheBin),
         new TestCase("RestoreSuite." + nameof(AMergedTreeOverwritesEveryFileItCollidesWith), AMergedTreeOverwritesEveryFileItCollidesWith),
         new TestCase("RestoreSuite." + nameof(AMergedTreeSetsEachCollidingFileUnderAFreeName), AMergedTreeSetsEachCollidingFileUnderAFreeName),
         new TestCase("RestoreSuite." + nameof(AMergedDirectoryWithNothingInItStillArrives), AMergedDirectoryWithNothingInItStillArrives),
@@ -781,6 +783,60 @@ internal static class RestoreSuite
         Check.Equal(0, result.Failures.Count, "an overwrite is not a failure");
         Check.Equal(0, result.Conflicts.Count, "and is not a conflict to report either");
         Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the entry has left the bin");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The squatter <see cref="RestoreFileConflict.Replace"/> is pointed at is removed outright, and a
+    /// read-only one is refused by the file system exactly as a read-only entry is refused by the empty — so
+    /// the overwrite has to get past the attribute rather than report the entry as unrestorable.
+    /// </summary>
+    /// <remarks>
+    /// Measured: <c>File.Move(source, destination, overwrite: true)</c> onto a read-only destination raises
+    /// <see cref="UnauthorizedAccessException"/> and leaves both halves where they were, which is the same
+    /// <c>ERROR_ACCESS_DENIED</c> the empty meets deleting a read-only payload. The two ends of one refusal
+    /// are asserted together here rather than in two places because the fix is one rule.
+    /// <para>
+    /// The flag is asserted on the squatter before the call, since the claim is about the file standing in
+    /// the way and not about the entry being put back — the payload keeps its own attributes through a move
+    /// whatever they are.
+    /// </para>
+    /// </remarks>
+    private static async Task AReadOnlySquatterIsReplacedAndTheEntryLeavesTheBin(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("entries to restore");
+
+        var target = workspace.CreateRandomFile(4096);
+        var bytes = File.ReadAllBytes(target);
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(target, cancellationToken: context.CancellationToken),
+            "the original reached the bin");
+
+        File.WriteAllText(target, "mine");
+        File.SetAttributes(target, FileAttributes.ReadOnly);
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            target);
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RestoreOptions { FileConflict = RestoreFileConflict.Replace },
+            context.CancellationToken);
+
+        Check.True(
+            result.Succeeded,
+            $"a read-only occupant is replaced rather than refused (first: {result.Failures.FirstOrDefault()?.Stage} 0x{result.Failures.FirstOrDefault()?.HResult:X8})");
+        Check.Equal(1, result.ItemsRestored, "the entry was restored");
+        Check.Equal(target, result.RestoredPaths[0], "at the path it was deleted from");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(target)), "the original's content is here, and the squatter's is gone");
+        Check.Equal(0, result.Failures.Count, "an overwrite of a read-only file is not a failure");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "and the entry has left the bin");
 
         workspace.Dispose();
     }
@@ -1720,6 +1776,80 @@ internal static class RestoreSuite
         // Two entries came back and one left. The two records above are what says they are restorable; the
         // count is what says nothing else was written into the bin and nothing else was left behind.
         Check.Equal(2, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the bin holds the two files that gave way and nothing else");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A merge takes every file out of the payload and then removes the tree they were lying in. A folder of
+    /// that skeleton carrying the read-only attribute is refused by the file system, and the refusal arrives
+    /// after the files are already back — which is how a restore that put everything right reports itself as
+    /// a failure and leaves the entry in the bin.
+    /// </summary>
+    /// <remarks>
+    /// Measured: removing a read-only directory raises an <see cref="IOException"/> with no file system code
+    /// behind it, where deleting a read-only file raises <see cref="UnauthorizedAccessException"/>. The
+    /// skeleton of a merged tree is directories rather than files, so this is the half of the rule a file
+    /// cannot witness.
+    /// <para>
+    /// Nothing collides in the fixture: the claim is the leftover, not the conflict, and a collision would
+    /// put entries back into the bin that have to be told apart from the one that was not removed.
+    /// </para>
+    /// </remarks>
+    private static async Task AMergedTreeWithAReadOnlyDirectoryLeavesNothingInTheBin(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a tree to restore into an occupied path");
+
+        var root = Path.Combine(ScratchWorkspace.Root, $"merge-readonly-{Environment.ProcessId}");
+        var nested = Path.Combine(root, "nested");
+        var skeleton = Path.Combine(root, "readonly-dir");
+        var coming = Path.Combine(nested, "come-back.txt");
+
+        Directory.CreateDirectory(skeleton);
+        Directory.CreateDirectory(nested);
+
+        var bytes = RandomBytes(2048);
+        File.WriteAllBytes(coming, bytes);
+        File.SetAttributes(skeleton, FileAttributes.ReadOnly);
+
+        var baseline = BaselineCount();
+
+        Check.True(
+            await RecycleBin.RecycleAsync(root, cancellationToken: context.CancellationToken),
+            "the tree reached the bin");
+
+        // The path the record names has to be occupied by a directory for the merge to be the policy that
+        // runs, and the read-only folder has to still be read-only inside the payload for the case to be
+        // about the refusal rather than about an absent one.
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "squatter.txt"), "there");
+
+        var item = FindTheEntryFor(
+            await RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken),
+            root);
+
+        Check.True(
+            (File.GetAttributes(Path.Combine(item.PayloadPath, "readonly-dir")) & FileAttributes.ReadOnly) != 0,
+            "the payload's skeleton still carries the read-only directory");
+
+        var result = await RecycleBin.RestoreAsync(
+            [item],
+            new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip },
+            context.CancellationToken);
+
+        Check.True(
+            result.Succeeded,
+            $"a merged tree whose skeleton is read-only is finished rather than refused (first: {result.Failures.FirstOrDefault()?.Stage} 0x{result.Failures.FirstOrDefault()?.HResult:X8})");
+        Check.Equal(0, result.Failures.Count, "so nothing reached the failures list");
+        Check.Equal(1, result.ItemsRestored, "the directory entry was restored");
+        Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(coming)), "and its file came back byte for byte");
+
+        Check.True(File.Exists(Path.Combine(root, "squatter.txt")), "what was standing in the way is untouched");
+        Check.False(File.Exists(item.IndexPath), "the directory's own record has gone, so its entry left the bin");
+        Check.False(Directory.Exists(item.PayloadPath), "and so did the read-only skeleton it was in");
+        Check.Equal(0, RecycleBinProbe.QueryItemCount(ScratchWorkspace.VolumeRoot) - baseline, "the bin holds nothing the restore wrote there");
 
         workspace.Dispose();
     }

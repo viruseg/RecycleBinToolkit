@@ -239,6 +239,13 @@ Empties the Recycle Bin. The first signature below is the one to reach for unles
 being deleted, so a record whose payload is already gone counts as removed. `VolumesEmptied` and
 `Failures` are in the order the volumes were covered.
 
+**A read-only entry is removed, not reported.** A recycled item keeps the attributes it had before it was
+deleted, and the file system refuses to delete one carrying the read-only attribute; the empty clears that
+attribute and takes the item, a directory payload's contents included. A refusal the attribute does not
+explain — a handle another process holds — is reported in `Failures`, and the item stays with its attributes.
+The same rule answers a read-only path for `NoRecycleBinAction.DeletePermanently`,
+`LongPathFailureAction.DeletePermanently` and `RestoreFileConflict.Replace`.
+
 The second overload adds `EmptyOptions? options` between the two, `null` meaning `EmptyOptions.Default`.
 `volumeRoot` has no default on it, so a call that names only a root still binds to the first overload.
 See [Progress](#progress).
@@ -513,7 +520,7 @@ The step a `RecycleAsync` call stopped at for one path.
 | `PathValidation` | The path was empty, malformed, or pointed at nothing. |
 | `Performing` | The move to the Recycle Bin failed for this item. |
 | `NoRecycleBinOnVolume` | The volume cannot recycle the path and the caller asked for a Recycle Bin. Nothing was attempted: `Attempts` and `HResult` are `0`, and the file is untouched. |
-| `PermanentDeleteFailed` | `NoRecycleBinAction.DeletePermanently` was asked for and the file system refused — a handle is held, the attributes are read-only. The file is untouched. |
+| `PermanentDeleteFailed` | `NoRecycleBinAction.DeletePermanently` was asked for and the file system refused — a handle is held, or this account may not remove the path. The file is untouched. A read-only path is removed rather than refused: see [`EmptyAsync`](#emptyasync). |
 | `VolumeGuidPathNotAddressable` | The path names its volume by GUID, as `\\?\Volume{GUID}\…`, which has no drive letter to be measured, emptied or reported against. Nothing was attempted: `Attempts` and `HResult` are `0`. Address the same location by drive letter or mount point. |
 | `LongPathNotRecyclable` | The Recycle Bin cannot record this path and the caller asked for it to be recycled. Nothing was attempted: `Attempts` is `0`, `HResult` is `0x800700CE`, and the file is untouched. See [Long paths](#long-paths). |
 
@@ -816,7 +823,7 @@ What a restore does with a **file** whose original path is already occupied.
 | Value | Effect |
 | --- | --- |
 | `Skip` | The default. Nothing on disk is touched and the entry stays in the bin; the incoming file gives way, never the one already there. |
-| `Replace` | Overwrites the file already there. Never a directory. |
+| `Replace` | Overwrites the file already there, a read-only one included. Never a directory. |
 | `Rename` | Sets the entry down beside the occupied path under the first free name. The number starts at one and the extension is kept, splitting on the last dot: `archive.tar.gz` becomes `archive.tar (1).gz`. Nothing on disk is renamed, moved or removed. |
 | `Error` | As `Skip`, and the entry is also reported in `Failures`. That is the only difference, and it makes `Succeeded` `false`. |
 

@@ -36,18 +36,7 @@ internal static class PermanentDeleter
     {
         try
         {
-            // Directories need their own call, and asking for the wrong one is not a harmless mistake:
-            // File.Delete on a directory raises UnauthorizedAccessException, which reads as "you do not
-            // have permission" and sends the caller looking for an access problem that has nothing to do
-            // with what actually went wrong.
-            if (Directory.Exists(target.FullPath))
-            {
-                Directory.Delete(target.FullPath, recursive: true);
-            }
-            else
-            {
-                File.Delete(target.FullPath);
-            }
+            ReadOnlyAwareDeleter.Delete(target.FullPath);
         }
         catch (Exception ex) when (ex is IOException
             or UnauthorizedAccessException
