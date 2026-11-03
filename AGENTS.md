@@ -1,14 +1,16 @@
 # Working in this repository
 
-Windows-only, .NET 10, no external NuGet packages beyond `Microsoft.Windows.CsWin32` (a build-time
-source generator). The test project is a console application with a hand-rolled harness, not a test
-framework.
+Windows-only, .NET 10. The library takes no external NuGet package beyond `Microsoft.Windows.CsWin32` (a
+build-time source generator). `RecycleBinToolkit.Example` is a console application at the repository root,
+and it is the one project here that takes a runtime package: `Sharprompt`. The test project is a console
+application with a hand-rolled harness, not a test framework.
 
 ## Commands
 
 ```bash
 dotnet build src/RecycleBinToolkit/RecycleBinToolkit/RecycleBinToolkit.csproj
 dotnet build tests/RecycleBinToolkit.Tests/RecycleBinToolkit.Tests.csproj
+dotnet build RecycleBinToolkit.Example/RecycleBinToolkit.Example.csproj
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --all
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --filter NativeBinSuite
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --load
@@ -18,6 +20,10 @@ Build the test project after any change to `tests/RecycleBinToolkit.Tests/Docs/R
 see the rule below. The suites change machine state: they write into a directory they create inside the
 volume `--scratch` names, and they empty the Recycle Bin. One thing leaves that directory and it is not a
 test's doing — the empty itself. The section below is the whole rule.
+
+`dotnet run --project RecycleBinToolkit.Example` is an interactive loop, not a check: it prompts for a
+volume and empties that volume's Recycle Bin. Build it to prove the example compiles; do not run it from a
+script.
 
 ## --scratch, and asking which volume
 

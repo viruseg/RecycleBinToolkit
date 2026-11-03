@@ -1,5 +1,8 @@
-﻿using RecycleBinToolkit;
+﻿using System.Runtime.Versioning;
+using RecycleBinToolkit;
 using Sharprompt;
+
+[assembly: SupportedOSPlatform("windows10.0.14393")]
 
 Start:
 Console.Clear();
