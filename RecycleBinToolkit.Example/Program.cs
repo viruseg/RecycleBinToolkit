@@ -40,7 +40,11 @@ switch (item.Action)
 {
     case MenuAction.EmptyBin:
         Console.WriteLine($"Emptying: {item.Root ?? "All"} ...");
-        await RecycleBin.EmptyAsync(item.Root);
+        var emptied = await RecycleBin.EmptyAsync(item.Root);
+        PrintEmptySummary(emptied);
+        Console.WriteLine();
+        Console.WriteLine("Press any key to continue . . .");
+        Console.ReadKey(true);
         break;
 
     case MenuAction.DoNothing:
@@ -66,6 +70,22 @@ goto Start;
 
 static string BinLabel(string root, int count, long bytes, int rootWidth) =>
     $"{root.PadRight(rootWidth)}  {count,8} items {FormatBytes(bytes)}";
+
+static void PrintEmptySummary(RecycleBinEmptyResult emptied)
+{
+    Console.WriteLine();
+    Console.WriteLine(emptied.VolumesEmptied.Count > 0
+        ? $"Emptied: {string.Join("  ", emptied.VolumesEmptied)}"
+        : "Emptied: none");
+    Console.WriteLine($"Entries removed: {emptied.ItemsRemoved}");
+    Console.WriteLine($"Bytes freed: {FormatBytes(emptied.BytesFreed)}");
+    Console.WriteLine($"Elapsed: {emptied.Elapsed.TotalSeconds:F2}s");
+
+    if (emptied.Failures.Count > 0)
+    {
+        Console.WriteLine($"Not removed: {emptied.Failures.Count}");
+    }
+}
 
 static string FormatBytes(long bytes, int decimals = 2)
 {
