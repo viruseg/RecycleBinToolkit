@@ -20,13 +20,13 @@ foreach (var volumeContents in recycleBinContents.Items)
 {
     var count = volumeContents.Items.Count;
     var bytes = volumeContents.Items.Sum(o => o.Size);
-    items.Add(new(BinLabel(volumeContents.VolumeRoot, count, bytes, rootWidth), MenuAction.EmptyBin, volumeContents.VolumeRoot));
+    items.Add(new MenuItem(BinLabel(volumeContents.VolumeRoot, count, bytes, rootWidth), MenuAction.EmptyBin, volumeContents.VolumeRoot));
 }
 
-const string RecycleLabel = "Recycle a path";
+const string RecycleLabel = "Recycle a path...";
 
-items.Add(new(new string('─', Math.Max(items.Max(o => o.Label.Length), RecycleLabel.Length)), MenuAction.DoNothing, null));
-items.Add(new(RecycleLabel, MenuAction.RecyclePath, null));
+items.Add(new MenuItem(new string('─', Math.Max(items.Max(o => o.Label.Length), RecycleLabel.Length)), MenuAction.DoNothing, null));
+items.Add(new MenuItem(RecycleLabel, MenuAction.RecyclePath, null));
 
 Console.WriteLine($"Listed the Recycle Bin in {recycleBinContents.Elapsed.TotalSeconds:F2}s");
 Console.WriteLine();
@@ -87,15 +87,15 @@ static string FormatBytes(long bytes, int decimals = 2)
         case >= GB: size = (double) bytes / GB; unit = "GB"; break;
         case >= MB: size = (double) bytes / MB; unit = "MB"; break;
         case >= KB: size = (double) bytes / KB; unit = "KB"; break;
-        default: size = bytes; unit = "B"; break;
+        default: size = bytes; unit = "bytes"; break;
     }
 
-    return $"{Math.Round(size, decimals)}{unit}";
+    return $"{Math.Round(size, decimals)} {unit}";
 }
 
-record MenuItem(string Label, MenuAction Action, string? Root);
+internal record MenuItem(string Label, MenuAction Action, string? Root);
 
-enum MenuAction
+internal enum MenuAction
 {
     EmptyBin,
     DoNothing,
