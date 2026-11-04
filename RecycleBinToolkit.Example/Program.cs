@@ -9,31 +9,63 @@ Console.Clear();
 
 var recycleBinContents = await RecycleBin.GetItemsAsync();
 
-var choices = new List<DriveChoice>
+var rootWidth = recycleBinContents.Items.Select(o => o.VolumeRoot).Append("All").Max(o => o.Length);
+
+var items = new List<MenuItem>
 {
-    new(null, recycleBinContents.Items.Sum(o => o.Items.Count), recycleBinContents.TotalSize),
+    new(BinLabel("All", recycleBinContents.Items.Sum(o => o.Items.Count), recycleBinContents.TotalSize, rootWidth), MenuAction.EmptyBin, null),
 };
 
 foreach (var volumeContents in recycleBinContents.Items)
 {
-    choices.Add(new(volumeContents.VolumeRoot, volumeContents.Items.Count, volumeContents.Items.Sum(o => o.Size)));
+    var count = volumeContents.Items.Count;
+    var bytes = volumeContents.Items.Sum(o => o.Size);
+    items.Add(new(BinLabel(volumeContents.VolumeRoot, count, bytes, rootWidth), MenuAction.EmptyBin, volumeContents.VolumeRoot));
 }
 
-var rootWidth = choices.Max(o => (o.Root ?? "All").Length);
+const string RecycleLabel = "Recycle a path";
+
+items.Add(new(new string('─', Math.Max(items.Max(o => o.Label.Length), RecycleLabel.Length)), MenuAction.DoNothing, null));
+items.Add(new(RecycleLabel, MenuAction.RecyclePath, null));
 
 Console.WriteLine($"Listed the Recycle Bin in {recycleBinContents.Elapsed.TotalSeconds:F2}s");
 Console.WriteLine();
 
-var choice = Prompt.Select(
+var item = Prompt.Select(
     "Select the drive whose Recycle Bin you want to empty",
-    choices,
-    textSelector: o => $"{(o.Root ?? "All").PadRight(rootWidth)}  {o.Count,8} items {FormatBytes(o.Bytes)}");
+    items,
+    textSelector: o => o.Label);
 
-Console.WriteLine($"Emptying: {choice.Root ?? "All"} ...");
+switch (item.Action)
+{
+    case MenuAction.EmptyBin:
+        Console.WriteLine($"Emptying: {item.Root ?? "All"} ...");
+        await RecycleBin.EmptyAsync(item.Root);
+        break;
 
-await RecycleBin.EmptyAsync(choice.Root);
+    case MenuAction.DoNothing:
+        break;
+
+    case MenuAction.RecyclePath:
+    {
+        var path = Prompt.Input<string>("Enter the path to recycle").Trim().Trim('"').Trim();
+        var failure = (await RecycleBin.RecycleAsync([path])).FirstFailure;
+
+        Console.WriteLine();
+        Console.WriteLine(failure is null
+            ? $"Recycled: {path}"
+            : $"Not recycled: {failure.Path} (stage={failure.Stage}, hresult=0x{failure.HResult:X8})");
+        Console.WriteLine();
+        Console.WriteLine("Press any key to continue . . .");
+        Console.ReadKey(true);
+        break;
+    }
+}
 
 goto Start;
+
+static string BinLabel(string root, int count, long bytes, int rootWidth) =>
+    $"{root.PadRight(rootWidth)}  {count,8} items {FormatBytes(bytes)}";
 
 static string FormatBytes(long bytes, int decimals = 2)
 {
@@ -61,4 +93,11 @@ static string FormatBytes(long bytes, int decimals = 2)
     return $"{Math.Round(size, decimals)}{unit}";
 }
 
-record DriveChoice(string? Root, int Count, long Bytes);
+record MenuItem(string Label, MenuAction Action, string? Root);
+
+enum MenuAction
+{
+    EmptyBin,
+    DoNothing,
+    RecyclePath,
+}
