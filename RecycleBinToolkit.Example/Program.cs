@@ -9,24 +9,29 @@ Console.Clear();
 
 var recycleBinContents = await RecycleBin.GetItemsAsync();
 
-Console.WriteLine($"The Recycle Bin contains {recycleBinContents.Items.Select(o => o.Items.Count).Sum()} items");
+var choices = new List<DriveChoice>
+{
+    new(null, recycleBinContents.Items.Sum(o => o.Items.Count), recycleBinContents.TotalSize),
+};
 
 foreach (var volumeContents in recycleBinContents.Items)
 {
-    Console.WriteLine($"    {volumeContents.VolumeRoot}: {volumeContents.Items.Count} items");
+    choices.Add(new(volumeContents.VolumeRoot, volumeContents.Items.Count, volumeContents.Items.Sum(o => o.Size)));
 }
 
-Console.WriteLine($"Total size: {FormatBytes(recycleBinContents.TotalSize)}");
+var rootWidth = choices.Max(o => (o.Root ?? "All").Length);
+
 Console.WriteLine($"Listed the Recycle Bin in {recycleBinContents.Elapsed.TotalSeconds:F2}s");
 Console.WriteLine();
 
-var drive = Prompt.Select("Select the drive whose Recycle Bin you want to empty", ["All", ..recycleBinContents.Items.Select(o => o.VolumeRoot)]);
+var choice = Prompt.Select(
+    "Select the drive whose Recycle Bin you want to empty",
+    choices,
+    textSelector: o => $"{(o.Root ?? "All").PadRight(rootWidth)}  {o.Count,8} items {FormatBytes(o.Bytes)}");
 
-Console.WriteLine($"Emptying: {drive} ...");
+Console.WriteLine($"Emptying: {choice.Root ?? "All"} ...");
 
-if (drive == "All") drive = null;
-
-await RecycleBin.EmptyAsync(drive);
+await RecycleBin.EmptyAsync(choice.Root);
 
 goto Start;
 
@@ -55,3 +60,5 @@ static string FormatBytes(long bytes, int decimals = 2)
 
     return $"{Math.Round(size, decimals)}{unit}";
 }
+
+record DriveChoice(string? Root, int Count, long Bytes);
