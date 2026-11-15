@@ -479,8 +479,9 @@ internal static class ScratchSuite
     }
 
     /// <summary>
-    /// The run's own directory is claimed once. A second claim would put a directory beside the one every
-    /// case writes under, so the route out of the working directory is closed from both ends.
+    /// A volume that already holds this run's directory refuses a second one. A second claim would put a
+    /// directory beside the one every case writes under, so the route out of the working directory is closed
+    /// from both ends.
     /// </summary>
     private static Task ClaimRunRootRefusesASecondRunInOneProcess(TestContext context)
     {
