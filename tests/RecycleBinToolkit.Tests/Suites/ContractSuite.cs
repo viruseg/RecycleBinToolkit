@@ -32,6 +32,8 @@ internal static class ContractSuite
         new TestCase("ContractSuite." + nameof(EveryReasonAndActionPairIsPinned), EveryReasonAndActionPairIsPinned),
         new TestCase("ContractSuite." + nameof(OnlyTheVolumeGuidDeviceFormCountsAsOne), OnlyTheVolumeGuidDeviceFormCountsAsOne),
         new TestCase("ContractSuite." + nameof(ThePayloadPathIsTheRecordsNameWithItsPrefixSwapped), ThePayloadPathIsTheRecordsNameWithItsPrefixSwapped),
+        new TestCase("ContractSuite." + nameof(AFinalNameIsReducedToItsVolumeName), AFinalNameIsReducedToItsVolumeName),
+        new TestCase("ContractSuite." + nameof(ADriveLetterMountPointIsPreferredToAFolderMount), ADriveLetterMountPointIsPreferredToAFolderMount),
     ];
 
     /// <summary>
@@ -68,6 +70,43 @@ internal static class ContractSuite
             "nor a relative path, which resolves under the current directory to an ordinary one");
 
         Check.False(RecycleTarget.IsVolumeGuidPath(@"W:\work\report.bin"), "and an ordinary path is unaffected");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A handle's final name is reduced to the volume that holds the object, and the shapes that name no
+    /// volume are refused rather than reduced to something that looks like one.
+    /// </summary>
+    private static Task AFinalNameIsReducedToItsVolumeName(TestContext context)
+    {
+        Check.True(
+            BinVolumeResolver.TryParseVolumeName(
+                @"\\?\Volume{0be31b11-9126-4277-afd6-019ff4a1ee40}\work\report.bin", out var volume),
+            "a volume-GUID final name is one");
+        Check.Equal(
+            @"\\?\Volume{0be31b11-9126-4277-afd6-019ff4a1ee40}\",
+            volume,
+            "and the answer is the volume, separator included");
+
+        Check.False(BinVolumeResolver.TryParseVolumeName(@"\\?\UNC\server\share\file.bin", out _), "a share is not a volume");
+        Check.False(BinVolumeResolver.TryParseVolumeName(@"\\?\C:\work\file.bin", out _), "nor is a drive-letter path");
+        Check.False(BinVolumeResolver.TryParseVolumeName(@"\\?\Volume{0be31b11-9126-4277-afd6-019ff4a1ee40", out _), "nor an unterminated one");
+        Check.False(BinVolumeResolver.TryParseVolumeName(@"Volume{0be31b11}\file.bin", out _), "nor one without the device prefix");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A volume's mount-point list answers a drive-letter root when it has one, because the rest of the
+    /// library asks volumes by that spelling.
+    /// </summary>
+    private static Task ADriveLetterMountPointIsPreferredToAFolderMount(TestContext context)
+    {
+        Check.Equal(@"E:\", BinVolumeResolver.ChooseDriveLetterRoot("C:\\Mount\\\0E:\\\0\0"), "a drive letter wins over a folder mount listed before it");
+        Check.Equal(@"E:\", BinVolumeResolver.ChooseDriveLetterRoot("E:\\\0\0"), "one entry is enough");
+        Check.True(BinVolumeResolver.ChooseDriveLetterRoot("C:\\Mount\\\0\0") is null, "a folder mount names no root this library inspects");
+        Check.True(BinVolumeResolver.ChooseDriveLetterRoot("\0") is null, "an empty list answers nothing");
 
         return Task.CompletedTask;
     }
