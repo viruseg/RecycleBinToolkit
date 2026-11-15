@@ -23,6 +23,7 @@ internal static class LinkSuite
         new TestCase("LinkSuite." + nameof(ARestoredFileBehindAJunctionGoesBackThroughTheJunction), ARestoredFileBehindAJunctionGoesBackThroughTheJunction),
         new TestCase("LinkSuite." + nameof(ARestoredDirectoryBehindAJunctionGoesBackThroughTheJunction), ARestoredDirectoryBehindAJunctionGoesBackThroughTheJunction),
         new TestCase("LinkSuite." + nameof(AMergedTreeBehindAJunctionKeepsTheLinkInsideIt), AMergedTreeBehindAJunctionKeepsTheLinkInsideIt),
+        new TestCase("LinkSuite." + nameof(ALongPathBehindAJunctionStagesOnItsOwnVolumesBin), ALongPathBehindAJunctionStagesOnItsOwnVolumesBin),
     ];
 
     /// <summary>
@@ -389,6 +390,69 @@ internal static class LinkSuite
         }
     }
 
+    /// <summary>
+    /// A path the record cannot name is staged on the volume that holds its bytes, not on the volume its
+    /// spelling belongs to — otherwise the staging move is a copy and the record names a path the item does
+    /// not live at.
+    /// </summary>
+    private static async Task ALongPathBehindAJunctionStagesOnItsOwnVolumesBin(TestContext context)
+    {
+        ScratchWorkspace.RequireRecycling("a bin on the volume the caller names");
+        ScratchWorkspace.RequireLinkVolumeRecycling("a bin on the volume that holds the bytes");
+
+        var origin = CreateLinkVolumeTarget();
+        var deep = BuildChain(origin.FullPath, NativeIndexFile.LegacyPathCapacity + 50);
+        File.WriteAllBytes(Path.Combine(deep, "payload.bin"), new byte[16]);
+        var link = MakeJunction(origin.FullPath);
+        var callerPath = Path.Combine(link.LinkPath, Path.GetRelativePath(origin.FullPath, deep), "payload.bin");
+
+        Check.True(
+            callerPath.Length > NativeIndexFile.LegacyPathCapacity,
+            $"the caller's path is past the record ({callerPath.Length} characters)");
+
+        IndexFormat.ForceVersionOne = true;
+        NativeRecycleRunner.FaultAfterStaging = true;
+        NativeRecycleRunner.FaultBeforePutBack = true;
+        try
+        {
+            var options = new RecycleOptions { LongPathFailureAction = LongPathFailureAction.ShortenPathAndRecycle };
+            var result = await RecycleBin.RecycleAsync([callerPath], options, context.CancellationToken);
+
+            var staged = result.LeftoverStagingDirectories.Single();
+            Check.True(
+                string.Equals(Path.GetPathRoot(staged), ScratchWorkspace.LinkVolumeRoot, StringComparison.OrdinalIgnoreCase),
+                $"the staging directory is on the volume that holds the bytes: {staged}");
+            Check.True(Directory.Exists(staged), "and it still holds the item");
+            Check.True(Path.GetFileName(staged).StartsWith(LongPathStager.NamePrefix, StringComparison.Ordinal), "under the name this library uses");
+            Check.Equal(
+                0,
+                Directory.GetDirectories(ScratchWorkspace.VolumeRoot, LongPathStager.NamePrefix + "*").Length,
+                "with nothing left on the volume the path is spelled on");
+        }
+        finally
+        {
+            IndexFormat.ForceVersionOne = false;
+            NativeRecycleRunner.FaultAfterStaging = false;
+            NativeRecycleRunner.FaultBeforePutBack = false;
+
+            foreach (var root in new[] { ScratchWorkspace.LinkVolumeRoot, ScratchWorkspace.VolumeRoot })
+            {
+                foreach (var leftover in Directory.GetDirectories(root, LongPathStager.NamePrefix + "*"))
+                {
+                    Directory.Delete(leftover, recursive: true);
+                }
+            }
+
+            if (Directory.Exists(link.LinkPath))
+            {
+                Directory.Delete(link.LinkPath);
+            }
+
+            link.Parent.Remove();
+            origin.Remove();
+        }
+    }
+
     private sealed record LinkFixture(ScratchDirectory Parent, string LinkPath, string TargetPath);
 
     private static ScratchDirectory CreateLinkVolumeTarget() => ScratchDirectory.Claim(ScratchWorkspace.LinkRoot);
@@ -411,6 +475,20 @@ internal static class LinkSuite
         }
 
         return new LinkFixture(parent, linkPath, targetPath);
+    }
+
+    private static string BuildChain(string root, int characters)
+    {
+        var deepest = root.TrimEnd(Path.DirectorySeparatorChar);
+        var component = new string('d', 118);
+
+        while (deepest.Length < characters)
+        {
+            deepest = Path.Combine(deepest, component);
+            Directory.CreateDirectory(deepest);
+        }
+
+        return deepest;
     }
 
     private static async Task<RecycleBinItem> FindOwnEntry(string binRoot, string recordPath, TestContext context)

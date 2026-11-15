@@ -50,47 +50,52 @@ internal sealed class LongPathStager : IDisposable
     internal static string NewDirectoryName() => $"{NamePrefix}{Guid.NewGuid():N}";
 
     /// <summary>
-    /// Moves an item to a short path on its own volume, creating that volume's staging directory the
-    /// first time it is needed.
+    /// Moves an item to a short path on the volume that holds it, creating that volume's staging directory
+    /// the first time it is needed.
     /// </summary>
+    /// <param name="target">The item to stage.</param>
     /// <remarks>
+    /// The volume is <see cref="RecycleTarget.BinVolumeRoot"/> rather than the root either spelling names: a
+    /// path through a junction is spelled on one volume while its bytes are on another, and staging on the
+    /// spelled one would copy the bytes and write a record naming a path the item does not live at.
+    /// <para>
     /// One attempt per call and no waiting between them. A rename that fails on a sharing violation is
     /// usually a transient hold by the indexer or antivirus, so the caller retries; retrying a whole batch
     /// at once rather than one path at a time is what keeps that backoff from being paid once per item.
+    /// </para>
     /// </remarks>
     /// <returns>
     /// The staging path, or <see langword="null"/> when the move could not be made — a volume whose root is
     /// not writable, or an item locked by another process.
     /// </returns>
-    internal string? TryStageOnce(string fullPath)
+    internal string? TryStageOnce(RecycleTarget target)
     {
         ObjectDisposedException.ThrowIf(_released, this);
 
         Attempts++;
 
-        var volumeRoot = Path.GetPathRoot(fullPath);
-        if (volumeRoot is null)
+        if (string.IsNullOrEmpty(target.BinVolumeRoot))
         {
             return null;
         }
 
-        var stagingRoot = ResolveStagingRoot(volumeRoot);
+        var stagingRoot = ResolveStagingRoot(target.BinVolumeRoot);
         if (stagingRoot is null)
         {
             return null;
         }
 
-        var staged = Path.Combine(stagingRoot, StagedName(fullPath));
+        var staged = Path.Combine(stagingRoot, StagedName(target.FullPath));
 
         try
         {
-            if (Directory.Exists(fullPath))
+            if (target.IsDirectory)
             {
-                NativeDirectoryMove.Move(fullPath, staged);
+                NativeDirectoryMove.Move(target.FullPath, staged);
             }
             else
             {
-                File.Move(PathForIo(fullPath), PathForIo(staged));
+                File.Move(PathForIo(target.FullPath), PathForIo(staged));
             }
 
             return staged;

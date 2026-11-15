@@ -419,7 +419,7 @@ internal static class NativeRecycleRunner
 
             foreach (var target in awaitingStaging)
             {
-                if (FaultWhileStaging || stager.TryStageOnce(target.FullPath) is not string stagedPath)
+                if (FaultWhileStaging || stager.TryStageOnce(target) is not string stagedPath)
                 {
                     stillWaiting.Add(target);
                     continue;
