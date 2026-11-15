@@ -330,7 +330,7 @@ internal static class RestoreRunner
     /// <b>One entry at a time, from start to finish, and a merged tree is one entry too.</b> A tree and the
     /// payload holding it are one thing, and two threads on one of them contend for the same directory — the
     /// same reason <see cref="NativeRecycleRunner"/> is single-threaded on the writing side. A directory that
-    /// is not a merge is one <see cref="Directory.Move(string, string)"/>, and one that is never reaches
+    /// is not a merge is one directory move, and one that is never reaches
     /// another thread in the middle of its walk.
     /// <para>
     /// The wait is a blocking one on a thread that exists to do this work and nothing else, which is what
@@ -766,7 +766,7 @@ internal static class RestoreRunner
     /// move, not on somebody else being faster at naming files.</item>
     /// <item>The names are counted against <see cref="NameCollision.NameAttempts"/> so a name taken on every
     /// attempt cannot loop here for ever.</item>
-    /// <item>A directory is one <see cref="Directory.Move(string, string)"/> rather than a walk of what is
+    /// <item>A directory is one directory move rather than a walk of what is
     /// inside it. A destination something is standing in is not a name that call can land on.</item>
     /// <item>The folder the payload lands in is made here, because the folder
     /// <see cref="RecycleBinItem.OriginalPath"/> sits in need not be there any more. Nothing reaches this
@@ -794,7 +794,7 @@ internal static class RestoreRunner
             {
                 if (item.IsDirectory)
                 {
-                    Directory.Move(item.PayloadPath, destination);
+                    NativeDirectoryMove.Move(item.PayloadPath, destination);
                 }
                 else
                 {
@@ -1316,7 +1316,7 @@ internal static class RestoreRunner
     {
         if (isDirectory)
         {
-            Directory.Move(source, destination);
+            NativeDirectoryMove.Move(source, destination);
         }
         else
         {

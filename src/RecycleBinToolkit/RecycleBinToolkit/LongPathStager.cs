@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.Versioning;
 
 namespace RecycleBinToolkit;
 
@@ -17,6 +18,7 @@ namespace RecycleBinToolkit;
 /// destroy the caller's data — the one outcome this library exists to prevent.
 /// </para>
 /// </remarks>
+[SupportedOSPlatform("windows10.0.14393")]
 internal sealed class LongPathStager : IDisposable
 {
     /// <summary>
@@ -84,7 +86,7 @@ internal sealed class LongPathStager : IDisposable
         {
             if (Directory.Exists(fullPath))
             {
-                Directory.Move(PathForIo(fullPath), PathForIo(staged));
+                NativeDirectoryMove.Move(fullPath, staged);
             }
             else
             {
@@ -108,7 +110,7 @@ internal sealed class LongPathStager : IDisposable
         {
             if (Directory.Exists(stagedFullPath))
             {
-                Directory.Move(PathForIo(stagedFullPath), PathForIo(originalFullPath));
+                NativeDirectoryMove.Move(stagedFullPath, originalFullPath);
             }
             else
             {

@@ -596,7 +596,7 @@ internal static class NativeRecycleRunner
             {
                 if (isDirectory)
                 {
-                    Directory.Move(target.FullPath, payloadPath);
+                    NativeDirectoryMove.Move(target.FullPath, payloadPath);
                 }
                 else
                 {

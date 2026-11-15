@@ -18,6 +18,11 @@ internal static class LinkSuite
         new TestCase("LinkSuite." + nameof(AFileBehindAJunctionIsRecycledIntoTheVolumeThatHoldsIt), AFileBehindAJunctionIsRecycledIntoTheVolumeThatHoldsIt),
         new TestCase("LinkSuite." + nameof(TheJunctionItselfIsRecycledIntoItsOwnVolumesBinAndTheTargetStays), TheJunctionItselfIsRecycledIntoItsOwnVolumesBinAndTheTargetStays),
         new TestCase("LinkSuite." + nameof(AJunctionInsideTheRunVolumeUsesTheRunVolumesBin), AJunctionInsideTheRunVolumeUsesTheRunVolumesBin),
+        new TestCase("LinkSuite." + nameof(ADirectoryBehindAJunctionIsRecycledIntoTheVolumeThatHoldsIt), ADirectoryBehindAJunctionIsRecycledIntoTheVolumeThatHoldsIt),
+        new TestCase("LinkSuite." + nameof(ARecycledTreeCarriesTheJunctionAndLeavesItsTarget), ARecycledTreeCarriesTheJunctionAndLeavesItsTarget),
+        new TestCase("LinkSuite." + nameof(ARestoredFileBehindAJunctionGoesBackThroughTheJunction), ARestoredFileBehindAJunctionGoesBackThroughTheJunction),
+        new TestCase("LinkSuite." + nameof(ARestoredDirectoryBehindAJunctionGoesBackThroughTheJunction), ARestoredDirectoryBehindAJunctionGoesBackThroughTheJunction),
+        new TestCase("LinkSuite." + nameof(AMergedTreeBehindAJunctionKeepsTheLinkInsideIt), AMergedTreeBehindAJunctionKeepsTheLinkInsideIt),
     ];
 
     /// <summary>
@@ -149,6 +154,238 @@ internal static class LinkSuite
 
             link.Parent.Remove();
             origin.Remove();
+        }
+    }
+
+    /// <summary>
+    /// A directory reached through a junction is recycled into the bin of the volume its bytes are on, and its
+    /// contents come back through the junction.
+    /// </summary>
+    private static async Task ADirectoryBehindAJunctionIsRecycledIntoTheVolumeThatHoldsIt(TestContext context)
+    {
+        ScratchWorkspace.RequireRecycling("a bin on the volume the caller names");
+        ScratchWorkspace.RequireLinkVolumeRecycling("a bin on the volume that holds the bytes");
+
+        var origin = CreateLinkVolumeTarget();
+        Directory.CreateDirectory(Path.Combine(origin.FullPath, "inside"));
+        File.WriteAllBytes(Path.Combine(origin.FullPath, "inside", "payload.bin"), new byte[4096]);
+        var link = MakeJunction(origin.FullPath);
+
+        try
+        {
+            var callerPath = Path.Combine(link.LinkPath, "inside");
+            var runBefore = BinCount(ScratchWorkspace.VolumeRoot, "the run volume before the recycle");
+            var linkBefore = BinCount(ScratchWorkspace.LinkVolumeRoot, "the link volume before the recycle");
+
+            var result = await RecycleBin.RecycleAsync([callerPath], RecycleOptions.Default, context.CancellationToken);
+
+            Check.True(result.Succeeded, $"the directory is recycled through the link (first failure: {Describe(result.FirstFailure)})");
+            Check.Equal(linkBefore + 1, BinCount(ScratchWorkspace.LinkVolumeRoot, "the link volume after the recycle"), "the payload is on the volume that holds it");
+            Check.Equal(runBefore, BinCount(ScratchWorkspace.VolumeRoot, "the run volume after the recycle"), "and not on the volume it is spelled on");
+            Check.False(Directory.Exists(callerPath), "the directory is gone through the link");
+            Check.Equal(
+                callerPath,
+                (await FindOwnEntry(ScratchWorkspace.LinkVolumeRoot, callerPath, context)).OriginalPath,
+                "the record keeps the caller's path");
+
+            await RestoreOwnEntry(ScratchWorkspace.LinkVolumeRoot, callerPath, context);
+            Check.True(File.Exists(Path.Combine(callerPath, "payload.bin")), "and the restore brings its contents back through the link");
+        }
+        finally
+        {
+            if (Directory.Exists(link.LinkPath))
+            {
+                Directory.Delete(link.LinkPath);
+            }
+
+            link.Parent.Remove();
+            origin.Remove();
+        }
+    }
+
+    /// <summary>
+    /// A tree holding a junction is recycled as one object: the junction stays a link, and its target is not
+    /// part of the tree.
+    /// </summary>
+    private static async Task ARecycledTreeCarriesTheJunctionAndLeavesItsTarget(TestContext context)
+    {
+        ScratchWorkspace.RequireRecycling("a bin for the tree");
+        ScratchWorkspace.RequireLinkVolume("a target outside the tree for its junction to point at");
+
+        var parent = ScratchDirectory.Claim(ScratchWorkspace.Root);
+        var tree = Path.Combine(parent.FullPath, "tree");
+        Directory.CreateDirectory(tree);
+        File.WriteAllBytes(Path.Combine(tree, "plain.bin"), new byte[16]);
+        var target = CreateLinkVolumeTarget();
+        File.WriteAllBytes(Path.Combine(target.FullPath, "kept.bin"), new byte[16]);
+        Junction.Create(Path.Combine(tree, "junc"), target.FullPath);
+
+        try
+        {
+            var runBefore = BinCount(ScratchWorkspace.VolumeRoot, "the run volume before the recycle");
+            var linkBefore = BinCount(ScratchWorkspace.LinkVolumeRoot, "the link volume before the recycle");
+
+            var result = await RecycleBin.RecycleAsync([tree], RecycleOptions.Default, context.CancellationToken);
+
+            Check.True(result.Succeeded, $"the tree is recycled (first failure: {Describe(result.FirstFailure)})");
+            Check.Equal(runBefore + 1, BinCount(ScratchWorkspace.VolumeRoot, "the run volume after the recycle"), "the tree is one entry in its own volume's bin");
+            Check.Equal(linkBefore, BinCount(ScratchWorkspace.LinkVolumeRoot, "the link volume after the recycle"), "and the target contributes nothing");
+            Check.False(Directory.Exists(tree), "the tree left its place");
+            Check.True(File.Exists(Path.Combine(target.FullPath, "kept.bin")), "the target is untouched");
+
+            await RestoreOwnEntry(ScratchWorkspace.VolumeRoot, tree, context);
+            Check.True(File.Exists(Path.Combine(tree, "plain.bin")), "the ordinary file came back");
+            Check.True(
+                (File.GetAttributes(Path.Combine(tree, "junc")) & FileAttributes.ReparsePoint) != 0,
+                "the junction inside comes back as a link");
+        }
+        finally
+        {
+            if (Directory.Exists(Path.Combine(tree, "junc")))
+            {
+                Directory.Delete(Path.Combine(tree, "junc"));
+            }
+
+            parent.Remove();
+            target.Remove();
+        }
+    }
+
+    /// <summary>
+    /// A file recycled through a junction comes back to the path its record names, which is the caller's
+    /// spelling and still leads through the junction.
+    /// </summary>
+    private static async Task ARestoredFileBehindAJunctionGoesBackThroughTheJunction(TestContext context)
+    {
+        ScratchWorkspace.RequireRecycling("a bin on the volume the caller names");
+        ScratchWorkspace.RequireLinkVolumeRecycling("a bin on the volume that holds the bytes");
+
+        var origin = CreateLinkVolumeTarget();
+        var file = Path.Combine(origin.FullPath, "payload.bin");
+        var bytes = new byte[4096];
+        Random.Shared.NextBytes(bytes);
+        File.WriteAllBytes(file, bytes);
+        var link = MakeJunction(origin.FullPath);
+
+        try
+        {
+            var callerPath = Path.Combine(link.LinkPath, "payload.bin");
+            var linkBefore = BinCount(ScratchWorkspace.LinkVolumeRoot, "the link volume before the recycle");
+
+            var recycled = await RecycleBin.RecycleAsync([callerPath], RecycleOptions.Default, context.CancellationToken);
+            Check.True(recycled.Succeeded, $"the file reached the link volume's bin (first failure: {Describe(recycled.FirstFailure)})");
+
+            var item = await FindOwnEntry(ScratchWorkspace.LinkVolumeRoot, callerPath, context);
+            var result = await RecycleBin.RestoreAsync([item], RestoreOptions.Default, context.CancellationToken);
+
+            Check.True(result.Succeeded, $"the file is restored ({Describe(result.Failures.FirstOrDefault())})");
+            Check.True(File.Exists(callerPath), "the file is back at the caller's path, through the link");
+            Check.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(callerPath)), "with its bytes");
+            Check.Equal(linkBefore, BinCount(ScratchWorkspace.LinkVolumeRoot, "the link volume after the restore"), "and its record is gone");
+        }
+        finally
+        {
+            if (Directory.Exists(link.LinkPath))
+            {
+                Directory.Delete(link.LinkPath);
+            }
+
+            link.Parent.Remove();
+            origin.Remove();
+        }
+    }
+
+    /// <summary>
+    /// A directory recycled through a junction comes back through it, contents included.
+    /// </summary>
+    private static async Task ARestoredDirectoryBehindAJunctionGoesBackThroughTheJunction(TestContext context)
+    {
+        ScratchWorkspace.RequireRecycling("a bin on the volume the caller names");
+        ScratchWorkspace.RequireLinkVolumeRecycling("a bin on the volume that holds the bytes");
+
+        var origin = CreateLinkVolumeTarget();
+        Directory.CreateDirectory(Path.Combine(origin.FullPath, "inside"));
+        var file = Path.Combine(origin.FullPath, "inside", "payload.bin");
+        var bytes = new byte[4096];
+        Random.Shared.NextBytes(bytes);
+        File.WriteAllBytes(file, bytes);
+        var link = MakeJunction(origin.FullPath);
+
+        try
+        {
+            var callerPath = Path.Combine(link.LinkPath, "inside");
+            var linkBefore = BinCount(ScratchWorkspace.LinkVolumeRoot, "the link volume before the recycle");
+
+            var recycled = await RecycleBin.RecycleAsync([callerPath], RecycleOptions.Default, context.CancellationToken);
+            Check.True(recycled.Succeeded, $"the directory reached the link volume's bin (first failure: {Describe(recycled.FirstFailure)})");
+
+            var item = await FindOwnEntry(ScratchWorkspace.LinkVolumeRoot, callerPath, context);
+            var result = await RecycleBin.RestoreAsync([item], RestoreOptions.Default, context.CancellationToken);
+
+            Check.True(result.Succeeded, $"the directory is restored ({Describe(result.Failures.FirstOrDefault())})");
+            Check.True(Directory.Exists(callerPath), "the directory is back at the caller's path, through the link");
+            Check.True(File.Exists(Path.Combine(callerPath, "payload.bin")), "with its file");
+            Check.True(
+                bytes.AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(callerPath, "payload.bin"))),
+                "and its bytes");
+            Check.Equal(linkBefore, BinCount(ScratchWorkspace.LinkVolumeRoot, "the link volume after the restore"), "and its record is gone");
+        }
+        finally
+        {
+            if (Directory.Exists(link.LinkPath))
+            {
+                Directory.Delete(link.LinkPath);
+            }
+
+            link.Parent.Remove();
+            origin.Remove();
+        }
+    }
+
+    /// <summary>
+    /// A tree merged back into a destination that still holds it keeps the junction inside it a link, and the
+    /// merge does not cross into what that link points at.
+    /// </summary>
+    private static async Task AMergedTreeBehindAJunctionKeepsTheLinkInsideIt(TestContext context)
+    {
+        ScratchWorkspace.RequireRecycling("a bin for the tree");
+        ScratchWorkspace.RequireLinkVolume("a target outside the tree for its junction to point at");
+
+        var parent = ScratchDirectory.Claim(ScratchWorkspace.Root);
+        var tree = Path.Combine(parent.FullPath, "tree");
+        Directory.CreateDirectory(tree);
+        File.WriteAllBytes(Path.Combine(tree, "plain.bin"), new byte[16]);
+        var mergeOrigin = CreateLinkVolumeTarget();
+        File.WriteAllBytes(Path.Combine(mergeOrigin.FullPath, "kept.bin"), new byte[16]);
+        Junction.Create(Path.Combine(tree, "junc"), mergeOrigin.FullPath);
+
+        try
+        {
+            var recycled = await RecycleBin.RecycleAsync([tree], RecycleOptions.Default, context.CancellationToken);
+            Check.True(recycled.Succeeded, $"the tree reached the bin (first failure: {Describe(recycled.FirstFailure)})");
+
+            Directory.CreateDirectory(tree);
+
+            var options = new RestoreOptions { DirectoryConflict = RestoreDirectoryConflict.MergeSkip };
+            var item = await FindOwnEntry(ScratchWorkspace.VolumeRoot, tree, context);
+            var result = await RecycleBin.RestoreAsync([item], options, context.CancellationToken);
+
+            Check.True(result.Succeeded, $"the tree is merged back ({Describe(result.Failures.FirstOrDefault())})");
+            Check.True(File.Exists(Path.Combine(tree, "plain.bin")), "the ordinary file is merged");
+            Check.True(
+                (File.GetAttributes(Path.Combine(tree, "junc")) & FileAttributes.ReparsePoint) != 0,
+                "the junction is moved as a link");
+            Check.True(File.Exists(Path.Combine(mergeOrigin.FullPath, "kept.bin")), "and nothing crossed into its target");
+        }
+        finally
+        {
+            if (Directory.Exists(Path.Combine(tree, "junc")))
+            {
+                Directory.Delete(Path.Combine(tree, "junc"));
+            }
+
+            parent.Remove();
+            mergeOrigin.Remove();
         }
     }
 
