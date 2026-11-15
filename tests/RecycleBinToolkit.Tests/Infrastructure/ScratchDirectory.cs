@@ -12,8 +12,8 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 /// <c>Directory.CreateDirectory</c> reports success for a directory somebody else already had.
 /// <para>
 /// The two entry points are what keep the suite inside that directory. <see cref="ClaimRunRoot"/> takes a
-/// volume root and is allowed once in a process; <see cref="Claim(string)"/> takes only a parent already
-/// inside the run's directory and is refused otherwise. One method with two rules would not hold: handed
+/// volume root and is allowed once per volume; <see cref="Claim(string)"/> takes only a parent already
+/// inside one of those roots and is refused otherwise. One method with two rules would not hold: handed
 /// the volume root, a case would create a directory beside everything the run works in, which is the one
 /// thing the working directory exists to prevent.
 /// </para>
@@ -28,7 +28,7 @@ internal sealed class ScratchDirectory
 
     private static readonly TimeSpan DeleteRetryDelay = TimeSpan.FromMilliseconds(250);
 
-    private static ScratchDirectory? _runRoot;
+    private static readonly List<ScratchDirectory> RunRoots = [];
 
     private ScratchDirectory(string path, string parent)
     {
@@ -53,29 +53,66 @@ internal sealed class ScratchDirectory
     public string Parent { get; }
 
     /// <summary>
-    /// The full path of the run's own directory, or <see langword="null"/> before
-    /// <see cref="ClaimRunRoot"/> has claimed it. This is the boundary every other claim is measured
-    /// against.
+    /// The full path of the directory this run works in, which is the first root claimed, or
+    /// <see langword="null"/> before <see cref="ClaimRunRoot"/> has claimed one.
     /// </summary>
-    internal static string? RunRootPath => _runRoot?.FullPath;
+    /// <remarks>
+    /// A run that tests through a junction claims a second root on another volume. That root is reached
+    /// through <see cref="Claims"/>; this answers the one the suite's cases write under.
+    /// </remarks>
+    internal static string? RunRootPath => RunRoots.Count > 0 ? RunRoots[0].FullPath : null;
 
     /// <summary>
-    /// Claims the run's own directory directly under <paramref name="volumeRoot"/>, once per process.
+    /// Every run root this process holds, in the order they were claimed.
+    /// </summary>
+    /// <remarks>
+    /// A copy, so a caller iterating it cannot see the list change under it.
+    /// </remarks>
+    internal static IReadOnlyList<ScratchDirectory> Claims => [.. RunRoots];
+
+    /// <summary>
+    /// Drops every run root from the process's record of them.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is deleted. The caller holds the claims and owes each of them a <see cref="Remove"/>.
+    /// </remarks>
+    internal static void ForgetClaims() => RunRoots.Clear();
+
+    /// <summary>
+    /// Whether two volume roots name the same volume.
+    /// </summary>
+    /// <remarks>
+    /// Two mounted volumes are compared by the GUID the volume API answers for each, so two letters for one
+    /// volume are one volume. A share answers no GUID, so it is compared by its normalized spelling.
+    /// </remarks>
+    internal static bool SameVolume(string a, string b)
+    {
+        var first = RecycleBinVolumeState.TryGetVolumeGuidKeyName(a);
+        var second = RecycleBinVolumeState.TryGetVolumeGuidKeyName(b);
+
+        return first is not null && second is not null
+            ? string.Equals(first, second, StringComparison.OrdinalIgnoreCase)
+            : string.Equals(VolumeRoot.Normalize(a), VolumeRoot.Normalize(b), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Claims a directory directly under <paramref name="volumeRoot"/> for this run, once per volume.
     /// </summary>
     /// <param name="volumeRoot">
     /// The root of a volume the caller named, such as <c>W:\</c> or <c>\\server\share\</c>. A path that is
     /// not a root is refused, because a directory created inside one would be created inside somebody's
     /// data and removed with its parent.
     /// </param>
-    /// <returns>The run's own directory.</returns>
+    /// <returns>The claimed directory.</returns>
     /// <remarks>
-    /// This is the one claim that reaches out of the run, and it reaches out exactly once. Every later claim
-    /// is measured against what it returns, so a second one would sit beside the directory every case
-    /// writes under — which is what the process-wide guard exists to refuse.
+    /// This is the one claim that reaches out of the run. A run that tests through a junction claims one
+    /// root on each of two volumes, and every later claim is measured against the roots these returned. A
+    /// second claim on a volume that already holds one would put a directory beside the one every case
+    /// writes under, which is what the per-volume guard refuses.
     /// </remarks>
     /// <exception cref="ArgumentException"><paramref name="volumeRoot"/> is not a volume root.</exception>
     /// <exception cref="InvalidOperationException">
-    /// The run's own directory has already been claimed, which would make this process two runs at once.
+    /// <paramref name="volumeRoot"/> names a volume that already holds a run root for this process.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Every name tried under <paramref name="volumeRoot"/> was already taken. Left spinning, the run would
@@ -85,34 +122,40 @@ internal sealed class ScratchDirectory
     {
         var root = VolumeRoot.Normalize(volumeRoot);
 
-        if (_runRoot is not null)
+        foreach (var existing in RunRoots)
         {
+            if (!SameVolume(existing.Parent, root))
+            {
+                continue;
+            }
+
             throw new InvalidOperationException(
-                $"This process already works on {_runRoot.Parent}, in {_runRoot.FullPath}, and {root} was named as a second run root. " +
-                "One process is one run: a second claim would create a directory beside the one every case writes under, " +
+                $"{root} already holds this run's directory, in {existing.FullPath}, and was named as a second run root. " +
+                "One volume is one run root: a second claim would create a directory beside the one every case writes under, " +
                 "and nothing would be there to remove it.");
         }
 
-        _runRoot = ClaimUnder(root, () => Guid.NewGuid().ToString("N"));
+        var claim = ClaimUnder(root, () => Guid.NewGuid().ToString("N"));
+        RunRoots.Add(claim);
 
-        return _runRoot;
+        return claim;
     }
 
     /// <summary>
     /// Claims a directory of the suite's own directly under <paramref name="parent"/>.
     /// </summary>
     /// <param name="parent">
-    /// A directory inside the run's own directory, spelled as a fully qualified path. The volume root
+    /// A directory inside one of the run's own directories, spelled as a fully qualified path. The volume root
     /// itself is refused, because a claim taken there would be created beside everything this run works in
     /// and removed without it.
     /// </param>
     /// <returns>The claimed directory.</returns>
     /// <exception cref="ArgumentException">
     /// <paramref name="parent"/> is null, empty, not fully qualified, or unreadable as a path; or it is not
-    /// inside the run's own directory once <c>..</c> segments are resolved. Nothing is created.
+    /// inside one of the run's own directories once <c>..</c> segments are resolved. Nothing is created.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// The run's own directory has not been claimed, so there is nothing for the claim to sit inside.
+    /// No run root has been claimed, so there is nothing for the claim to sit inside.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Every name tried was already taken. Left spinning, the run would report nothing until it was killed.
@@ -124,7 +167,7 @@ internal sealed class ScratchDirectory
     /// <paramref name="nameFor"/>.
     /// </summary>
     /// <param name="parent">
-    /// A fully qualified directory inside the run's own directory. See <see cref="Claim(string)"/>.
+    /// A fully qualified directory inside one of the run's own directories. See <see cref="Claim(string)"/>.
     /// </param>
     /// <param name="nameFor">
     /// Produces the next name to try. Called again only for a name that is already taken, so the number of
@@ -137,10 +180,10 @@ internal sealed class ScratchDirectory
     /// </remarks>
     /// <exception cref="ArgumentException">
     /// <paramref name="parent"/> is null, empty, not fully qualified, or unreadable as a path; or it is not
-    /// inside the run's own directory once <c>..</c> segments are resolved. Nothing is created.
+    /// inside one of the run's own directories once <c>..</c> segments are resolved. Nothing is created.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// The run's own directory has not been claimed, so there is nothing for the claim to sit inside.
+    /// No run root has been claimed, so there is nothing for the claim to sit inside.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Every name tried was already taken. Left spinning, the run would report nothing until it was killed.
@@ -266,17 +309,17 @@ internal sealed class ScratchDirectory
     /// </summary>
     /// <remarks>
     /// The comparison is over resolved paths, not over the text a caller passed. <c>..</c> would otherwise
-    /// pass a prefix test and still leave the run's directory — <c>X:\{guid}\..\elsewhere</c> begins with
+    /// pass a prefix test and still leave the run's directories — <c>X:\{guid}\..\elsewhere</c> begins with
     /// <c>X:\{guid}\</c> and resolves to <c>X:\elsewhere</c> — and a correct parent written with forward
     /// slashes would be refused, because <c>X:/{guid}/</c> and <c>X:\{guid}\</c> are the same directory
     /// spelled two ways. The normalized form is what is returned, so the directory created is the one that
     /// was checked rather than a re-parse of the text.
     /// <para>
-    /// A claim with no run's own directory to sit inside is a state this suite cannot be put into: the
-    /// runner claims the run root before it selects a single case, so by the time any code here runs the
-    /// boundary exists. The guard is here rather than assumed because a refactor that moved this check
-    /// behind <see cref="ClaimRunRoot"/>, or let a case name the run root itself, would reopen the route
-    /// out of the working directory silently — and a null reference would not say what had gone wrong.
+    /// A claim with no run root to sit inside is a state this suite cannot be put into: the runner claims the
+    /// run root before it selects a single case, so by the time any code here runs the boundary exists. The
+    /// guard is here rather than assumed because a refactor that moved this check behind
+    /// <see cref="ClaimRunRoot"/>, or let a case name the run root itself, would reopen the route out of the
+    /// working directory silently — and a null reference would not say what had gone wrong.
     /// </para>
     /// <para>
     /// Nothing asserts that branch, and that is deliberate. Reaching it from a case needs either a seam
@@ -290,12 +333,12 @@ internal sealed class ScratchDirectory
     /// </remarks>
     /// <exception cref="ArgumentException">
     /// <paramref name="parent"/> is null, empty, not fully qualified, or unreadable as a path; or it is not
-    /// inside the run's own directory once resolved. Every one of these is checked before anything is
+    /// inside one of the run's directories once resolved. Every one of these is checked before anything is
     /// created, so a refusal leaves the volume exactly as it was.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// No run's own directory has been claimed, so there is no boundary to measure the parent against and
-    /// nothing this could fall back to but a path the caller never named.
+    /// No run root has been claimed, so there is no boundary to measure the parent against and nothing this
+    /// could fall back to but a path the caller never named.
     /// </exception>
     private static string ParentInsideRunRoot(string parent)
     {
@@ -316,9 +359,12 @@ internal sealed class ScratchDirectory
                 nameof(parent));
         }
 
-        var runRoot = _runRoot ?? throw new InvalidOperationException(
-            $"{nameof(ScratchDirectory)} has no run's own directory to sit inside: {nameof(ClaimRunRoot)} has not claimed one, " +
-            "so there is nothing to create a directory under that this run also owns.");
+        if (RunRoots.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(ScratchDirectory)} has no run's own directory to sit inside: {nameof(ClaimRunRoot)} has not claimed one, " +
+                "so there is nothing to create a directory under that this run also owns.");
+        }
 
         string full;
 
@@ -338,16 +384,23 @@ internal sealed class ScratchDirectory
                 ex);
         }
 
-        if (!full.StartsWith(BoundedBySeparator(runRoot.FullPath), StringComparison.OrdinalIgnoreCase))
+        var accepted = new List<string>(RunRoots.Count);
+
+        foreach (var runRoot in RunRoots)
         {
-            throw new ArgumentException(
-                $"{Quote(full)} is not inside the run's own directory {runRoot.FullPath}, so nothing was created there. " +
-                "A claim is taken under a directory this run already owns; the volume root is the one place a claim may be created, " +
-                $"and {nameof(ClaimRunRoot)} has already made it.",
-                nameof(parent));
+            if (full.StartsWith(BoundedBySeparator(runRoot.FullPath), StringComparison.OrdinalIgnoreCase))
+            {
+                return full;
+            }
+
+            accepted.Add(runRoot.FullPath);
         }
 
-        return full;
+        throw new ArgumentException(
+            $"{Quote(full)} is not inside any of this run's directories ({string.Join(", ", accepted)}), so nothing was created there. " +
+            "A claim is taken under a directory this run already owns; a volume root is the one place a run root may be created, " +
+            $"and {nameof(ClaimRunRoot)} has already made it there.",
+            nameof(parent));
     }
 
     /// <summary>

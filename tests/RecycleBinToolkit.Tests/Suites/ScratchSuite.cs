@@ -39,6 +39,7 @@ internal static class ScratchSuite
         new TestCase("ScratchSuite." + nameof(ClaimAcceptsAParentSpelledWithForwardSlashes), ClaimAcceptsAParentSpelledWithForwardSlashes),
         new TestCase("ScratchSuite." + nameof(ClaimRefusesAnEmptyParent), ClaimRefusesAnEmptyParent),
         new TestCase("ScratchSuite." + nameof(ClaimRunRootRefusesASecondRunInOneProcess), ClaimRunRootRefusesASecondRunInOneProcess),
+        new TestCase("ScratchSuite." + nameof(ASecondRunRootIsAllowedOnAnotherVolume), ASecondRunRootIsAllowedOnAnotherVolume),
         new TestCase("ScratchSuite." + nameof(AVolumeRootIsItsOwnNormalizedSpelling), AVolumeRootIsItsOwnNormalizedSpelling),
         new TestCase("ScratchSuite." + nameof(ADirectoryUnderAVolumeRootIsNotAVolumeRoot), ADirectoryUnderAVolumeRootIsNotAVolumeRoot),
         new TestCase("ScratchSuite." + nameof(ADriveLetterIsNotAVolumeRoot), ADriveLetterIsNotAVolumeRoot),
@@ -490,6 +491,38 @@ internal static class ScratchSuite
         Check.True(
             failure.Message.Contains(ScratchWorkspace.VolumeRoot, StringComparison.OrdinalIgnoreCase),
             $"and it names the root it refused ({failure.Message})");
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The claim boundary is the volume, not the process. A run that tests through a junction needs a second
+    /// directory to build one in, and it has to sit on the volume the junction names rather than beside the
+    /// first.
+    /// </summary>
+    /// <remarks>
+    /// What is refused is a second claim on a volume that already holds one, which is what keeps a directory
+    /// from appearing beside the one every case writes under. Two volumes hold two directories, and neither is
+    /// reachable from the other's tree.
+    /// </remarks>
+    private static Task ASecondRunRootIsAllowedOnAnotherVolume(TestContext context)
+    {
+        ScratchWorkspace.RequireLinkVolume("a second volume to claim a run root on");
+
+        var claims = ScratchDirectory.Claims;
+
+        Check.Equal(2, claims.Count, "one run root was claimed per volume");
+        Check.Equal(ScratchWorkspace.VolumeRoot, claims[0].Parent, "the first is on the volume the run tests on");
+        Check.Equal(ScratchWorkspace.LinkVolumeRoot, claims[1].Parent, "the second is on the volume the link cases reach through");
+        Check.True(Directory.Exists(claims[1].FullPath), $"the second run root exists: {claims[1].FullPath}");
+
+        var failure = Check.Throws<InvalidOperationException>(
+            () => ScratchDirectory.ClaimRunRoot(ScratchWorkspace.VolumeRoot),
+            "a second claim on a volume that already holds one is refused");
+
+        Check.True(
+            failure.Message.Contains(ScratchWorkspace.VolumeRoot, StringComparison.OrdinalIgnoreCase),
+            $"and the refusal names the volume it refused ({failure.Message})");
 
         return Task.CompletedTask;
     }

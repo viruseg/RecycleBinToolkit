@@ -20,20 +20,22 @@ internal sealed class TestRunner
     /// Runs the cases selected by the command line.
     /// </summary>
     /// <param name="args">
-    /// <c>--scratch &lt;root&gt;</c> names the volume every case works on and is required. <c>--load</c>
-    /// selects the load group; without it, the regular group is selected. <c>--all</c> and no arguments
-    /// select every regular case, <c>--filter &lt;substring&gt;</c> narrows whichever group was selected to
-    /// the cases whose name contains the substring, and <c>--exclude &lt;substring&gt;</c> takes the cases
-    /// whose name contains it back out of that selection. The groups never overlap: no argument other than
-    /// <c>--load</c> runs a load case.
+    /// <c>--scratch &lt;root&gt;</c> names the volume every case works on and is required.
+    /// <c>--link-scratch &lt;root&gt;</c> names a second volume for the cases that reach one volume through a
+    /// junction, and is optional. <c>--load</c> selects the load group; without it, the regular group is
+    /// selected. <c>--all</c> and no arguments select every regular case, <c>--filter &lt;substring&gt;</c>
+    /// narrows whichever group was selected to the cases whose name contains the substring, and
+    /// <c>--exclude &lt;substring&gt;</c> takes the cases whose name contains it back out of that selection.
+    /// The groups never overlap: no argument other than <c>--load</c> runs a load case.
     /// </param>
     /// <param name="cases">All known cases; grouping, filtering and exclusion all happen inside the runner.</param>
     /// <returns>
     /// 0 when at least one case ran and passed. 1 when one failed, when the selection was empty, or
     /// when every selected case was skipped -- a run that produced no coverage is not a green run.
-    /// 2 when <c>--scratch</c> was left out or was given no root, when <c>--filter</c> or
-    /// <c>--exclude</c> was given nothing to match, or when <c>--exclude</c> was given no
-    /// <c>--all</c>, <c>--filter</c> or <c>--load</c> to narrow.
+    /// 2 when <c>--scratch</c> was left out or was given no root, when <c>--link-scratch</c> was given no
+    /// root or a root on the same volume as <c>--scratch</c>, when <c>--filter</c> or <c>--exclude</c> was
+    /// given nothing to match, or when <c>--exclude</c> was given no <c>--all</c>, <c>--filter</c> or
+    /// <c>--load</c> to narrow.
     /// </returns>
     internal static async Task<int> RunAsync(string[] args, IReadOnlyList<TestCase> cases)
     {
@@ -55,6 +57,27 @@ internal sealed class TestRunner
                 "name, so the path has to be the volume root and not a directory in it. A command line that cannot carry two " +
                 "leading backslashes may name a share as //server/share/ instead, which is read as the same volume.");
             Console.Error.WriteLine($"        {scratchProblem}");
+            return 2;
+        }
+
+        if (!TryParseLinkScratchRoot(args, out var linkRoot, out var linkProblem))
+        {
+            Console.Error.WriteLine(
+                "--link-scratch takes the root of a second volume for the cases that reach one volume through a junction, " +
+                "such as --link-scratch X:\\ or --link-scratch \\\\server\\share\\. It is optional, and a run without it skips " +
+                "those cases rather than working on one volume twice. The suite creates a directory of its own inside the root " +
+                "you name, so the path has to be the volume root and not a directory in it.");
+            Console.Error.WriteLine($"        {linkProblem}");
+            return 2;
+        }
+
+        if (linkRoot is not null && ScratchDirectory.SameVolume(scratchRoot, linkRoot))
+        {
+            Console.Error.WriteLine(
+                $"--scratch names {scratchRoot} and --link-scratch names {linkRoot}, which are one volume. " +
+                "The two roots have to be two volumes: the cases that use the link volume compare where a path is with where its " +
+                "Recycle Bin is, and one volume's bin named twice is the same bin measured twice — which is the answer those cases " +
+                "already know rather than the one they are asking for.");
             return 2;
         }
 
@@ -90,13 +113,13 @@ internal sealed class TestRunner
             return 2;
         }
 
-        // The run's own directory is claimed from here on, so everything below runs inside the try whose
-        // finally removes it — including the empty-selection return, which is an exit path like any other.
-        // A claim is created in the volume root, and one left there is a directory this suite made that
+        // The run's own directories are claimed from here on, so everything below runs inside the try whose
+        // finally removes them — including the empty-selection return, which is an exit path like any other.
+        // A claim is created in each volume root, and one left there is a directory this suite made that
         // nothing owns.
         try
         {
-            ScratchWorkspace.Configure(scratchRoot);
+            ScratchWorkspace.Configure(scratchRoot, linkRoot);
 
             var selected = Select(cases, group, filter, exclude);
 
@@ -107,6 +130,11 @@ internal sealed class TestRunner
             }
 
             Console.WriteLine($"scratch root {ScratchWorkspace.RunRoot}");
+
+            if (linkRoot is not null)
+            {
+                Console.WriteLine($"link scratch root {ScratchWorkspace.LinkRoot}");
+            }
             Console.WriteLine($"running {selected.Length} of {cases.Count} test(s)");
 
             DescribeExcluded(cases, group, filter, exclude);
@@ -399,6 +427,56 @@ internal sealed class TestRunner
 
         problem = "The command line does not name a volume to test on.";
         return false;
+    }
+
+    /// <summary>
+    /// Reads the <c>--link-scratch</c> root, the volume the cases that reach one volume through a junction
+    /// build on.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> with a <see langword="null"/> root when the flag was left out, which is a run
+    /// without those cases rather than a bad command line. <see langword="false"/> when the flag was given
+    /// nothing or given a path that is not a volume root.
+    /// </returns>
+    private static bool TryParseLinkScratchRoot(string[] args, out string? linkRoot, out string problem)
+    {
+        linkRoot = null;
+        problem = string.Empty;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i] is not "--link-scratch")
+            {
+                continue;
+            }
+
+            var value = i + 1 < args.Length ? args[i + 1] : null;
+
+            // The rule --scratch follows, for the same reason: a flag is not a path, and taking the next token
+            // either way would read a command line nobody wrote as the one they did.
+            if (string.IsNullOrWhiteSpace(value) || value.StartsWith('-'))
+            {
+                problem = value is null
+                    ? "--link-scratch is the last thing on the command line, so it has no volume root to work on."
+                    : $"--link-scratch is followed by \"{value}\", which is a flag rather than a volume root.";
+
+                return false;
+            }
+
+            try
+            {
+                linkRoot = VolumeRoot.Require(value, "--link-scratch");
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            {
+                problem = ex.Message;
+                return false;
+            }
+
+            return true;
+        }
+
+        return true;
     }
 
     /// <summary>

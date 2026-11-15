@@ -7,8 +7,10 @@ namespace RecycleBinToolkit.Tests.Infrastructure;
 /// </summary>
 /// <remarks>
 /// Its location is not decided here: <c>--scratch</c> names the volume, and <see cref="Configure"/> claims a
-/// directory of this run's own inside that volume. Nothing in the source names a path, so the suite cannot be
-/// pointed twice at the same directory and cannot delete a directory it did not create.
+/// directory of this run's own inside that volume. <c>--link-scratch</c>, when it is given, names a second
+/// volume and claims a directory of the run's own there, for the cases that reach one volume through a
+/// junction built on the other. Nothing in the source names a path, so the suite cannot be pointed twice at
+/// the same directory and cannot delete a directory it did not create.
 /// <para>
 /// Almost every case recycles a path on <see cref="Root"/>'s volume, and which of them can do so is a
 /// property of the machine rather than of this file: <see cref="Reason"/> asks the library once what the
@@ -22,7 +24,11 @@ internal sealed class ScratchWorkspace : IDisposable
 {
     private static ScratchDirectory? _runRoot;
 
+    private static ScratchDirectory? _linkRunRoot;
+
     private static RecycleBinAvailabilityReason? _reason;
+
+    private static RecycleBinAvailabilityReason? _linkReason;
 
     private const int MaxDeleteAttempts = 12;
 
@@ -82,13 +88,43 @@ internal sealed class ScratchWorkspace : IDisposable
     /// reads are on a path the case count does not justify repeating. What keeps the cache from answering
     /// about a volume the run has left is an invariant: this value is written in one place, that place reads
     /// <see cref="VolumeRoot"/>, and <see cref="VolumeRoot"/> throws while no run root is held.</item>
-    /// <item>A second <see cref="Configure"/> cannot bring in a different volume either way. It returns or
-    /// throws for every state in which a run root is already held. One volume per process, and with it one
-    /// answer.</item>
+    /// <item>A second <see cref="Configure"/> cannot change the volume this answers about. Naming the same
+    /// root returns, naming a different one throws, and the link volume is a field of its own with an answer
+    /// of its own. One answer per volume root.</item>
     /// </list>
     /// </remarks>
     /// <exception cref="InvalidOperationException"><see cref="Configure"/> has not run.</exception>
     public static RecycleBinAvailabilityReason Reason => _reason ??= RecycleBinVolumeState.Inspect(VolumeRoot).Reason;
+
+    /// <summary>
+    /// The root of the second volume <c>--link-scratch</c> named, with a trailing separator.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// <see cref="Configure"/> has not run with a link volume, which is every run whose command line left
+    /// <c>--link-scratch</c> out. A case that needs a second volume asks <see cref="RequireLinkVolume"/>
+    /// first.
+    /// </exception>
+    public static string LinkVolumeRoot => LinkRunRoot.Parent;
+
+    /// <summary>
+    /// Absolute path of the directory this run claimed on the link volume, with a trailing separator.
+    /// </summary>
+    /// <remarks>
+    /// A path, not a creator, for the same reason <see cref="Root"/> is one: the cases that assert something
+    /// about it read it before anything exists there.
+    /// </remarks>
+    public static string LinkRoot => PathUnder(LinkRunRoot, "link");
+
+    /// <summary>
+    /// What the library reports about <see cref="LinkVolumeRoot"/>: whether that volume uses a Recycle Bin
+    /// and, when it does not, why not.
+    /// </summary>
+    /// <remarks>
+    /// Cached and dropped on the same terms as <see cref="Reason"/>, which it does not share a field with:
+    /// the two are read about two volumes.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException"><see cref="Configure"/> has not run with a link volume.</exception>
+    public static RecycleBinAvailabilityReason LinkReason => _linkReason ??= RecycleBinVolumeState.Inspect(LinkVolumeRoot).Reason;
 
     /// <summary>
     /// Ends the calling case as not run when <see cref="Reason"/> is
@@ -147,6 +183,46 @@ internal sealed class ScratchWorkspace : IDisposable
     }
 
     /// <summary>
+    /// Ends the calling case as not run when the run was given no link volume.
+    /// </summary>
+    /// <param name="because">
+    /// What the case needed from the link volume, as a noun phrase the skip line can carry: it completes
+    /// "This case needs ___". Carried into that line because it is the only record left of a case that
+    /// produced no coverage.
+    /// </param>
+    /// <exception cref="CheckSkippedException"><c>--link-scratch</c> was not given.</exception>
+    public static void RequireLinkVolume(string because)
+    {
+        if (_linkRunRoot is null)
+        {
+            Check.Skip($"This run has no --link-scratch. This case needs {because}");
+        }
+    }
+
+    /// <summary>
+    /// Ends the calling case as not run unless <see cref="LinkReason"/> is
+    /// <see cref="RecycleBinAvailabilityReason.Enabled"/>.
+    /// </summary>
+    /// <param name="because">
+    /// What the case needed from the link volume, as a noun phrase the skip line can carry: it completes
+    /// "This case needs ___". Carried into that line because it is the only record left of a case that
+    /// produced no coverage.
+    /// </param>
+    /// <exception cref="CheckSkippedException">
+    /// The run has no link volume, or that volume has no Recycle Bin. The message names the volume,
+    /// <paramref name="because"/> and the reason the library gave.
+    /// </exception>
+    public static void RequireLinkVolumeRecycling(string because)
+    {
+        RequireLinkVolume(because);
+
+        if (LinkReason != RecycleBinAvailabilityReason.Enabled)
+        {
+            Check.Skip($"{LinkVolumeRoot} has no Recycle Bin ({LinkReason}). This case needs {because}");
+        }
+    }
+
+    /// <summary>
     /// The directory this run claimed, with a trailing separator. Printed by the runner so a reader can see
     /// where a run worked, and named in every message about a failed removal.
     /// </summary>
@@ -181,65 +257,86 @@ internal sealed class ScratchWorkspace : IDisposable
     public static string LongDirectoryRoot => PathUnder("long");
 
     /// <summary>
-    /// Claims this run's directory tree under <paramref name="volumeRoot"/>, once per process.
+    /// Claims this run's directory tree under <paramref name="volumeRoot"/>, and one under
+    /// <paramref name="linkVolumeRoot"/> when a second volume was named, once per volume.
     /// </summary>
     /// <param name="volumeRoot">The root of a volume the caller named, as <c>--scratch</c> was read.</param>
+    /// <param name="linkVolumeRoot">
+    /// The root of a second volume for the cases that reach one volume through a junction, as
+    /// <c>--link-scratch</c> was read, or <see langword="null"/> when the command line named no second
+    /// volume.
+    /// </param>
     /// <remarks>
     /// Called by the runner before a single case runs, so every case and every message about a path agrees
-    /// on where the run works. Calling it twice with different roots would be two runs sharing one process,
-    /// and the second would quietly write beside the first's tree — which is what
-    /// <see cref="ScratchDirectory.ClaimRunRoot"/> refuses underneath, and why the guard here is kept: it
-    /// says which root disagreed before the claim is asked at all.
-    /// <para>
-    /// Claiming also clears the cached <see cref="Reason"/>. Naming the same volume again is one run, so
-    /// that path keeps the answer already read for it, and on the path that does claim there is nothing to
-    /// clear — no run root held means no answer could have been read, because reading one needs
-    /// <see cref="VolumeRoot"/>. The line is there so that stays true of this method rather than of a
-    /// property of every caller, and a refactor that gave <see cref="Reason"/> a source other than the
-    /// machine would otherwise leave a stale value behind it.
-    /// </para>
+    /// on where the run works. Naming either volume again with the same root is one run and keeps the answer
+    /// already read about it; naming a different root where one is already claimed is refused here rather
+    /// than underneath, so the message says which root disagreed.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
-    /// A run root has already been claimed, and it is a different volume than the one named now.
+    /// A run root has already been claimed, and it is a different volume than <paramref name="volumeRoot"/>.
     /// </exception>
-    public static void Configure(string volumeRoot)
+    /// <exception cref="InvalidOperationException">
+    /// A link root has already been claimed, and it is a different volume than
+    /// <paramref name="linkVolumeRoot"/>.
+    /// </exception>
+    public static void Configure(string volumeRoot, string? linkVolumeRoot = null)
     {
-        if (_runRoot is not null)
+        if (_runRoot is null)
         {
-            if (!string.Equals(_runRoot.Parent, volumeRoot, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    $"This run already works on {_runRoot.Parent}, and --scratch now names {volumeRoot}. One process is one run on one volume.");
-            }
+            _runRoot = ScratchDirectory.ClaimRunRoot(volumeRoot);
+            _reason = null;
+        }
+        else if (!string.Equals(_runRoot.Parent, volumeRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"This run already works on {_runRoot.Parent}, and --scratch now names {volumeRoot}. One process is one run on one volume.");
+        }
 
+        if (linkVolumeRoot is null)
+        {
             return;
         }
 
-        _runRoot = ScratchDirectory.ClaimRunRoot(volumeRoot);
-        _reason = null;
+        if (_linkRunRoot is null)
+        {
+            _linkRunRoot = ScratchDirectory.ClaimRunRoot(linkVolumeRoot);
+            _linkReason = null;
+        }
+        else if (!string.Equals(_linkRunRoot.Parent, linkVolumeRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"This run already reaches {_linkRunRoot.Parent} through --link-scratch, and --link-scratch now names {linkVolumeRoot}. One process is one link volume.");
+        }
     }
 
     /// <summary>
-    /// Removes the directory this run claimed, along with everything the suite put in it.
+    /// Removes every directory this run claimed, along with everything the suite put in it.
     /// </summary>
     /// <remarks>
-    /// The whole tree rather than each part of it, so a run that failed half way through leaves nothing in
-    /// the volume root and the next run claims a fresh name rather than inheriting this one's leftovers.
+    /// The whole tree of each claim rather than each part of it, so a run that failed half way through leaves
+    /// nothing in either volume root and the next run claims fresh names rather than inheriting this one's
+    /// leftovers.
     /// <para>
-    /// The cached <see cref="Reason"/> is dropped here alongside the run root it was read about, though
-    /// dropping the run root alone would already make it unreadable. The line stays for the same reason it
-    /// stays in <see cref="Configure"/>: a value the machine could no longer contradict should not be sitting
-    /// in a field waiting for the run root to come back.
+    /// The claims are forgotten before any of them is removed, so a removal that throws still leaves nothing
+    /// recorded whose directory may already be gone. The cached reasons are dropped here alongside the roots
+    /// they were read about, though dropping the roots alone would already make them unreadable.
     /// </para>
     /// </remarks>
     public static void ReleaseRunRoot()
     {
-        var runRoot = _runRoot;
+        var claims = ScratchDirectory.Claims;
+
+        ScratchDirectory.ForgetClaims();
 
         _runRoot = null;
+        _linkRunRoot = null;
         _reason = null;
+        _linkReason = null;
 
-        runRoot?.Remove();
+        foreach (var claim in claims)
+        {
+            claim.Remove();
+        }
     }
 
     /// <summary>
@@ -272,13 +369,22 @@ internal sealed class ScratchWorkspace : IDisposable
     /// </summary>
     /// <param name="purpose">What the directory is for, such as <c>scratch</c> or <c>long</c>.</param>
     /// <returns>The full path, with a trailing separator.</returns>
-    private static string PathUnder(string purpose)
-    {
-        var runRoot = _runRoot ?? throw new InvalidOperationException(
-            $"{nameof(Configure)} has not run, so there is no directory to take '{purpose}' from.");
+    private static string PathUnder(string purpose) => PathUnder(
+        _runRoot ?? throw new InvalidOperationException(
+            $"{nameof(Configure)} has not run, so there is no directory to take '{purpose}' from."),
+        purpose);
 
-        return Path.Combine(runRoot.FullPath, purpose) + Path.DirectorySeparatorChar;
-    }
+    /// <summary>
+    /// The path of a named child of <paramref name="runRoot"/>, whether or not it exists.
+    /// </summary>
+    /// <param name="runRoot">A run root this process holds.</param>
+    /// <param name="purpose">What the directory is for, such as <c>scratch</c> or <c>link</c>.</param>
+    /// <returns>The full path, with a trailing separator.</returns>
+    private static string PathUnder(ScratchDirectory runRoot, string purpose) =>
+        Path.Combine(runRoot.FullPath, purpose) + Path.DirectorySeparatorChar;
+
+    private static ScratchDirectory LinkRunRoot => _linkRunRoot ?? throw new InvalidOperationException(
+        $"{nameof(Configure)} has not run with --link-scratch, so no second volume has been named. Pass --link-scratch <root> on the command line.");
 
     private bool _disposed;
 
