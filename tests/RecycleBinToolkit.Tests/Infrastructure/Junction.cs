@@ -15,7 +15,9 @@ internal static class Junction
     private const uint FileFlagOpenReparsePoint = 0x00200000;
     private const uint SetReparsePoint = 0x000900A4;
     private const uint MountPointTag = 0xA0000003;
-    private const int MountPointHeaderLength = 12;
+    private const int ReparseDataHeaderLength = 8;
+    private const int MountPointFieldsLength = 8;
+    private const int PathBufferOffset = ReparseDataHeaderLength + MountPointFieldsLength;
 
     internal static void Create(string linkPath, string targetPath)
     {
@@ -58,8 +60,8 @@ internal static class Junction
         var substitute = (@"\??\" + target).ToCharArray();
         var print = target.ToCharArray();
 
-        var dataLength = MountPointHeaderLength + ((substitute.Length + 1) + (print.Length + 1)) * 2;
-        var buffer = new byte[8 + dataLength];
+        var dataLength = MountPointFieldsLength + ((substitute.Length + 1) + (print.Length + 1)) * 2;
+        var buffer = new byte[ReparseDataHeaderLength + dataLength];
 
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(0), MountPointTag);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(4), (ushort)dataLength);
@@ -68,10 +70,9 @@ internal static class Junction
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(10), (ushort)(substitute.Length * 2));
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(12), (ushort)((substitute.Length + 1) * 2));
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(14), (ushort)(print.Length * 2));
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(16), 0);
 
-        Encoding.Unicode.GetBytes(substitute, 0, substitute.Length, buffer, 20);
-        Encoding.Unicode.GetBytes(print, 0, print.Length, buffer, 20 + (substitute.Length + 1) * 2);
+        Encoding.Unicode.GetBytes(substitute, 0, substitute.Length, buffer, PathBufferOffset);
+        Encoding.Unicode.GetBytes(print, 0, print.Length, buffer, PathBufferOffset + (substitute.Length + 1) * 2);
 
         if (!DeviceIoControl(directory, SetReparsePoint, buffer, buffer.Length, null, 0, out _, IntPtr.Zero))
         {

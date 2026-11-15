@@ -545,7 +545,7 @@ internal static class NativeRecycleRunner
     /// </remarks>
     private static bool TryRecycle(RecycleTarget target, Dictionary<string, (string Path, BinStemSequencer Stems)> bins, int version, CancellationToken cancellationToken, out RecycleFailure<RecyclePathFailureStage>? failure)
     {
-        var root = Path.GetPathRoot(target.FullPath);
+        var root = target.BinVolumeRoot;
 
         if (string.IsNullOrEmpty(root))
         {
@@ -621,8 +621,8 @@ internal static class NativeRecycleRunner
                 return false;
             }
 
-            // The payload was named from the bin directory of the root taken from this very target,
-            // so it sits inside the right bin on the right volume by construction.
+            // The payload was named from the bin of the volume that holds the item, so the move is a rename
+            // within one volume whenever the resolver answered, and the record keeps the caller's spelling.
             failure = null;
             return true;
         }

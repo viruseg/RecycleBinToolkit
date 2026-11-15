@@ -31,13 +31,18 @@ internal readonly struct RecycleTarget
     /// <see langword="null"/> by everything a caller recycles, and named by the one caller that moves an
     /// item from somewhere it will never be restored from.
     /// </param>
-    internal RecycleTarget(string inputPath, string fullPath, FileAttributes attributes, long size, string? recordPath = null)
+    /// <param name="binRoot">
+    /// The root of the volume whose Recycle Bin the item belongs in, where that is not the volume the path is
+    /// spelled on. Left <see langword="null"/> when nothing resolved it.
+    /// </param>
+    internal RecycleTarget(string inputPath, string fullPath, FileAttributes attributes, long size, string? recordPath = null, string? binRoot = null)
     {
         InputPath = inputPath;
         FullPath = fullPath;
         Attributes = attributes;
         Size = size;
         _recordPath = recordPath;
+        BinVolumeRoot = binRoot ?? Path.GetPathRoot(fullPath) ?? string.Empty;
     }
 
     private readonly string? _recordPath;
@@ -64,6 +69,17 @@ internal readonly struct RecycleTarget
     public string RecordPath => _recordPath ?? FullPath;
 
     /// <summary>
+    /// The root of the volume whose Recycle Bin the item belongs in, which is the volume that physically
+    /// holds it rather than the one its path is spelled on.
+    /// </summary>
+    /// <remarks>
+    /// Resolved once during validation, because the answer decides both the bin the item is moved into and
+    /// the volume whose setting the caller's policy is asked about. A path with no link on it answers the
+    /// root it is spelled on, so the two agree in the ordinary case.
+    /// </remarks>
+    public string BinVolumeRoot { get; }
+
+    /// <summary>
     /// Returns a copy that names <paramref name="recordPath"/> in its record, leaving the path the item is
     /// moved from alone.
     /// </summary>
@@ -74,7 +90,7 @@ internal readonly struct RecycleTarget
     /// the volume's short form of the path, which may be a short form of the file's own name.
     /// </remarks>
     internal RecycleTarget WithRecordPath(string recordPath) =>
-        new(InputPath, FullPath, Attributes, Size, recordPath);
+        new(InputPath, FullPath, Attributes, Size, recordPath, BinVolumeRoot);
 
     /// <summary>
     /// Returns a copy that has been moved to <paramref name="stagedFullPath"/>, for both spellings.
@@ -85,7 +101,7 @@ internal readonly struct RecycleTarget
     /// occupies is a restore that puts a file back over something else.
     /// </remarks>
     internal RecycleTarget WithStagedPath(string stagedFullPath) =>
-        new(InputPath, stagedFullPath, Attributes, Size, stagedFullPath);
+        new(InputPath, stagedFullPath, Attributes, Size, stagedFullPath, BinVolumeRoot);
 
     /// <summary>
     /// What the filesystem said about the path when it was validated.

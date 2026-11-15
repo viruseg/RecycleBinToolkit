@@ -74,6 +74,7 @@ internal static class RecycleBatch
         var targets = new List<RecycleTarget>(filePaths.Count);
         var failures = new List<RecycleFailure<RecyclePathFailureStage>>();
         var permanentlyDeleted = new List<string>();
+        var resolver = new BinVolumeResolver();
 
         for (var i = 0; i < filePaths.Count; i++)
         {
@@ -87,7 +88,7 @@ internal static class RecycleBatch
                 cancellationToken.ThrowIfCancellationRequested();
             }
 
-            var failure = TryCreateTarget(filePaths[i], out var target);
+            var failure = TryCreateTarget(filePaths[i], resolver, out var target);
             if (failure is null)
             {
                 targets.Add(target!.Value);
@@ -125,7 +126,7 @@ internal static class RecycleBatch
     /// apart.
     /// </para>
     /// <para>
-    /// Each distinct volume root is inspected once, so a batch of twenty thousand files on one volume
+    /// Each distinct bin volume root is inspected once, so a batch of twenty thousand files on one volume
     /// pays for one probe rather than twenty thousand, and nothing is remembered afterwards: a mount or a
     /// policy can change between two operations, and a remembered answer would be a stale one presented
     /// as a current one. Deciding per root is also what keeps one unusable volume from deciding the
@@ -161,7 +162,7 @@ internal static class RecycleBatch
 
         foreach (var target in targets)
         {
-            var root = Path.GetPathRoot(target.FullPath) ?? string.Empty;
+            var root = target.BinVolumeRoot;
 
             if (!byVolumeRoot.TryGetValue(root, out var group))
             {
@@ -307,7 +308,7 @@ internal static class RecycleBatch
         }
     }
 
-    private static RecycleFailure<RecyclePathFailureStage>? TryCreateTarget(string? rawPath, out RecycleTarget? target)
+    private static RecycleFailure<RecyclePathFailureStage>? TryCreateTarget(string? rawPath, BinVolumeResolver resolver, out RecycleTarget? target)
     {
         target = null;
 
@@ -340,7 +341,12 @@ internal static class RecycleBatch
             return new RecycleFailure<RecyclePathFailureStage>(rawPath, 0, 0, RecyclePathFailureStage.PathValidation);
         }
 
-        target = new RecycleTarget(rawPath, fullPath, attributes, size);
+        target = new RecycleTarget(
+            rawPath,
+            fullPath,
+            attributes,
+            size,
+            binRoot: resolver.Resolve(fullPath, Path.GetPathRoot(fullPath) ?? string.Empty));
         return null;
     }
 
