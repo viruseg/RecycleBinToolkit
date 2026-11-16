@@ -12,26 +12,37 @@ dotnet build src/RecycleBinToolkit/RecycleBinToolkit/RecycleBinToolkit.csproj
 dotnet build tests/RecycleBinToolkit.Tests/RecycleBinToolkit.Tests.csproj
 dotnet build RecycleBinToolkit.Example/RecycleBinToolkit.Example.csproj
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --all
+dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --link-scratch Y:\ --all
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --filter NativeBinSuite
 dotnet run --project tests/RecycleBinToolkit.Tests -- --scratch X:\ --load
 ```
 
 Build the test project after any change to `tests/RecycleBinToolkit.Tests/Docs/ReadmeExamples.cs` —
 see the rule below. The suites change machine state: they write into a directory they create inside the
-volume `--scratch` names, and they empty the Recycle Bin. One thing leaves that directory and it is not a
+volume `--scratch` names, and, when `--link-scratch` names a second volume, into a directory they create
+inside that one too. They empty the Recycle Bin. One thing leaves those directories and it is not a
 test's doing — the empty itself. The section below is the whole rule.
 
 `dotnet run --project RecycleBinToolkit.Example` is an interactive loop, not a check: it prompts for a
 volume and empties that volume's Recycle Bin. Build it to prove the example compiles; do not run it from a
 script.
 
-## --scratch, and asking which volume
+## --scratch, --link-scratch, and asking which volumes
 
 `--scratch <root>` is required, and every run needs one. It names the **root of a volume** — `X:\`, or
 `\\server\share\`, or the forward-slash spelling `//server/share` for a command line that cannot carry two
 leading backslashes. A directory inside a volume is refused, as is a bare drive letter: both resolve
 against something other than the volume they name. Without the flag the runner runs nothing and exits 2,
 because the suite writes files and deletes directories and neither is worth guessing at.
+
+`--link-scratch <root>` is optional, and names the root of a **second** volume for the cases that reach
+one volume's bytes through a junction. It is read under the same rules as `--scratch`: a volume root, not
+a directory in one, refused with exit 2 when it is missing, when it names a directory, or when it names
+the same volume as `--scratch` — a case compares where a path is with where its bin is, and one volume's
+bin named twice is the answer those cases already know. Inside it the run claims a directory of its own
+named `{guid}\link\`, and every fixture a linked case creates is beneath that or beneath the run root, so
+a link never points at a directory nobody claimed. Without the flag the cases that need a second volume
+skip and the rest of the run is unaffected.
 
 **Any volume is a legal answer.** `--scratch` does not require a volume that recycles. A run on a volume
 with no Recycle Bin runs the cases that are about such a volume and skips the ones that are not, so it is
@@ -56,7 +67,7 @@ asking even when the answer looks obvious, and it is asked before the run, not a
 Inside the volume root the run claims `X:\{guid}` and takes `scratch` and `long` beneath it. The name is
 generated and checked against what is already there, because `Directory.CreateDirectory` reports success
 for a directory somebody else already had — a fixed name would let a case write into it and then delete it.
-Removal is of the claimed path only, at the end of the run. No test path is derived from the repository,
+Removal is of the claimed paths only, at the end of the run. No test path is derived from the repository,
 so no test writes inside the working copy.
 
 ## Test groups
@@ -73,12 +84,18 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 278 registered cases, of which four are load cases, so `--all` runs 274 of them. The rest is
+There are 290 registered cases, of which four are load cases, so `--all` runs 286 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
-cases that recycle one and runs the cases that are about a volume with no bin. **259 pass and 15 skip**,
-with nothing failing, on a volume that has a bin — measured by one `--all` on `E:\` on 2026-11-03.
-Thirteen of the fifteen name a volume with no Recycle Bin, or one whose answer is a doubt rather than a
-refusal; two are the 8.3 cases.
+cases that recycle one and runs the cases that are about a volume with no bin. **271 pass and 15 skip**,
+with nothing failing, on a volume that has a bin, with `D:\` named as the second volume —
+measured by one `--all --scratch E:\ --link-scratch D:\` on 2026-11-16. Thirteen of the fifteen name a
+volume with no Recycle Bin, or one whose answer is a doubt rather than a refusal; two are the 8.3 cases.
+
+**The same run without `--link-scratch` is 262 pass and 24 skip**, also nothing failing, on `E:\` on the
+same date. The nine extra skips are the eight `LinkSuite` cases that need a target on another volume and
+`ScratchSuite.ASecondRunRootIsAllowedOnAnotherVolume`; the ninth `LinkSuite` case builds its junction
+inside the one volume and runs either way. The two figures belong to their own command lines and are
+nine cases apart by construction — quote neither as the other.
 
 **The same shape measured on `D:\` was 249 pass and 13 skip**, also nothing failing, on 2026-10-13. Two of
 its skips have been joined by the two read-only `DeletePermanently` cases this work added, which skip on any
@@ -122,6 +139,7 @@ registered as `EmptySuite` cases rather than as `ProgressSuite` ones.
 ```
 RecycleBin            the entry point: moves items in, resolves volumes, reports
    ├─ RecycleBatch           validates, de-duplicates, refuses what cannot be recycled, recycles on the pool
+   ├─ BinVolumeResolver      which volume holds the bytes a path reaches, asked once per target
    ├─ RecycleBinVolumeSet   which volumes an operation covers
    ├─ RecycleBinVolumeState  volume table + registry facts
    └─ RecycleBinVolumePolicy the decision, separated so it can be checked exhaustively
@@ -132,8 +150,9 @@ the engine, over whatever the entry point resolved
    ├─ NativeIndexFile         version 1 and 2 records, read and written
    ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
    ├─ NativeRecycleRunner     record first, then the move; retries are per path
+   ├─ NativeDirectoryMove     a directory rename whose two spellings name different roots but one volume
    ├─ ShortPathResolver       the 8.3 alias, when the volume has one
-   ├─ LongPathStager          $RCW-<guid>\ on the item's own volume, for a path the record cannot name
+   ├─ LongPathStager          $RCW-<guid>\ on the volume that holds the item, for a path the record cannot name
    ├─ NativeBinLister         pairs from the walk, every volume at once; records only under PreloadItemDetails
    └─ NativeBinEmptier        payload first, then the record, counted from the walk; one group of volumes per disk
 
@@ -181,6 +200,27 @@ failure it would not have reported on version 2, after spending the attempt budg
 not carry a `LongPathFailureAction` because there is no caller-visible way to make that entry land
 somewhere else: the caller's answer to a refused restore is to raise the conflict policy, which stops the
 merge before a leftover exists.
+
+**The bin is the volume that holds the bytes, and one answer decides all three uses.** `BinVolumeResolver`
+opens the path, asks `GetFinalPathNameByHandle` for the volume-GUID name, reduces that to the volume, and
+maps the volume to its drive-letter mount point. The open carries `FILE_FLAG_OPEN_REPARSE_POINT`, so the
+final component is not followed while every component above it is — which is the whole discrimination: a
+path *through* a junction answers the volume its bytes are on, and a path that *is* a junction answers the
+volume the link is stored on. The answer is kept on `RecycleTarget.BinVolumeRoot` during validation and read
+from there by the volume gate, the bin directory and the staging directory, so those three cannot disagree
+about which volume they are talking about. It is asked once per target, and the mount-point answers are
+remembered only for the length of the call that asked: a mount can change between calls and a stale answer
+would send an item to a bin that is no longer there. A refusal answers the root the path is spelled on,
+which is what the library did before it could ask at all.
+
+**`Directory.Move` refuses a pair .NET takes for two volumes.** It compares the two roots as strings before
+the file system is asked, and a directory reached through a junction is spelled on one root while its bytes
+are on another — so the move is refused with `IOException` even though the rename would stay within one
+volume. `NativeDirectoryMove.Move` compares the same two roots and, where they differ, calls `MoveFileW`
+instead, which resolves both names and renames what it finds. Where the two really are different volumes the
+OS answers `ERROR_NOT_SAME_DEVICE` and the directory stays where it was, because a copy is not a recycle.
+Five sites go through it: the recycle's move, the staging move and its put-back, the restore's place, and
+the merge's move.
 
 **Record first, then the move.** A crash between the two leaves the caller's file exactly where it
 was and an index with no payload — litter the next empty collects. The other order leaves data that
@@ -573,24 +613,41 @@ reports it rather than swallowing it. A junction whose target exists is not walk
 its contents stay. What this is *not* is a way for the empty to leave a payload behind: the refusal keeps the
 record, so no payload outlives it. That was the suspicion, and the measurement is what dismissed it.
 
+**A link to a share, and a link to a volume mounted only in a folder, answer no volume.** Windows names no
+volume GUID for a share, and a volume with no drive letter has no root `RecycleBinVolumeState` can inspect.
+A path through a link to either keeps the behavior the library had before it could ask:
+
+| The path is through a link whose target is | What the caller gets |
+| --- | --- |
+| A network share | The bin of the volume the path is spelled on. A file is copied into it; a directory is refused at `Performing`, because neither `Directory.Move` nor `MoveFile` renames a directory across volumes and a recycle does not copy one. |
+| A volume mounted in a folder | The same fallback and the same outcome, for the same reason: the volume is the one the path is spelled on. |
+
+The entry still names the caller's path, so a restore puts the item back through the link. This is a
+property of the two shapes rather than a setting: there is no second answer Windows could give.
+
 ---
 
 ## What the tests may touch
 
-No file a test creates is ever outside the working directory `--scratch` names. No test acts on a path it
-did not derive from there: `--scratch` names the volume, the run claims `X:\{guid}` inside it, and every
-case writes beneath that. A drive letter or a share written into a case is data for a path predicate —
-`NormalizeVolumeRoot(@"W:\")` decides what a string means and touches nothing — and no case creates,
-recycles, empties or deletes anything on such a path. `ScratchDirectory.Claim(parent)` refuses any parent
-that is not under the claimed root, and it refuses after resolving the path, so `..` cannot escape and a
-forward-slash spelling is taken rather than turned away.
+No file a test creates is ever outside the working directories `--scratch` and `--link-scratch` name. No
+test acts on a path it did not derive from there: `--scratch` names the volume, the run claims
+`X:\{guid}` inside it, and every case writes beneath that. `--link-scratch` names a second volume, the run
+claims `Y:\{guid}\link\` inside that one, and the cases that need a target on another volume write only
+there — so a linked fixture points at a directory somebody claimed and not at a user's tree. A drive letter
+or a share written into a case is data for a path predicate — `NormalizeVolumeRoot(@"W:\")` decides what a
+string means and touches nothing — and no case creates, recycles, empties or deletes anything on such a
+path. `ScratchDirectory.Claim(parent)` refuses any parent that is not under the claimed root, and it
+refuses after resolving the path, so `..` cannot escape and a forward-slash spelling is taken rather than
+turned away.
 
 Where a case needs a volume that is not there, it asks the operating system for a letter nothing is
 mounted on — `AbsentVolume.Letter()` — and re-checks that it is still absent immediately before the call.
 Where a case needs a volume that has no Recycle Bin, it asks the library what the volume it was given is —
 `ScratchWorkspace.Reason` — and skips when the answer is the other kind, in the shape
-`RequireNonRecycling(because)` and `RequireRecycling(because)` hold between them. A test does not test
-what is not on the disk.
+`RequireNonRecycling(because)` and `RequireRecycling(because)` hold between them. A case that needs the
+second volume asks for it the same way, through `RequireLinkVolume(because)` and
+`RequireLinkVolumeRecycling(because)`, and both skip when the run has no `--link-scratch`. A test does not
+test what is not on the disk.
 
 A third one is worth knowing about, because it looks like a leftover and is not:
 `NoRecycleBinAction.AllowIndeterminate` hands a path to the engine on a volume the library reports no
@@ -601,12 +658,15 @@ only one, and it empties the directory and removes it again in a `finally`, and 
 case that made it. A run on a bin-less volume that leaves a `$RECYCLE.BIN` behind has not found a bug;
 it has found a run of a suite where that case did not finish.
 
-Three things leave the working directory and are not the tests' doing: `EmptySuite` emptying the
-volume's Recycle Bin, which is the only way to assert that an entry really left; the empty itself; and a
-staging directory the library creates under the volume root when a long path cannot be recorded. A case
-that provokes the third deletes it afterwards, which is cleanup rather than creation — the rule that a
-test creates nothing outside `--scratch` is untouched by it, and the directory exists only because the
-library needs a short path somewhere on the item's own volume.
+Four things leave the working directories and are not the tests' doing: `EmptySuite` emptying the run
+volume's Recycle Bin, which is the only way to assert that an entry really left; the empty itself; a
+staging directory the library creates under a volume root when a long path cannot be recorded, which is the
+root the item's bytes are on and therefore can be the link volume's; and the entry a link case puts in the
+link volume's bin, which it restores before it ends, found by the path its record names. **Nothing empties
+the link volume's bin** — an entry another run left there is not a case's to remove, and a case only
+recycles its own. A case that provokes a staging directory deletes it afterwards, which is cleanup rather
+than creation — the rule that a test creates nothing outside the two roots is untouched by it, and the
+directory exists only because the library needs a short path somewhere on the volume that holds the item.
 
 **A directory recycle can be refused by the machine rather than by the library.** Five `--all` runs on
 `E:\` on 2026-11-03: four printed nothing failing, and one failed two cases that recycle a freshly created

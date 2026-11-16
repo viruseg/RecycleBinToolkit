@@ -37,7 +37,7 @@ public enum LongPathFailureAction
     DeletePermanently,
 
     /// <summary>
-    /// Move the item to a short path on its own volume and recycle it from there.
+    /// Move the item to a short path on the volume that holds it and recycle it from there.
     /// </summary>
     /// <remarks>
     /// The move is a rename, so it costs nothing whatever the file size, and the item lands in the Recycle

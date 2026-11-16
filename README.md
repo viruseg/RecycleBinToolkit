@@ -180,6 +180,31 @@ Recycles a batch. This overload **never throws** for a per-item failure.
 **Exceptions** `ArgumentNullException` when `filePaths` is null, `OperationCanceledException` when the
 token is cancelled. Per-item problems are data, not exceptions.
 
+### Paths that reach their bytes through a link
+
+A junction, a symbolic link or a mount point makes one volume's path name another volume's bytes. Such a
+path is recycled the way Explorer recycles it: into the Recycle Bin of the volume that holds the bytes.
+
+| The path | Where its entry goes |
+| --- | --- |
+| Reached through a link | The volume that holds the bytes. `OriginalPath` is the path the caller passed, so a later restore comes back through the same link. |
+| The link itself | The volume the link is stored on. The target is untouched, and so is everything inside it. |
+| With no link on it | The volume the path is spelled on. |
+
+The rest of the API follows from that one answer:
+
+| Operation | What it does with such a path |
+| --- | --- |
+| `RecycleAsync` | The volume that holds the bytes is the one whose setting decides whether the path is recyclable. |
+| `GetItemsAsync` | The entry is in the group of the volume that holds the bytes, and `VolumeRoot` names that volume. |
+| `RestoreAsync` | Puts the item back at the recorded path, which still leads through the link — so the bytes land on the volume that holds them. |
+| `EmptyAsync` | The entry leaves with the bin it is in: the volume that holds the bytes. |
+
+Two shapes have no volume the library can inspect, so they keep the behavior they had. A link whose
+target is a network share, and a link whose target is a volume mounted in a folder rather than on a drive
+letter: a file behind one is copied into the bin of the volume the path is spelled on, and a directory
+behind one is refused and left in place.
+
 ### `GetItemsAsync`
 
 Lists the Recycle Bin.
@@ -263,8 +288,9 @@ Whether the Recycle Bin is in use for one volume.
 **Returns** a `RecycleBinStatus`. **Throws** `ArgumentException` for a null or blank path.
 
 `RecycleAsync` calls this before a batch and refuses a path whose volume is not `Enabled`, unless
-`NoRecycleBinAction` says otherwise. Nothing is cached: a volume mounted or a policy applied after one
-call is seen by the next.
+`NoRecycleBinAction` says otherwise. The volume it asks about is the one that holds the path's bytes —
+see [Paths that reach their bytes through a link](#paths-that-reach-their-bytes-through-a-link). Nothing
+is cached: a volume mounted or a policy applied after one call is seen by the next.
 
 ### Progress
 
@@ -581,7 +607,7 @@ applies at all.
 | --- | --- |
 | `Throw` | Default. The path is refused, reported at `LongPathNotRecyclable`, and left in place. Raises `PathTooLongException` on `RecycleAsync(string?, …)` only when `ThrowOnError` is on. |
 | `DeletePermanently` | The file is deleted permanently by the library itself and listed in `PermanentlyDeletedPaths`, never in `RecycledPaths`. A file system that refuses reports `PermanentDeleteFailed` and leaves the file in place. |
-| `ShortenPathAndRecycle` | The item is moved to a short path on its own volume — a rename, so nothing is copied — and recycled from there. |
+| `ShortenPathAndRecycle` | The item is moved to a short path on the volume that holds it — a rename, so nothing is copied — and recycled from there. |
 
 `ShortenPathAndRecycle` trades the original location in the Recycle Bin: the entry shows the staging
 path the item was deleted from, and restoring it later puts it there rather than where it lived. An

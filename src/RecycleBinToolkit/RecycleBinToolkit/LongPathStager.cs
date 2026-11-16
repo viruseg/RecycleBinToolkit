@@ -4,11 +4,11 @@ using System.Runtime.Versioning;
 namespace RecycleBinToolkit;
 
 /// <summary>
-/// Holds long-path items at short paths on their own volume, so they can be recycled at all.
+/// Holds long-path items at short paths on the volume that holds them, so they can be recycled at all.
 /// </summary>
 /// <remarks>
 /// A record with a fixed path field can name about 260 characters, and the item has to be presented at a
-/// path that fits. Because the staging directory sits on the item's own volume, moving there is a rename:
+/// path that fits. Because the staging directory sits on that same volume, moving there is a rename:
 /// no bytes are copied, whatever the file size, and the item lands in the Recycle Bin of the volume it
 /// came from.
 /// <para>
