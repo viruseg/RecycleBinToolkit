@@ -108,7 +108,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsSayWhatHappenedWhenTheRecordIsNotARecord), NativeLazyDetailsSayWhatHappenedWhenTheRecordIsNotARecord),
         new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsCarryTheFileSystemCode), NativeLazyDetailsCarryTheFileSystemCode),
         new TestCase("NativeBinSuite." + nameof(NativeEnumerationPairsHalvesWhateverCaseTheyAreWrittenIn), NativeEnumerationPairsHalvesWhateverCaseTheyAreWrittenIn),
-        new TestCase("NativeBinSuite." + nameof(NativeListingReportsAZeroSizeForARecycledDirectory), NativeListingReportsAZeroSizeForARecycledDirectory),
+        new TestCase("NativeBinSuite." + nameof(NativeListingReportsTheFilesBytesForARecycledDirectory), NativeListingReportsTheFilesBytesForARecycledDirectory),
         new TestCase("NativeBinSuite." + nameof(LoadItemDetailsReadsEveryPendingRecord), LoadItemDetailsReadsEveryPendingRecord),
         new TestCase("NativeBinSuite." + nameof(LoadItemDetailsSkipsWhatTheListingAlreadyRead), LoadItemDetailsSkipsWhatTheListingAlreadyRead),
         new TestCase("NativeBinSuite." + nameof(LoadItemDetailsLeavesAnUnreadableRecordCold), LoadItemDetailsLeavesAnUnreadableRecordCold),
@@ -1530,7 +1530,7 @@ internal static class NativeBinSuite
         var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, GetItemsOptions.Default, context.CancellationToken), directory);
 
         Check.True(item.IsDirectory, "the listing says it is a directory");
-        Check.Equal(0, item.Size, "with the size of zero the record carries for one");
+        Check.Equal(Content.LongLength, item.Size, "with the bytes of the file inside it, which the listing measured");
         Check.True(Directory.Exists(item.PayloadPath), $"and the payload is a directory ({item.PayloadPath})");
 
         workspace.Dispose();
@@ -3061,24 +3061,23 @@ using var workspace = new ScratchWorkspace();
     }
 
 /// <summary>
-    /// A recycled directory is reported as zero bytes, and the enumeration that builds the item says so before
-    /// any listing exists.
+    /// A recycled directory is enumerated as zero bytes, because a directory's own length is not what it
+    /// occupies, and the listing that builds the item reports the bytes of the file inside it.
     /// </summary>
     /// <remarks>
-    /// This pins <see cref="NativeBinEntry"/>'s own contract rather than repeating what
-    /// <c>NativeListingReportsARecycledDirectoryAsADirectory</c> already asserts about the listing. It cannot
-    /// show that the <c>IsDirectory</c> guard in the walk is load-bearing either: NTFS
-    /// <c>FindFirstFile</c> reports zero for a directory regardless, so removing that guard would leave this
-    /// green. The guard stays as defensiveness, and this is here because the figure is part of what the type
-    /// promises.
+    /// The first figure is <see cref="NativeBinEntry"/>'s own contract and the second is what the listing
+    /// measured, which <c>NativeListingReportsARecycledDirectoryAsADirectory</c> asserts as well. The case
+    /// cannot show that the <c>IsDirectory</c> guard in the walk is load-bearing: NTFS <c>FindFirstFile</c>
+    /// reports zero for a directory regardless, so removing that guard would leave this green. The guard stays
+    /// as defensiveness, and this is here because the figure is part of what the type promises.
     /// </remarks>
-    private static async Task NativeListingReportsAZeroSizeForARecycledDirectory(TestContext context)
+    private static async Task NativeListingReportsTheFilesBytesForARecycledDirectory(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
         workspace.Recreate();
         ScratchWorkspace.RequireRecycling("a Recycle Bin for a directory to be listed out of");
 
-        var directory = Path.Combine(ScratchWorkspace.Root, "zero-sized-" + RunTag);
+        var directory = Path.Combine(ScratchWorkspace.Root, "sized-directory-" + RunTag);
         Directory.CreateDirectory(directory);
         File.WriteAllBytes(Path.Combine(directory, "inside.bin"), Content);
 
@@ -3094,7 +3093,7 @@ using var workspace = new ScratchWorkspace();
         Check.Equal(0, enumerated.PayloadLength, "with no size of its own for the directory record to carry");
 
         var item = FindListed(RecycleBin.GetItemsAsync(ScratchWorkspace.VolumeRoot, GetItemsOptions.Default, context.CancellationToken), directory);
-        Check.Equal(0, item.Size, "and the listing reports the same zero size");
+        Check.Equal(Content.LongLength, item.Size, "and the listing reports the bytes of the file inside it");
 
         workspace.Dispose();
     }

@@ -655,7 +655,7 @@ One entry in the Recycle Bin. Immutable.
 | --- | --- | --- |
 | `OriginalPath` | `string` | Full path the entry was deleted from. Read from the entry's record on first access — see [Lazy fields](#lazy-fields). |
 | `DeletedAt` | `DateTimeOffset` | When it was deleted, in the local offset. Read from the same record, on the same first access. |
-| `Size` | `long` | Size in bytes. `0` for a directory — its contents are not measured. |
+| `Size` | `long` | Size in bytes. For a directory, the total length of the files beneath it; `0` when the listing did not measure it. |
 | `IsDirectory` | `bool` | Whether the entry is a directory. |
 
 There is no `Name`: it is the last component of `OriginalPath`. An entry is put back by handing it to

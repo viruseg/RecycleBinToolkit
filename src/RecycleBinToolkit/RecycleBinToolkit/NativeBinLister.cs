@@ -6,9 +6,11 @@ namespace RecycleBinToolkit;
 /// Reads a volume's Recycle Bin by enumerating its entries.
 /// </summary>
 /// <remarks>
-/// What an item is — a directory or a file, and how large it is — comes from the bin directory itself, which
-/// is what makes a listing of eighteen thousand entries cost one walk rather than eighteen thousand reads.
-/// The two fields that are only in the record are not read at all unless someone asks for them, or unless
+/// Whether an item is a directory or a file, and a file's size, come from the bin directory itself, which is
+/// what makes a listing of eighteen thousand files cost one walk rather than eighteen thousand reads. A
+/// directory's size is not in the bin directory, so each one costs a recursive walk of its payload; the flat
+/// walk is still the whole of a bin with no directory in it. The two fields that are only in the record are
+/// not read at all unless someone asks for them, or unless
 /// <see cref="RecycleBinOptions.PreloadItemDetails"/> asks for all of them up front.
 /// <para>
 /// Volumes are read together, each on its own thread. A Recycle Bin is one directory per volume, so two
@@ -166,6 +168,8 @@ internal static class NativeBinLister
             return [];
         }
 
+        var sizes = MeasurePayloads(pairs, volumeRoot, cancellationToken);
+
         if (!options.PreloadItemDetails)
         {
             // Nothing is read here. Every item answers its own first access to its details, and a listing
@@ -175,13 +179,13 @@ internal static class NativeBinLister
             for (var index = 0; index < pairs.Count; index++)
             {
                 var pair = pairs[index];
-                described[index] = new RecycleBinItem(pair.IndexPath!, pair.PayloadPath!, pair.PayloadLength, pair.PayloadIsDirectory);
+                described[index] = new RecycleBinItem(pair.IndexPath!, pair.PayloadPath!, sizes[index], pair.PayloadIsDirectory);
             }
 
             return described;
         }
 
-        return Preload(pairs, volumeRoot, failures, cancellationToken);
+        return Preload(pairs, sizes, volumeRoot, failures, cancellationToken);
     }
 
     /// <summary>
@@ -204,6 +208,7 @@ internal static class NativeBinLister
     /// </remarks>
     private static RecycleBinItem?[] Preload(
         List<NativeBinEntry> pairs,
+        long[] sizes,
         string volumeRoot,
         List<RecycleFailure<ListFailureStage>> failures,
         CancellationToken cancellationToken)
@@ -224,7 +229,7 @@ internal static class NativeBinLister
             var item = RecycleBinItem.Warmed(
                 pair.IndexPath!,
                 pair.PayloadPath!,
-                pair.PayloadLength,
+                sizes[index],
                 pair.PayloadIsDirectory,
                 out var hResult);
 
@@ -243,5 +248,73 @@ internal static class NativeBinLister
 
         failures.AddRange(unreadable);
         return warmed;
+    }
+
+    /// <summary>
+    /// One size per pair, in the pairs' order: the walk's own length for a file, and the bytes beneath the
+    /// payload for a directory.
+    /// </summary>
+    /// <remarks>
+    /// A bin holding no directory takes the lengths the flat walk already read and stops, which is the whole of
+    /// the work for a listing of files.
+    /// </remarks>
+    private static long[] MeasurePayloads(
+        List<NativeBinEntry> pairs,
+        string volumeRoot,
+        CancellationToken cancellationToken)
+    {
+        var sizes = new long[pairs.Count];
+
+        for (var index = 0; index < pairs.Count; index++)
+        {
+            sizes[index] = pairs[index].PayloadLength;
+        }
+
+        var measuresSomething = false;
+
+        for (var index = 0; index < pairs.Count; index++)
+        {
+            if (pairs[index].PayloadIsDirectory)
+            {
+                measuresSomething = true;
+                break;
+            }
+        }
+
+        if (!measuresSomething)
+        {
+            return sizes;
+        }
+
+        var degree = VolumeSeekPenalty.DegreeOfParallelism(volumeRoot);
+
+        if (degree <= 1)
+        {
+            for (var index = 0; index < pairs.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (pairs[index].PayloadIsDirectory)
+                {
+                    sizes[index] = DirectoryPayloadSizer.Measure(pairs[index].PayloadPath!, cancellationToken);
+                }
+            }
+
+            return sizes;
+        }
+
+        Parallel.For(
+            0,
+            pairs.Count,
+            new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken },
+            index =>
+            {
+                if (pairs[index].PayloadIsDirectory && !cancellationToken.IsCancellationRequested)
+                {
+                    sizes[index] = DirectoryPayloadSizer.Measure(pairs[index].PayloadPath!, cancellationToken);
+                }
+            });
+
+        return sizes;
     }
 }

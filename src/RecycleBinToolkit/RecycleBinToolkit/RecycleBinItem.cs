@@ -41,7 +41,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// </summary>
     /// <param name="indexPath">Path of the <c>$I</c> record describing the item. Read on first use of the two lazy fields.</param>
     /// <param name="payloadPath">Physical <c>$R</c> path of the payload.</param>
-    /// <param name="size">Size in bytes, or <c>0</c> for a directory.</param>
+    /// <param name="size">Size in bytes. For a directory, the bytes beneath it when the listing measured them, otherwise <c>0</c>.</param>
     /// <param name="isDirectory">Whether the item is a directory.</param>
     internal RecycleBinItem(string indexPath, string payloadPath, long size, bool isDirectory)
     {
@@ -60,7 +60,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// </summary>
     /// <param name="indexPath">Path of the <c>$I</c> record describing the item.</param>
     /// <param name="payloadPath">Physical <c>$R</c> path of the payload.</param>
-    /// <param name="size">Size in bytes, or <c>0</c> for a directory.</param>
+    /// <param name="size">Size in bytes. For a directory, the bytes beneath it when the listing measured them, otherwise <c>0</c>.</param>
     /// <param name="isDirectory">Whether the item is a directory.</param>
     /// <param name="originalPath">Full path the item was deleted from.</param>
     /// <param name="deletedAt">When the item was deleted, in the local offset.</param>
@@ -90,7 +90,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
         _resolved = details;
     }
 
-    /// <summary>Size in bytes. <c>0</c> for a directory, whose contents are not measured.</summary>
+    /// <summary>Size in bytes. For a directory, the total length of the files beneath it; <c>0</c> when the listing did not measure it.</summary>
     public long Size { get; }
 
     /// <summary>Whether the entry is a directory.</summary>
@@ -129,7 +129,7 @@ public sealed class RecycleBinItem : IEquatable<RecycleBinItem>
     /// </summary>
     /// <param name="indexPath">Path of the <c>$I</c> record describing the item.</param>
     /// <param name="payloadPath">Physical <c>$R</c> path of the payload.</param>
-    /// <param name="size">Size in bytes, or <c>0</c> for a directory.</param>
+    /// <param name="size">Size in bytes. For a directory, the bytes beneath it when the listing measured them, otherwise <c>0</c>.</param>
     /// <param name="isDirectory">Whether the item is a directory.</param>
     /// <param name="hResult">
     /// Receives the code the filesystem raised, or <c>0</c> when the file was readable and simply was not a

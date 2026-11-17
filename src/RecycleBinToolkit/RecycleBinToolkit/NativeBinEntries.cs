@@ -12,7 +12,7 @@ namespace RecycleBinToolkit;
 /// <param name="PayloadPath">
 /// Path of the <c>$R</c> payload, or <see langword="null"/> when the record's payload is gone.
 /// </param>
-/// <param name="PayloadLength">Bytes the payload holds, or <c>0</c> for a directory.</param>
+/// <param name="PayloadLength">Bytes the payload holds. A directory's own length is not what it occupies, so <c>Collect</c> answers <c>0</c> for one; a listing may replace that with the bytes beneath it.</param>
 /// <param name="PayloadIsDirectory">Whether the payload is a directory.</param>
 internal sealed record NativeBinEntry(
     string? IndexPath,
@@ -24,9 +24,9 @@ internal sealed record NativeBinEntry(
 /// Walks a Recycle Bin once and pairs each entry's record with its payload.
 /// </summary>
 /// <remarks>
-/// One walk rather than two because everything a listing shows is in it: whether an entry is a directory and
-/// how large it is come from the directory entry itself, not from its record. Reading the records is left to
-/// whoever asks for one, and a listing that asks for none is the ordinary case.
+/// One walk rather than two because whether an entry is a directory and how large a file is come from the
+/// directory entry itself, not from its record. Reading the records is left to whoever asks for one, and a
+/// listing that asks for none is the ordinary case.
 /// <para>
 /// <see cref="EnumerationOptions.AttributesToSkip"/> is zero because both halves of an entry carry
 /// <see cref="FileAttributes.Hidden"/> and <see cref="FileAttributes.System"/>, and the default would

@@ -16,6 +16,7 @@ internal static class ListerSuite
         new TestCase("ListerSuite." + nameof(ListedItemCarriesTheRecordedData), ListedItemCarriesTheRecordedData),
         new TestCase("ListerSuite." + nameof(ListedItemReportsItsPhysicalPathInsideTheRecycleBin), ListedItemReportsItsPhysicalPathInsideTheRecycleBin),
         new TestCase("ListerSuite." + nameof(ListedDirectoryIsMarkedAsOne), ListedDirectoryIsMarkedAsOne),
+        new TestCase("ListerSuite." + nameof(ListedDirectoryReportsTheBytesBeneathIt), ListedDirectoryReportsTheBytesBeneathIt),
         new TestCase("ListerSuite." + nameof(VolumeFilterKeepsOnlyItemsFromThatVolume), VolumeFilterKeepsOnlyItemsFromThatVolume),
         new TestCase("ListerSuite." + nameof(VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn), VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn),
         new TestCase("ListerSuite." + nameof(MissingVolumeIsReportedNotThrown), MissingVolumeIsReportedNotThrown),
@@ -119,6 +120,46 @@ internal static class ListerSuite
         var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, directory));
         Check.NotNull(item, "the recycled directory is listed under its original path");
         Check.True(item!.IsDirectory, "a recycled directory is reported as a directory");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A recycled directory's size is the bytes of every file beneath it, not the record's zero. The tree is
+    /// nested and carries a hidden file, so a walk that stops at the first level or keeps the enumeration
+    /// options' default attributes answers short.
+    /// </summary>
+    private static async Task ListedDirectoryReportsTheBytesBeneathIt(TestContext context)
+    {
+        const int fileSize = 4096;
+
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a bin for the directory to measure");
+
+        var directory = Path.Combine(ScratchWorkspace.Root, "measured-directory");
+        var nested = Path.Combine(directory, "nested");
+        Directory.CreateDirectory(nested);
+        File.WriteAllBytes(Path.Combine(directory, "top.bin"), new byte[fileSize]);
+        File.WriteAllBytes(Path.Combine(nested, "deep.bin"), new byte[fileSize]);
+
+        var hidden = Path.Combine(directory, "hidden.bin");
+        File.WriteAllBytes(hidden, new byte[1]);
+        File.SetAttributes(hidden, FileAttributes.Hidden);
+
+        var recycled = await RecycleBin
+            .RecycleAsync([directory], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "the directory was recycled");
+
+        var contents = await RecycleBin
+            .GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var matches = Listing.Flat(contents).Where(i => IsSamePath(i, directory)).ToArray();
+        Check.Equal(1, matches.Length, "the tree is one entry, however many files it holds");
+        Check.Equal(2L * fileSize + 1, matches[0].Size, "its size is every file beneath it, at every depth, hidden files included");
+        Check.True(matches[0].IsDirectory, "and it is still a directory");
 
         workspace.Dispose();
     }
