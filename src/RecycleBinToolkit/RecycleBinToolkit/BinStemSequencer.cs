@@ -155,7 +155,7 @@ internal sealed class BinStemSequencer
             {
                 var name = entry.FileName;
 
-                if (name.Length > MarkerLength + NativeBinLayout.StemLength
+                if (name.Length >= MarkerLength + NativeBinLayout.StemLength
                     && name[0] == EntryMarker
                     && (name[1] == IndexMarker || name[1] == PayloadMarker)
                     && NativeBinLayout.TryParseStem(

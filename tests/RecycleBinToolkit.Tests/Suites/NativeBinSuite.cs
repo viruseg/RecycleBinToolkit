@@ -39,6 +39,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeRecycleAcceptsAPathFarPastMaxPath), NativeRecycleAcceptsAPathFarPastMaxPath),
         new TestCase("NativeBinSuite." + nameof(NativeRecycleMovesADirectory), NativeRecycleMovesADirectory),
         new TestCase("NativeBinSuite." + nameof(RecycledNamesClimbAboveWhateverTheBinAlreadyHolds), RecycledNamesClimbAboveWhateverTheBinAlreadyHolds),
+        new TestCase("NativeBinSuite." + nameof(ExtensionLessEntriesAreNamesTheBinAlreadyHolds), ExtensionLessEntriesAreNamesTheBinAlreadyHolds),
         new TestCase("NativeBinSuite." + nameof(NativeIndexRecordCarriesVersionTwoAndTheOriginalPath), NativeIndexRecordCarriesVersionTwoAndTheOriginalPath),
         new TestCase("NativeBinSuite." + nameof(VersionOneRecordCarriesTheHeaderAndAPaddedPath), VersionOneRecordCarriesTheHeaderAndAPaddedPath),
         new TestCase("NativeBinSuite." + nameof(VersionOnePathFitsUpToTheLastCharacter), VersionOnePathFitsUpToTheLastCharacter),
@@ -275,6 +276,36 @@ internal static class NativeBinSuite
 
         Check.Equal(1, Math.Abs(firstStem - secondStem),
             $"the two names of one call are adjacent, so a batch of writes stays in one leaf of the bin's directory index (got {firstStem} and {secondStem})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A name is a marker, a stem and an extension, and the extension is allowed to be empty. Four directories
+    /// whose names carry none must recycle like any other, which is what a walk that only sees names longer
+    /// than the stem cannot do: it hands out a name the bin already holds, and the move is refused.
+    /// </summary>
+    private static async Task ExtensionLessEntriesAreNamesTheBinAlreadyHolds(TestContext context)
+    {
+        const int count = 4;
+
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a bin for the extension-less directories");
+
+        for (var index = 0; index < count; index++)
+        {
+            var directory = Path.Combine(ScratchWorkspace.Root, $"no-extension-{index}");
+            Directory.CreateDirectory(directory);
+
+            var recycled = await RecycleBin
+                .RecycleAsync([directory], cancellationToken: context.CancellationToken)
+                .ConfigureAwait(false);
+
+            Check.True(
+                recycled.Succeeded,
+                $"directory {index + 1} of {count} recycles, though its name carries no extension (first failure: {Describe(recycled.FirstFailure)})");
+        }
 
         workspace.Dispose();
     }
