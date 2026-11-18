@@ -110,6 +110,7 @@ internal static class NativeBinSuite
         new TestCase("NativeBinSuite." + nameof(NativeLazyDetailsCarryTheFileSystemCode), NativeLazyDetailsCarryTheFileSystemCode),
         new TestCase("NativeBinSuite." + nameof(NativeEnumerationPairsHalvesWhateverCaseTheyAreWrittenIn), NativeEnumerationPairsHalvesWhateverCaseTheyAreWrittenIn),
         new TestCase("NativeBinSuite." + nameof(NativeListingReportsTheFilesBytesForARecycledDirectory), NativeListingReportsTheFilesBytesForARecycledDirectory),
+        new TestCase("NativeBinSuite." + nameof(DirectoryPayloadSizerAnswersZeroForAPathItCannotWalk), DirectoryPayloadSizerAnswersZeroForAPathItCannotWalk),
         new TestCase("NativeBinSuite." + nameof(LoadItemDetailsReadsEveryPendingRecord), LoadItemDetailsReadsEveryPendingRecord),
         new TestCase("NativeBinSuite." + nameof(LoadItemDetailsSkipsWhatTheListingAlreadyRead), LoadItemDetailsSkipsWhatTheListingAlreadyRead),
         new TestCase("NativeBinSuite." + nameof(LoadItemDetailsLeavesAnUnreadableRecordCold), LoadItemDetailsLeavesAnUnreadableRecordCold),
@@ -283,7 +284,9 @@ internal static class NativeBinSuite
     /// <summary>
     /// A name is a marker, a stem and an extension, and the extension is allowed to be empty. Four directories
     /// whose names carry none must recycle like any other, which is what a walk that only sees names longer
-    /// than the stem cannot do: it hands out a name the bin already holds, and the move is refused.
+    /// than the stem cannot do: it hands out a name the bin already holds, and the move is refused. That walk
+    /// fails here only while the bin's lowest three stems belong to extension-less names, which an empty bin
+    /// guarantees and a bin already holding them provides.
     /// </summary>
     private static async Task ExtensionLessEntriesAreNamesTheBinAlreadyHolds(TestContext context)
     {
@@ -3091,7 +3094,7 @@ using var workspace = new ScratchWorkspace();
         workspace.Dispose();
     }
 
-/// <summary>
+    /// <summary>
     /// A recycled directory is enumerated as zero bytes, because a directory's own length is not what it
     /// occupies, and the listing that builds the item reports the bytes of the file inside it.
     /// </summary>
@@ -3127,6 +3130,23 @@ using var workspace = new ScratchWorkspace();
         Check.Equal(Content.LongLength, item.Size, "and the listing reports the bytes of the file inside it");
 
         workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A payload that vanished between the bin walk and the measurement, or that refuses access, contributes
+    /// nothing. A listing reports what it can read; it does not start raising for one entry.
+    /// </summary>
+    private static Task DirectoryPayloadSizerAnswersZeroForAPathItCannotWalk(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+
+        var missing = Path.Combine(ScratchWorkspace.Root, "missing-" + Guid.NewGuid().ToString("N"));
+
+        Check.Equal(0L, DirectoryPayloadSizer.Measure(missing, context.CancellationToken), "a payload that cannot be opened contributes nothing");
+
+        workspace.Dispose();
+        return Task.CompletedTask;
     }
 
     /// <summary>

@@ -8,37 +8,52 @@ namespace RecycleBinToolkit;
 /// One recursive walk and no opening: every length comes from the directory entry, so the whole measurement
 /// is metadata work. Reparse points are skipped, which both keeps them out of the figure and keeps the
 /// enumeration from descending into them — <see cref="EnumerationOptions.AttributesToSkip"/> is tested
-/// before the recursion decision.
+/// before the recursion decision. A root that is itself a reparse point is refused before the walk, because
+/// the options cannot apply to the entry they start from.
 /// </remarks>
 [SupportedOSPlatform("windows10.0.14393")]
 internal static class DirectoryPayloadSizer
 {
     internal static long Measure(string payloadPath, CancellationToken cancellationToken)
     {
-        var options = new EnumerationOptions
+        try
         {
-            RecurseSubdirectories = true,
-            AttributesToSkip = FileAttributes.ReparsePoint,
-            ReturnSpecialDirectories = false,
-            IgnoreInaccessible = true
-        };
-
-        var enumerable = new FileSystemEnumerable<long>(
-            payloadPath,
-            (ref FileSystemEntry entry) =>
+            if ((File.GetAttributes(payloadPath) & FileAttributes.ReparsePoint) != 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                return entry.IsDirectory ? 0 : entry.Length;
-            },
-            options);
+                return 0;
+            }
 
-        long total = 0;
+            var options = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                AttributesToSkip = FileAttributes.ReparsePoint,
+                ReturnSpecialDirectories = false,
+                IgnoreInaccessible = true
+            };
 
-        foreach (var length in enumerable)
-        {
-            total += length;
+            var enumerable = new FileSystemEnumerable<long>(
+                payloadPath,
+                (ref FileSystemEntry entry) =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return entry.IsDirectory ? 0 : entry.Length;
+                },
+                options);
+
+            long total = 0;
+
+            foreach (var length in enumerable)
+            {
+                total += length;
+            }
+
+            return total;
         }
-
-        return total;
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // One unreadable entry must not break a listing; cancellation is not a refusal, so it still
+            // reaches the caller.
+            return 0;
+        }
     }
 }

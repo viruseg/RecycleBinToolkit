@@ -18,6 +18,8 @@ internal static class ListerSuite
         new TestCase("ListerSuite." + nameof(ListedDirectoryIsMarkedAsOne), ListedDirectoryIsMarkedAsOne),
         new TestCase("ListerSuite." + nameof(ListedDirectoryReportsTheBytesBeneathIt), ListedDirectoryReportsTheBytesBeneathIt),
         new TestCase("ListerSuite." + nameof(ListedDirectoryIsZeroBytesWhenMeasurementIsOff), ListedDirectoryIsZeroBytesWhenMeasurementIsOff),
+        new TestCase("ListerSuite." + nameof(ListedJunctionIsZeroBytesAndItsTargetIsNotWalked), ListedJunctionIsZeroBytesAndItsTargetIsNotWalked),
+        new TestCase("ListerSuite." + nameof(ListedDirectoryDoesNotFollowAJunctionInsideIt), ListedDirectoryDoesNotFollowAJunctionInsideIt),
         new TestCase("ListerSuite." + nameof(VolumeFilterKeepsOnlyItemsFromThatVolume), VolumeFilterKeepsOnlyItemsFromThatVolume),
         new TestCase("ListerSuite." + nameof(VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn), VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn),
         new TestCase("ListerSuite." + nameof(MissingVolumeIsReportedNotThrown), MissingVolumeIsReportedNotThrown),
@@ -174,8 +176,8 @@ internal static class ListerSuite
     }
 
     /// <summary>
-    /// The option is the escape hatch from the walk: off, the listing reports what the record carries, which is
-    /// zero for a directory.
+    /// The option is the escape hatch from the walk: off, the listing reports what the record carries — zero
+    /// for a directory and the file's own length for a file.
     /// </summary>
     private static async Task ListedDirectoryIsZeroBytesWhenMeasurementIsOff(TestContext context)
     {
@@ -189,10 +191,13 @@ internal static class ListerSuite
         Directory.CreateDirectory(directory);
         File.WriteAllBytes(Path.Combine(directory, "inside.bin"), new byte[fileSize]);
 
+        var sibling = Path.Combine(ScratchWorkspace.Root, "unmeasured-sibling.bin");
+        File.WriteAllBytes(sibling, new byte[fileSize]);
+
         var recycled = await RecycleBin
-            .RecycleAsync([directory], cancellationToken: context.CancellationToken)
+            .RecycleAsync([directory, sibling], cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
-        Check.True(recycled.Succeeded, "the directory was recycled");
+        Check.True(recycled.Succeeded, "the directory and the file were recycled");
 
         var contents = await RecycleBin
             .GetItemsAsync(ScratchWorkspace.VolumeRoot, new GetItemsOptions { MeasureDirectorySizes = false }, context.CancellationToken)
@@ -201,6 +206,84 @@ internal static class ListerSuite
         var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, directory));
         Check.NotNull(item, "the recycled directory is listed");
         Check.Equal(0L, item!.Size, "its size is the record's zero when the measurement is off");
+
+        var listedSibling = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, sibling));
+        Check.NotNull(listedSibling, "the recycled file is listed");
+        Check.Equal(
+            (long)fileSize,
+            listedSibling!.Size,
+            "and the file keeps its length, so the option stops the walk rather than zeroing every entry");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The item is the link, not what it points at. The target holds a megabyte, so a walk that follows the
+    /// payload's root reports it, and the figure is the one thing a caller would act on.
+    /// </summary>
+    private static async Task ListedJunctionIsZeroBytesAndItsTargetIsNotWalked(TestContext context)
+    {
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a bin for the junction to be listed out of");
+
+        var target = Path.Combine(ScratchWorkspace.Root, "junction-target");
+        Directory.CreateDirectory(target);
+        File.WriteAllBytes(Path.Combine(target, "heavy.bin"), new byte[1024 * 1024]);
+
+        var link = Path.Combine(ScratchWorkspace.Root, "recycled-junction");
+        Junction.Create(link, target);
+
+        var recycled = await RecycleBin
+            .RecycleAsync([link], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "the junction was recycled");
+
+        var contents = await RecycleBin
+            .GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, link));
+        Check.NotNull(item, "the recycled junction is listed");
+        Check.True(item!.IsDirectory, "it is a directory");
+        Check.Equal(0L, item.Size, "its size is nothing, because its target is not the item");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A junction inside the payload is not descended into. The tree holds one real file and a link to a
+    /// megabyte, and only the file counts.
+    /// </summary>
+    private static async Task ListedDirectoryDoesNotFollowAJunctionInsideIt(TestContext context)
+    {
+        const int fileSize = 4096;
+
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a bin for the directory to measure");
+
+        var target = Path.Combine(ScratchWorkspace.Root, "inner-junction-target");
+        Directory.CreateDirectory(target);
+        File.WriteAllBytes(Path.Combine(target, "heavy.bin"), new byte[1024 * 1024]);
+
+        var directory = Path.Combine(ScratchWorkspace.Root, "directory-with-a-junction");
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(Path.Combine(directory, "inside.bin"), new byte[fileSize]);
+        Junction.Create(Path.Combine(directory, "junc"), target);
+
+        var recycled = await RecycleBin
+            .RecycleAsync([directory], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "the directory was recycled");
+
+        var contents = await RecycleBin
+            .GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, directory));
+        Check.NotNull(item, "the recycled directory is listed");
+        Check.Equal((long)fileSize, item!.Size, "only the file that is really inside it, not the bytes behind its junction");
 
         workspace.Dispose();
     }
