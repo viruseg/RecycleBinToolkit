@@ -221,6 +221,9 @@ internal static class ListerSuite
     /// The item is the link, not what it points at. The target holds a megabyte, so a walk that follows the
     /// payload's root reports it, and the figure is the one thing a caller would act on.
     /// </summary>
+    /// <remarks>
+    /// The entry is restored and the link removed before the case ends, so the bin is left as the case found it.
+    /// </remarks>
     private static async Task ListedJunctionIsZeroBytesAndItsTargetIsNotWalked(TestContext context)
     {
         using var workspace = new ScratchWorkspace();
@@ -248,6 +251,19 @@ internal static class ListerSuite
         Check.True(item!.IsDirectory, "it is a directory");
         Check.Equal(0L, item.Size, "its size is nothing, because its target is not the item");
 
+        var restored = await RecycleBin
+            .RestoreAsync([item!], RestoreOptions.Default, context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(
+            restored.Succeeded,
+            $"the junction is restored ({restored.Failures.FirstOrDefault()?.Stage} 0x{restored.Failures.FirstOrDefault()?.HResult:X8})");
+        Check.True(Directory.Exists(link), "the junction is back where it was found");
+
+        if (Directory.Exists(link))
+        {
+            Directory.Delete(link);
+        }
+
         workspace.Dispose();
     }
 
@@ -255,6 +271,9 @@ internal static class ListerSuite
     /// A junction inside the payload is not descended into. The tree holds one real file and a link to a
     /// megabyte, and only the file counts.
     /// </summary>
+    /// <remarks>
+    /// The entry is restored and the link removed before the case ends, so the bin is left as the case found it.
+    /// </remarks>
     private static async Task ListedDirectoryDoesNotFollowAJunctionInsideIt(TestContext context)
     {
         const int fileSize = 4096;
@@ -284,6 +303,21 @@ internal static class ListerSuite
         var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, directory));
         Check.NotNull(item, "the recycled directory is listed");
         Check.Equal((long)fileSize, item!.Size, "only the file that is really inside it, not the bytes behind its junction");
+
+        var restored = await RecycleBin
+            .RestoreAsync([item!], RestoreOptions.Default, context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(
+            restored.Succeeded,
+            $"the directory is restored ({restored.Failures.FirstOrDefault()?.Stage} 0x{restored.Failures.FirstOrDefault()?.HResult:X8})");
+        Check.True(Directory.Exists(directory), "the directory is back where it was found");
+
+        var restoredJunction = Path.Combine(directory, "junc");
+
+        if (Directory.Exists(restoredJunction))
+        {
+            Directory.Delete(restoredJunction);
+        }
 
         workspace.Dispose();
     }
