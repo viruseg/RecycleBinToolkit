@@ -35,8 +35,8 @@ internal static class NativeBinLister
     /// </summary>
     /// <param name="volumeRoots">Volume roots to read.</param>
     /// <param name="options">
-    /// Settings already normalised. <see cref="RecycleBinOptions.PreloadItemDetails"/> is the only one that
-    /// reaches this code.
+    /// Settings already normalised. <see cref="RecycleBinOptions.PreloadItemDetails"/> and
+    /// <see cref="RecycleBinOptions.MeasureDirectorySizes"/> are the ones that reach this code.
     /// </param>
     /// <param name="cancellationToken">Cancels the enumeration and the reading.</param>
     /// <returns>
@@ -168,7 +168,7 @@ internal static class NativeBinLister
             return [];
         }
 
-        var sizes = MeasurePayloads(pairs, volumeRoot, cancellationToken);
+        var sizes = MeasurePayloads(pairs, volumeRoot, options, cancellationToken);
 
         if (!options.PreloadItemDetails)
         {
@@ -252,7 +252,7 @@ internal static class NativeBinLister
 
     /// <summary>
     /// One size per pair, in the pairs' order: the walk's own length for a file, and the bytes beneath the
-    /// payload for a directory.
+    /// payload for a directory — or the walk's own length for a directory too, when measurement is off.
     /// </summary>
     /// <remarks>
     /// A bin holding no directory takes the lengths the flat walk already read and stops, which is the whole of
@@ -261,6 +261,7 @@ internal static class NativeBinLister
     private static long[] MeasurePayloads(
         List<NativeBinEntry> pairs,
         string volumeRoot,
+        RecycleBinOptions options,
         CancellationToken cancellationToken)
     {
         var sizes = new long[pairs.Count];
@@ -268,6 +269,11 @@ internal static class NativeBinLister
         for (var index = 0; index < pairs.Count; index++)
         {
             sizes[index] = pairs[index].PayloadLength;
+        }
+
+        if (!options.MeasureDirectorySizes)
+        {
+            return sizes;
         }
 
         var measuresSomething = false;

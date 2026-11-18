@@ -471,11 +471,13 @@ valid argument.
 | --- | --- | --- | --- |
 | `Default` | `GetItemsOptions` | — | Shared instance carrying the defaults. |
 | `PreloadItemDetails` | `bool` | `false` | Read every record during `GetItemsAsync` instead of leaving each entry to read its own on first access. See [Lazy fields](#lazy-fields). |
+| `MeasureDirectorySizes` | `bool` | `true` | Measure the bytes beneath each recycled directory and report them as its `Size`. Off, a directory reports `0`. |
 
 ```csharp
 var options = new GetItemsOptions { PreloadItemDetails = true };
 
 Console.WriteLine(options.PreloadItemDetails);
+Console.WriteLine(options.MeasureDirectorySizes);
 ```
 
 ### `RecycleBinResult`
@@ -655,7 +657,7 @@ One entry in the Recycle Bin. Immutable.
 | --- | --- | --- |
 | `OriginalPath` | `string` | Full path the entry was deleted from. Read from the entry's record on first access — see [Lazy fields](#lazy-fields). |
 | `DeletedAt` | `DateTimeOffset` | When it was deleted, in the local offset. Read from the same record, on the same first access. |
-| `Size` | `long` | Size in bytes. For a directory, the total length of the files beneath it; `0` when the listing did not measure it. |
+| `Size` | `long` | Size in bytes. For a directory, the total length of the files beneath it; `0` when `MeasureDirectorySizes` is off or the payload is a link. |
 | `IsDirectory` | `bool` | Whether the entry is a directory. |
 
 There is no `Name`: it is the last component of `OriginalPath`. An entry is put back by handing it to
@@ -740,7 +742,7 @@ The immutable result of one `EmptyAsync` call.
 | --- | --- | --- |
 | `VolumesEmptied` | `IReadOnlyList<string>` | Volume roots covered, each with a trailing separator, in the order covered. |
 | `ItemsRemoved` | `long` | Number of entries removed. An entry is a recycled item's two halves, or whichever half of them the bin still held. |
-| `BytesFreed` | `long` | Total bytes those entries occupied. A directory contributes none: its size is not measured. |
+| `BytesFreed` | `long` | Total bytes those entries occupied. A directory contributes none. |
 | `Failures` | `IReadOnlyList<RecycleFailure<EmptyFailureStage>>` | Volumes that could not be emptied or measured. One volume's failures are together, in coverage order. |
 | `Elapsed` | `TimeSpan` | Time the call took. |
 | `RecycleBinEmptyResult(...)` | constructor | Constructs a result. |

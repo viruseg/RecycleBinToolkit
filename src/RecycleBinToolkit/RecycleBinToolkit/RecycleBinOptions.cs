@@ -65,6 +65,12 @@ public abstract class RecycleBinOptions
     internal bool PreloadItemDetails { get; init; }
 
     /// <summary>
+    /// Whether a listing measures the bytes beneath a recycled directory rather than reporting the record's zero.
+    /// Read by <see cref="NativeBinLister"/>, and nowhere else.
+    /// </summary>
+    internal bool MeasureDirectorySizes { get; init; } = true;
+
+    /// <summary>
     /// What to do with a directory whose original path is already occupied. Read by
     /// <see cref="RestorePathPlanner"/> to answer that question, and by <see cref="RestoreRunner"/> when the
     /// answer decides whether it refuses, whether it merges, and what a merge does.
@@ -146,6 +152,7 @@ public abstract class RecycleBinOptions
         NoRecycleBinAction = NoRecycleBinAction,
         LongPathFailureAction = LongPathFailureAction,
         PreloadItemDetails = PreloadItemDetails,
+        MeasureDirectorySizes = MeasureDirectorySizes,
         DirectoryConflict = DirectoryConflict,
         FileConflict = FileConflict,
         OnItemProcessed = OnItemProcessed,

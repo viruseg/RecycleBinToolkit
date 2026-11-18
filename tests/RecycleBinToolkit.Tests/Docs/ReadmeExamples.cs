@@ -87,6 +87,7 @@ internal static class ReadmeExamples
         var options = new GetItemsOptions { PreloadItemDetails = true };
 
         Console.WriteLine(options.PreloadItemDetails);
+        Console.WriteLine(options.MeasureDirectorySizes);
     }
 
     internal static void ResultMembers()

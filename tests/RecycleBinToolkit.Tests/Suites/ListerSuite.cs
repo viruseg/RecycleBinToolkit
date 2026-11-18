@@ -17,6 +17,7 @@ internal static class ListerSuite
         new TestCase("ListerSuite." + nameof(ListedItemReportsItsPhysicalPathInsideTheRecycleBin), ListedItemReportsItsPhysicalPathInsideTheRecycleBin),
         new TestCase("ListerSuite." + nameof(ListedDirectoryIsMarkedAsOne), ListedDirectoryIsMarkedAsOne),
         new TestCase("ListerSuite." + nameof(ListedDirectoryReportsTheBytesBeneathIt), ListedDirectoryReportsTheBytesBeneathIt),
+        new TestCase("ListerSuite." + nameof(ListedDirectoryIsZeroBytesWhenMeasurementIsOff), ListedDirectoryIsZeroBytesWhenMeasurementIsOff),
         new TestCase("ListerSuite." + nameof(VolumeFilterKeepsOnlyItemsFromThatVolume), VolumeFilterKeepsOnlyItemsFromThatVolume),
         new TestCase("ListerSuite." + nameof(VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn), VolumeFilterKeepsTheItemWhateverCaseTheRootIsWrittenIn),
         new TestCase("ListerSuite." + nameof(MissingVolumeIsReportedNotThrown), MissingVolumeIsReportedNotThrown),
@@ -126,8 +127,8 @@ internal static class ListerSuite
 
     /// <summary>
     /// A recycled directory's size is the bytes of every file beneath it, not the record's zero. The tree is
-    /// nested and carries a hidden file, so a walk that stops at the first level or keeps the enumeration
-    /// options' default attributes answers short.
+    /// nested and carries a hidden and system file, so a walk that stops at the first level or keeps the
+    /// enumeration options' default attributes answers short.
     /// </summary>
     private static async Task ListedDirectoryReportsTheBytesBeneathIt(TestContext context)
     {
@@ -145,7 +146,7 @@ internal static class ListerSuite
 
         var hidden = Path.Combine(directory, "hidden.bin");
         File.WriteAllBytes(hidden, new byte[1]);
-        File.SetAttributes(hidden, FileAttributes.Hidden);
+        File.SetAttributes(hidden, FileAttributes.Hidden | FileAttributes.System);
 
         var recycled = await RecycleBin
             .RecycleAsync([directory], cancellationToken: context.CancellationToken)
@@ -158,8 +159,48 @@ internal static class ListerSuite
 
         var matches = Listing.Flat(contents).Where(i => IsSamePath(i, directory)).ToArray();
         Check.Equal(1, matches.Length, "the tree is one entry, however many files it holds");
-        Check.Equal(2L * fileSize + 1, matches[0].Size, "its size is every file beneath it, at every depth, hidden files included");
+        Check.Equal(2L * fileSize + 1, matches[0].Size, "its size is every file beneath it, at every depth, hidden and system files included");
         Check.True(matches[0].IsDirectory, "and it is still a directory");
+
+        var preloaded = await RecycleBin
+            .GetItemsAsync(ScratchWorkspace.VolumeRoot, new GetItemsOptions { PreloadItemDetails = true }, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var warmed = Listing.Flat(preloaded).FirstOrDefault(i => IsSamePath(i, directory));
+        Check.NotNull(warmed, "the preloaded listing holds the directory");
+        Check.Equal(2L * fileSize + 1, warmed!.Size, "the preloaded listing reports the measured size rather than the record's zero");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// The option is the escape hatch from the walk: off, the listing reports what the record carries, which is
+    /// zero for a directory.
+    /// </summary>
+    private static async Task ListedDirectoryIsZeroBytesWhenMeasurementIsOff(TestContext context)
+    {
+        const int fileSize = 4096;
+
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a bin for the directory to leave unmeasured");
+
+        var directory = Path.Combine(ScratchWorkspace.Root, "unmeasured-directory");
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(Path.Combine(directory, "inside.bin"), new byte[fileSize]);
+
+        var recycled = await RecycleBin
+            .RecycleAsync([directory], cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, "the directory was recycled");
+
+        var contents = await RecycleBin
+            .GetItemsAsync(ScratchWorkspace.VolumeRoot, new GetItemsOptions { MeasureDirectorySizes = false }, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, directory));
+        Check.NotNull(item, "the recycled directory is listed");
+        Check.Equal(0L, item!.Size, "its size is the record's zero when the measurement is off");
 
         workspace.Dispose();
     }

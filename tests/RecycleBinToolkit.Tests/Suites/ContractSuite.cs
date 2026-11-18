@@ -583,6 +583,7 @@ internal static class ContractSuite
         // The other two types carry their own Default, so their defaults are pins of their own rather than
         // something the recycle type happens to also say.
         Check.False(GetItemsOptions.Default.PreloadItemDetails, "PreloadItemDetails default");
+        Check.True(GetItemsOptions.Default.MeasureDirectorySizes, "MeasureDirectorySizes defaults to on, so a listing reports a directory's bytes");
         Check.Equal(
             RestoreDirectoryConflict.MergeSkip,
             RestoreOptions.Default.DirectoryConflict,
@@ -628,7 +629,7 @@ internal static class ContractSuite
         {
             [typeof(RecycleOptions)] = "InitialRetryDelay,LongPathFailureAction,MaxAttempts,NoRecycleBinAction,OnItemProcessed,OnProgressFailed,OverallTimeout,ThrowOnError,WaitForProgressCallbacks",
             [typeof(RestoreOptions)] = "DirectoryConflict,FileConflict,InitialRetryDelay,MaxAttempts,OnItemProcessed,OnProgressFailed,OverallTimeout,WaitForProgressCallbacks",
-            [typeof(GetItemsOptions)] = "PreloadItemDetails",
+            [typeof(GetItemsOptions)] = "MeasureDirectorySizes,PreloadItemDetails",
             [typeof(EmptyOptions)] = "OnItemProcessed,OnProgressFailed,WaitForProgressCallbacks",
         };
 
