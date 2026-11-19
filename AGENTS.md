@@ -91,10 +91,8 @@ with nothing failing, on a volume that has a bin, with `D:\` named as the second
 measured by one `--all --scratch E:\ --link-scratch D:\` on 2026-11-16. Thirteen of the fifteen name a
 volume with no Recycle Bin, or one whose answer is a doubt rather than a refusal; two are the 8.3 cases.
 
-**A run without `--link-scratch` is 267 pass, 24 skip and one failure**, on `E:\` on 2026-11-19. The
-failure is `NativeBinSuite.NativeOverallTimeoutBoundsTheWholeRetryBudget`, a retry-budget case that wants
-four attempts where this run saw three; it passes when run alone on the same machine. The nine extra skips
-are the eight `LinkSuite` cases that need a target on another volume and
+**A run without `--link-scratch` is 268 pass and 24 skip**, with nothing failing, on `E:\` on 2026-11-19.
+The nine extra skips are the eight `LinkSuite` cases that need a target on another volume and
 `ScratchSuite.ASecondRunRootIsAllowedOnAnotherVolume`; the ninth `LinkSuite` case builds its junction
 inside the one volume and runs either way. The two figures belong to their own command lines — quote
 neither as the other.
