@@ -39,7 +39,7 @@ public sealed record RecycleBinEmptyResult
 
     /// <summary>Total bytes those entries occupied.</summary>
     /// <remarks>
-    /// A directory contributes nothing to this figure: its size is not measured, only its entry is removed. An
+    /// A directory contributes nothing to this figure: an empty removes it without weighing it. An
     /// entry whose record could not be read is removed but not counted here.
     /// </remarks>
     public long BytesFreed { get; }

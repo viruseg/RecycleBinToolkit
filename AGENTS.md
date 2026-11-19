@@ -88,8 +88,11 @@ There are 296 registered cases, of which four are load cases, so `--all` runs 29
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
 cases that recycle one and runs the cases that are about a volume with no bin. **271 pass and 15 skip**,
 with nothing failing, on a volume that has a bin, with `D:\` named as the second volume —
-measured by one `--all --scratch E:\ --link-scratch D:\` on 2026-11-16. Thirteen of the fifteen name a
-volume with no Recycle Bin, or one whose answer is a doubt rather than a refusal; two are the 8.3 cases.
+measured by one `--all --scratch E:\ --link-scratch D:\` on 2026-11-16. That run predates the six cases
+this branch added, so the same command line is expected to print **277 pass and 15 skip** today by
+arithmetic — an expectation, not a measurement: that command line has not been re-run. Thirteen of the
+fifteen name a volume with no Recycle Bin, or one whose answer is a doubt rather than a refusal; two are
+the 8.3 cases.
 
 **A run without `--link-scratch` is 268 pass and 24 skip**, with nothing failing, on `E:\` on 2026-11-19.
 The nine extra skips are the eight `LinkSuite` cases that need a target on another volume and
@@ -149,7 +152,7 @@ the engine, over whatever the entry point resolved
    ├─ NativeBinLayout         $RECYCLE.BIN\<SID>\ and the $I/$R name pair
    ├─ NativeIndexFile         version 1 and 2 records, read and written
    ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
-   ├─ DirectoryPayloadSizer    the recursive walk that measures a recycled directory, when a listing measures one
+   ├─ DirectoryPayloadSizer   the recursive walk that measures a recycled directory, when a listing measures one
    ├─ NativeRecycleRunner     record first, then the move; retries are per path
    ├─ NativeDirectoryMove     a directory rename whose two spellings name different roots but one volume
    ├─ ShortPathResolver       the 8.3 alias, when the volume has one
@@ -418,7 +421,8 @@ listing and the rest of the bin; the difference is the measurement:
 The difference is 4.3 ms for 10,000 entries. No cold-cache figure was taken, and nothing here should be read
 as one.
 
-Three things about it are settled by what the code has to preserve, and two are not measured at all.
+Three things about the listing's threading are settled by what the code has to preserve, and two of those
+questions are not measured at all.
 
 Settled:
 
