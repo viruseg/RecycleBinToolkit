@@ -84,18 +84,20 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 290 registered cases, of which four are load cases, so `--all` runs 286 of them. The rest is
+There are 296 registered cases, of which four are load cases, so `--all` runs 292 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
 cases that recycle one and runs the cases that are about a volume with no bin. **271 pass and 15 skip**,
 with nothing failing, on a volume that has a bin, with `D:\` named as the second volume —
 measured by one `--all --scratch E:\ --link-scratch D:\` on 2026-11-16. Thirteen of the fifteen name a
 volume with no Recycle Bin, or one whose answer is a doubt rather than a refusal; two are the 8.3 cases.
 
-**The same run without `--link-scratch` is 262 pass and 24 skip**, also nothing failing, on `E:\` on the
-same date. The nine extra skips are the eight `LinkSuite` cases that need a target on another volume and
+**A run without `--link-scratch` is 267 pass, 24 skip and one failure**, on `E:\` on 2026-11-19. The
+failure is `NativeBinSuite.NativeOverallTimeoutBoundsTheWholeRetryBudget`, a retry-budget case that wants
+four attempts where this run saw three; it passes when run alone on the same machine. The nine extra skips
+are the eight `LinkSuite` cases that need a target on another volume and
 `ScratchSuite.ASecondRunRootIsAllowedOnAnotherVolume`; the ninth `LinkSuite` case builds its junction
-inside the one volume and runs either way. The two figures belong to their own command lines and are
-nine cases apart by construction — quote neither as the other.
+inside the one volume and runs either way. The two figures belong to their own command lines — quote
+neither as the other.
 
 **The same shape measured on `D:\` was 249 pass and 13 skip**, also nothing failing, on 2026-10-13. Two of
 its skips have been joined by the two read-only `DeletePermanently` cases this work added, which skip on any
@@ -149,6 +151,7 @@ the engine, over whatever the entry point resolved
    ├─ NativeBinLayout         $RECYCLE.BIN\<SID>\ and the $I/$R name pair
    ├─ NativeIndexFile         version 1 and 2 records, read and written
    ├─ NativeBinEntries        one walk of the bin, pairing each $I record with its $R payload
+   ├─ DirectoryPayloadSizer    the recursive walk that measures a recycled directory, when a listing measures one
    ├─ NativeRecycleRunner     record first, then the move; retries are per path
    ├─ NativeDirectoryMove     a directory rename whose two spellings name different roots but one volume
    ├─ ShortPathResolver       the 8.3 alias, when the volume has one
@@ -401,7 +404,21 @@ hold up another, so `NativeBinLister.TryEnumerate` reads every volume at once, o
 a different axis from everything measured above: the tables are about *how many threads one volume's records
 are read on*, and this is about *how many volumes are read at the same time*. `VolumeSeekPenalty.
 DegreeOfParallelism` does not answer it and is not consulted for it, because the listing's per-volume work is
-one `FileSystemEnumerable` walk of a flat directory — the same walk however the disk underneath answers.
+one `FileSystemEnumerable` walk of a flat directory — the same walk however the disk underneath answers. The
+listing is one flat walk, plus one recursive walk per directory payload while `MeasureDirectorySizes` is on,
+which is the default.
+
+**A directory's size is a second walk, and it is paid per directory.** Measured on the run volume over one
+recycled directory of 10,000 files of 1 KiB, warm, median of three. The absolute figures belong to the
+listing and the rest of the bin; the difference is the measurement:
+
+| option | median listing time |
+| --- | --- |
+| on (default) | 4.7 ms |
+| off | 0.4 ms |
+
+The difference is 4.3 ms for 10,000 entries. No cold-cache figure was taken, and nothing here should be read
+as one.
 
 Three things about it are settled by what the code has to preserve, and two are not measured at all.
 
