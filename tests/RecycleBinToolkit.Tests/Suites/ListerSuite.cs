@@ -222,7 +222,8 @@ internal static class ListerSuite
     /// payload's root reports it, and the figure is the one thing a caller would act on.
     /// </summary>
     /// <remarks>
-    /// The entry is restored and the link removed before the case ends, so the bin is left as the case found it.
+    /// The junction is restored when the restore succeeds, and the link is removed before the case ends either
+    /// way, so the workspace never removes a target the bin still links to.
     /// </remarks>
     private static async Task ListedJunctionIsZeroBytesAndItsTargetIsNotWalked(TestContext context)
     {
@@ -237,31 +238,42 @@ internal static class ListerSuite
         var link = Path.Combine(ScratchWorkspace.Root, "recycled-junction");
         Junction.Create(link, target);
 
-        var recycled = await RecycleBin
-            .RecycleAsync([link], cancellationToken: context.CancellationToken)
-            .ConfigureAwait(false);
-        Check.True(recycled.Succeeded, "the junction was recycled");
+        RecycleBinItem? item = null;
 
-        var contents = await RecycleBin
-            .GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken)
-            .ConfigureAwait(false);
-
-        var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, link));
-        Check.NotNull(item, "the recycled junction is listed");
-        Check.True(item!.IsDirectory, "it is a directory");
-        Check.Equal(0L, item.Size, "its size is nothing, because its target is not the item");
-
-        var restored = await RecycleBin
-            .RestoreAsync([item!], RestoreOptions.Default, context.CancellationToken)
-            .ConfigureAwait(false);
-        Check.True(
-            restored.Succeeded,
-            $"the junction is restored ({restored.Failures.FirstOrDefault()?.Stage} 0x{restored.Failures.FirstOrDefault()?.HResult:X8})");
-        Check.True(Directory.Exists(link), "the junction is back where it was found");
-
-        if (Directory.Exists(link))
+        try
         {
-            Directory.Delete(link);
+            var recycled = await RecycleBin
+                .RecycleAsync([link], cancellationToken: context.CancellationToken)
+                .ConfigureAwait(false);
+            Check.True(recycled.Succeeded, "the junction was recycled");
+
+            var contents = await RecycleBin
+                .GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken)
+                .ConfigureAwait(false);
+
+            item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, link));
+            Check.NotNull(item, "the recycled junction is listed");
+            Check.True(item!.IsDirectory, "it is a directory");
+            Check.Equal(0L, item.Size, "its size is nothing, because its target is not the item");
+
+            var restored = await RecycleBin
+                .RestoreAsync([item!], RestoreOptions.Default, context.CancellationToken)
+                .ConfigureAwait(false);
+            Check.True(
+                restored.Succeeded,
+                $"the junction is restored ({restored.Failures.FirstOrDefault()?.Stage} 0x{restored.Failures.FirstOrDefault()?.HResult:X8})");
+            Check.True(Directory.Exists(link), "the junction is back where it was found");
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+            {
+                Directory.Delete(link);
+            }
+            else if (item is not null && Directory.Exists(item.PayloadPath))
+            {
+                Directory.Delete(item.PayloadPath);
+            }
         }
 
         workspace.Dispose();
@@ -272,7 +284,8 @@ internal static class ListerSuite
     /// megabyte, and only the file counts.
     /// </summary>
     /// <remarks>
-    /// The entry is restored and the link removed before the case ends, so the bin is left as the case found it.
+    /// The directory is restored when the restore succeeds, and the junction inside it is removed before the
+    /// case ends either way, so the workspace never removes a target the bin still links to.
     /// </remarks>
     private static async Task ListedDirectoryDoesNotFollowAJunctionInsideIt(TestContext context)
     {
@@ -291,32 +304,48 @@ internal static class ListerSuite
         File.WriteAllBytes(Path.Combine(directory, "inside.bin"), new byte[fileSize]);
         Junction.Create(Path.Combine(directory, "junc"), target);
 
-        var recycled = await RecycleBin
-            .RecycleAsync([directory], cancellationToken: context.CancellationToken)
-            .ConfigureAwait(false);
-        Check.True(recycled.Succeeded, "the directory was recycled");
+        RecycleBinItem? item = null;
 
-        var contents = await RecycleBin
-            .GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken)
-            .ConfigureAwait(false);
-
-        var item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, directory));
-        Check.NotNull(item, "the recycled directory is listed");
-        Check.Equal((long)fileSize, item!.Size, "only the file that is really inside it, not the bytes behind its junction");
-
-        var restored = await RecycleBin
-            .RestoreAsync([item!], RestoreOptions.Default, context.CancellationToken)
-            .ConfigureAwait(false);
-        Check.True(
-            restored.Succeeded,
-            $"the directory is restored ({restored.Failures.FirstOrDefault()?.Stage} 0x{restored.Failures.FirstOrDefault()?.HResult:X8})");
-        Check.True(Directory.Exists(directory), "the directory is back where it was found");
-
-        var restoredJunction = Path.Combine(directory, "junc");
-
-        if (Directory.Exists(restoredJunction))
+        try
         {
-            Directory.Delete(restoredJunction);
+            var recycled = await RecycleBin
+                .RecycleAsync([directory], cancellationToken: context.CancellationToken)
+                .ConfigureAwait(false);
+            Check.True(recycled.Succeeded, "the directory was recycled");
+
+            var contents = await RecycleBin
+                .GetItemsAsync(ScratchWorkspace.VolumeRoot, cancellationToken: context.CancellationToken)
+                .ConfigureAwait(false);
+
+            item = Listing.Flat(contents).FirstOrDefault(i => IsSamePath(i, directory));
+            Check.NotNull(item, "the recycled directory is listed");
+            Check.Equal((long)fileSize, item!.Size, "only the file that is really inside it, not the bytes behind its junction");
+
+            var restored = await RecycleBin
+                .RestoreAsync([item!], RestoreOptions.Default, context.CancellationToken)
+                .ConfigureAwait(false);
+            Check.True(
+                restored.Succeeded,
+                $"the directory is restored ({restored.Failures.FirstOrDefault()?.Stage} 0x{restored.Failures.FirstOrDefault()?.HResult:X8})");
+            Check.True(Directory.Exists(directory), "the directory is back where it was found");
+        }
+        finally
+        {
+            var restoredJunction = Path.Combine(directory, "junc");
+
+            if (Directory.Exists(restoredJunction))
+            {
+                Directory.Delete(restoredJunction);
+            }
+            else if (item is not null)
+            {
+                var recycledJunction = Path.Combine(item.PayloadPath, "junc");
+
+                if (Directory.Exists(recycledJunction))
+                {
+                    Directory.Delete(recycledJunction);
+                }
+            }
         }
 
         workspace.Dispose();
