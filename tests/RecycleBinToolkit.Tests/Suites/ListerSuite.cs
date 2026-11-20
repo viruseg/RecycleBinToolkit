@@ -163,6 +163,9 @@ internal static class ListerSuite
         Check.Equal(1, matches.Length, "the tree is one entry, however many files it holds");
         Check.Equal(2L * fileSize + 1, matches[0].Size, "its size is every file beneath it, at every depth, hidden and system files included");
         Check.True(matches[0].IsDirectory, "and it is still a directory");
+        Check.True(
+            contents.TotalSize >= 2L * fileSize + 1,
+            $"the listing's total includes the directory's measured bytes rather than the record's zero (got {contents.TotalSize}, expected at least {2L * fileSize + 1})");
 
         var preloaded = await RecycleBin
             .GetItemsAsync(ScratchWorkspace.VolumeRoot, new GetItemsOptions { PreloadItemDetails = true }, context.CancellationToken)
@@ -222,8 +225,8 @@ internal static class ListerSuite
     /// payload's root reports it, and the figure is the one thing a caller would act on.
     /// </summary>
     /// <remarks>
-    /// The junction is restored when the restore succeeds, and the link is removed before the case ends either
-    /// way, so the workspace never removes a target the bin still links to.
+    /// The junction is restored when the restore succeeds, and the link is removed before the case ends
+    /// wherever the case can name it.
     /// </remarks>
     private static async Task ListedJunctionIsZeroBytesAndItsTargetIsNotWalked(TestContext context)
     {
@@ -284,8 +287,8 @@ internal static class ListerSuite
     /// megabyte, and only the file counts.
     /// </summary>
     /// <remarks>
-    /// The directory is restored when the restore succeeds, and the junction inside it is removed before the
-    /// case ends either way, so the workspace never removes a target the bin still links to.
+    /// The directory is restored when the restore succeeds, and the junction inside it is removed — from the
+    /// restored tree, or from the payload if the entry is still in the bin — before the case ends.
     /// </remarks>
     private static async Task ListedDirectoryDoesNotFollowAJunctionInsideIt(TestContext context)
     {

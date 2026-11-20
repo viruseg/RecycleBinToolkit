@@ -583,7 +583,9 @@ internal static class ContractSuite
         // The other two types carry their own Default, so their defaults are pins of their own rather than
         // something the recycle type happens to also say.
         Check.False(GetItemsOptions.Default.PreloadItemDetails, "PreloadItemDetails default");
-        Check.True(GetItemsOptions.Default.MeasureDirectorySizes, "MeasureDirectorySizes defaults to on, so a listing reports a directory's bytes");
+        Check.True(
+            GetItemsOptions.Default.MeasureDirectorySizes,
+            "MeasureDirectorySizes defaults to on, so a listing reports a directory's bytes");
         Check.Equal(
             RestoreDirectoryConflict.MergeSkip,
             RestoreOptions.Default.DirectoryConflict,
@@ -686,6 +688,7 @@ internal static class ContractSuite
             InitialRetryDelay = TimeSpan.FromMilliseconds(10),
             OverallTimeout = TimeSpan.FromSeconds(5),
             NoRecycleBinAction = NoRecycleBinAction.DeletePermanently,
+            MeasureDirectorySizes = false,
         }.Normalize();
 
         Check.Equal(3, kept.MaxAttempts, "a valid MaxAttempts survives normalisation");
@@ -698,6 +701,9 @@ internal static class ContractSuite
             NoRecycleBinAction.DeletePermanently,
             kept.NoRecycleBinAction,
             "the chosen NoRecycleBinAction survives normalisation");
+        Check.False(
+            kept.MeasureDirectorySizes,
+            "and a MeasureDirectorySizes turned off survives normalisation rather than reverting to its default");
 
         return Task.CompletedTask;
     }

@@ -17,6 +17,7 @@ internal static class EmptySuite
     [
         new TestCase("EmptySuite." + nameof(EmptyRemovesWhatWasJustRecycled), EmptyRemovesWhatWasJustRecycled),
         new TestCase("EmptySuite." + nameof(EmptyReportsWhatItFreed), EmptyReportsWhatItFreed),
+        new TestCase("EmptySuite." + nameof(EmptyCountsTheBytesBeneathARecycledDirectory), EmptyCountsTheBytesBeneathARecycledDirectory),
         new TestCase("EmptySuite." + nameof(EmptyIsSafeToRunOnAnAlreadyEmptyVolume), EmptyIsSafeToRunOnAnAlreadyEmptyVolume),
         new TestCase("EmptySuite." + nameof(EmptyOnAnAbsentVolumeIsReportedNotThrown), EmptyOnAnAbsentVolumeIsReportedNotThrown),
         new TestCase("EmptySuite." + nameof(ElapsedCoversTheWaitAsWellAsTheEmpty), ElapsedCoversTheWaitAsWellAsTheEmpty),
@@ -29,6 +30,7 @@ internal static class EmptySuite
         new TestCase("EmptySuite." + nameof(TheEmptyRemovesAReadOnlyEntry), TheEmptyRemovesAReadOnlyEntry),
         new TestCase("EmptySuite." + nameof(TheEmptyRemovesAReadOnlyFileInsideARecycledDirectory), TheEmptyRemovesAReadOnlyFileInsideARecycledDirectory),
         new TestCase("EmptySuite." + nameof(TheEmptyLeavesTheFlagOnAnEntryItCouldNotDelete), TheEmptyLeavesTheFlagOnAnEntryItCouldNotDelete),
+        new TestCase("EmptySuite." + nameof(TheEmptyReportsAnEntryItsAclRefuses), TheEmptyReportsAnEntryItsAclRefuses),
         // Progress reporting on the empty, here rather than in ProgressSuite because these two empty the
         // bin, and --exclude takes one substring: a run that must not empty the Recycle Bin says
         // --exclude EmptySuite, which is only that run's meaning while every such case lives under this name.
@@ -272,6 +274,91 @@ internal static class EmptySuite
                 ? "and the hold having ended, the next empty takes it"
                 : $"and the hold having ended, the next empty takes it (first failure: {after.Failures[0].Stage} 0x{after.Failures[0].HResult:X8} at {after.Failures[0].Path})");
         Check.False(File.Exists(entry.PayloadPath), "the payload is gone");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// An entry the account may not remove is reported and left in the bin. The read-only attribute is one
+    /// refusal the deleter answers; an ACL that denies the delete is not, and it has to reach the caller as
+    /// the failure it is rather than be swallowed or answered by clearing a flag that is not the cause.
+    /// </summary>
+    private static async Task TheEmptyReportsAnEntryItsAclRefuses(TestContext context)
+    {
+        const int fileSize = 1024;
+
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a bin entry an ACL can refuse to give up");
+
+        var directory = Path.Combine(ScratchWorkspace.Root, "acl-refused");
+        var blocked = Path.Combine(directory, "blocked");
+        Directory.CreateDirectory(blocked);
+        File.WriteAllBytes(Path.Combine(blocked, "held.bin"), new byte[fileSize]);
+
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
+        var recycled = await RecycleBin
+            .RecycleAsync([directory], RecycleOptions.Default, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the tree reached the Recycle Bin (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
+
+        var listing = await RecycleBin
+            .GetItemsAsync(volumeRoot, GetItemsOptions.Default, context.CancellationToken)
+            .ConfigureAwait(false);
+        var entry = Listing.OnlyEntries(listing, volumeRoot)
+            .FirstOrDefault(i => string.Equals(i.OriginalPath, directory, StringComparison.OrdinalIgnoreCase));
+
+        Check.True(entry is not null, "the recycled directory is in the listing");
+
+        var payloadBlocked = Path.Combine(entry!.PayloadPath, "blocked");
+        var payloadFile = Path.Combine(payloadBlocked, "held.bin");
+
+        try
+        {
+            var deniedFile = AclDeny.TryDeny(payloadFile, "D", out var fileError);
+            var deniedDirectory = AclDeny.TryDeny(payloadBlocked, "DC", out var directoryError);
+
+            if (!(deniedFile & deniedDirectory))
+            {
+                Check.Skip($"icacls could not deny the delete on this volume ({fileError} {directoryError})");
+            }
+
+            var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+
+            var failure = emptied.Failures
+                .FirstOrDefault(f => string.Equals(f.Path, entry.IndexPath, StringComparison.OrdinalIgnoreCase));
+
+            Check.True(
+                failure is not null,
+                $"the refused entry is reported (failures: {emptied.Failures.Count}, first at {emptied.Failures.FirstOrDefault()?.Path})");
+            Check.Equal(EmptyFailureStage.EntryNotRemoved, failure!.Stage, "as an entry that would not go");
+            Check.Equal(
+                unchecked((int)0x80070005),
+                failure.HResult,
+                $"with the file system's access-denied code (got 0x{failure.HResult:X8})");
+            Check.False(
+                emptied.VolumesEmptied.Contains(volumeRoot, StringComparer.OrdinalIgnoreCase),
+                "and the volume is not named as emptied while an entry stayed on it");
+
+            Check.True(File.Exists(payloadFile), "the payload the ACL protects is still in the bin");
+            Check.True(File.Exists(entry.IndexPath), "and so is the record that names it");
+        }
+        finally
+        {
+            AclDeny.Remove(payloadFile);
+            AclDeny.Remove(payloadBlocked);
+
+            if (Directory.Exists(entry.PayloadPath))
+            {
+                Directory.Delete(entry.PayloadPath, recursive: true);
+            }
+
+            if (File.Exists(entry.IndexPath))
+            {
+                File.Delete(entry.IndexPath);
+            }
+        }
 
         workspace.Dispose();
     }
@@ -597,6 +684,54 @@ internal static class EmptySuite
         Check.True(emptied.ItemsRemoved >= fileCount, $"the removed item count covers the batch (got {emptied.ItemsRemoved}, expected at least {fileCount})");
         Check.True(emptied.BytesFreed >= fileCount * (long)fileSize, $"the freed byte count covers the batch (got {emptied.BytesFreed}, expected at least {fileCount * fileSize})");
         Check.True(emptied.VolumesEmptied.Contains(volumeRoot, StringComparer.OrdinalIgnoreCase), $"the emptied volume is named (got {string.Join(", ", emptied.VolumesEmptied)})");
+
+        workspace.Dispose();
+    }
+
+    /// <summary>
+    /// A recycled directory's record carries no size, so the empty has to walk the payload to count what it
+    /// freed. The tree is nested and carries a hidden file, so a walk that stops at the first level or keeps
+    /// the enumeration options' default attributes reports too few bytes.
+    /// </summary>
+    private static async Task EmptyCountsTheBytesBeneathARecycledDirectory(TestContext context)
+    {
+        const int topSize = 4096;
+        const int deepSize = 3072;
+        const int hiddenSize = 512;
+
+        using var workspace = new ScratchWorkspace();
+        workspace.Recreate();
+        ScratchWorkspace.RequireRecycling("a directory entry in the bin for the empty to weigh");
+
+        var directory = Path.Combine(ScratchWorkspace.Root, "freed-directory");
+        var nested = Path.Combine(directory, "nested");
+        Directory.CreateDirectory(nested);
+        File.WriteAllBytes(Path.Combine(directory, "top.bin"), new byte[topSize]);
+        File.WriteAllBytes(Path.Combine(nested, "deep.bin"), new byte[deepSize]);
+
+        var hidden = Path.Combine(nested, "hidden.bin");
+        File.WriteAllBytes(hidden, new byte[hiddenSize]);
+        File.SetAttributes(hidden, FileAttributes.Hidden);
+
+        var volumeRoot = Path.GetPathRoot(ScratchWorkspace.Root)!;
+
+        var cleared = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+        Check.Equal(0, cleared.Failures.Count, "the bin starts empty, so the figure below belongs to this tree alone");
+
+        var recycled = await RecycleBin
+            .RecycleAsync([directory], RecycleOptions.Default, cancellationToken: context.CancellationToken)
+            .ConfigureAwait(false);
+        Check.True(recycled.Succeeded, $"the tree reached the Recycle Bin (first failure: {recycled.FirstFailure?.Stage} 0x{recycled.FirstFailure?.HResult:X8})");
+
+        var emptied = await RecycleBin.EmptyAsync(volumeRoot, context.CancellationToken).ConfigureAwait(false);
+
+        const long expected = topSize + deepSize + hiddenSize;
+        Check.Equal(
+            expected,
+            emptied.BytesFreed,
+            "the bytes beneath the directory are counted, at every depth, the hidden file included");
+        Check.Equal(1, emptied.ItemsRemoved, "and the directory is one entry");
+        Check.Equal(0, emptied.Failures.Count, $"emptying the volume reports no failure ({string.Join(", ", emptied.Failures.Select(f => f.Path + " 0x" + f.HResult.ToString("X8")))})");
 
         workspace.Dispose();
     }

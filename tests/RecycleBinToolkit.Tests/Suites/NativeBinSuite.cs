@@ -284,9 +284,9 @@ internal static class NativeBinSuite
     /// <summary>
     /// A name is a marker, a stem and an extension, and the extension is allowed to be empty. Four directories
     /// whose names carry none must recycle like any other, which is what a walk that only sees names longer
-    /// than the stem cannot do: it hands out a name the bin already holds, and the move is refused. That walk
-    /// fails here only while the bin's lowest three stems belong to extension-less names, which an empty bin
-    /// guarantees and a bin already holding them provides.
+    /// than the stem cannot do: it hands out a name the bin already holds, and writing the record is refused.
+    /// That walk fails here only while the bin's lowest three stems belong to extension-less names, which an
+    /// empty bin guarantees and a bin already holding them provides.
     /// </summary>
     private static async Task ExtensionLessEntriesAreNamesTheBinAlreadyHolds(TestContext context)
     {
@@ -2866,9 +2866,9 @@ using var workspace = new ScratchWorkspace();
         Check.Equal(0, result.Failures.Count, $"the litter is taken rather than reported (got {result.Failures.Count})");
         Check.Equal(3, result.ItemsRemoved, "the paired entry and both payloads with no record are counted");
         Check.Equal(
-            2 * Content.LongLength,
+            3 * Content.LongLength,
             result.BytesFreed,
-            $"the stray file's bytes are counted, and the directory contributes none as every directory payload does (got {result.BytesFreed})");
+            $"the stray file's bytes are counted, and so are the stray directory's, measured by walking it (got {result.BytesFreed})");
         Check.True(
             result.VolumesEmptied.Count == 1 && result.VolumesEmptied[0] == root,
             $"the volume is named as emptied, nothing having been left behind (got [{string.Join(", ", result.VolumesEmptied)}])");
