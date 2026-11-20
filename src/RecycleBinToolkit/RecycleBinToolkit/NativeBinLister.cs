@@ -8,9 +8,10 @@ namespace RecycleBinToolkit;
 /// <remarks>
 /// Whether an item is a directory or a file, and a file's size, come from the bin directory itself, which is
 /// what makes a listing of eighteen thousand files cost one walk rather than eighteen thousand reads. A
-/// directory's size is not in the bin directory, so each one costs a recursive walk of its payload; the flat
-/// walk is still the whole of a bin with no directory in it. The two fields that are only in the record are
-/// not read at all unless someone asks for them, or unless
+/// directory's size is not in the bin directory, so while
+/// <see cref="GetItemsOptions.MeasureDirectorySizes"/> is on each one costs a recursive walk of its payload;
+/// the flat walk is still the whole of a bin with no directory in it. The two fields that are only in the
+/// record are not read at all unless someone asks for them, or unless
 /// <see cref="RecycleBinOptions.PreloadItemDetails"/> asks for all of them up front.
 /// <para>
 /// Volumes are read together, each on its own thread. A Recycle Bin is one directory per volume, so two
@@ -192,9 +193,9 @@ internal static class NativeBinLister
     /// Reads every record up front, in parallel, and answers each item's details from what it says.
     /// </summary>
     /// <remarks>
-    /// The reading is the parallel part and it is the whole cost of the mode, so it gets the volume's own
-    /// degree of parallelism — the same measure every other read of a volume here uses, and the reason one
-    /// volume's disk is not read as hard as another's.
+    /// The reading is the parallel part and the whole cost of the mode beyond the payload measuring the
+    /// listing already paid, so it gets the volume's own degree of parallelism — the same measure every other
+    /// read of a volume here uses, and the reason one volume's disk is not read as hard as another's.
     /// <para>
     /// Indexed by position rather than appended to a shared collection: a collection it had to lock would put
     /// the lock on the path the work is meant to speed up. Failures are the rare half — one record somebody

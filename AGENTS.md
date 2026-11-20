@@ -84,17 +84,17 @@ group the run selected, so it composes with `--filter`, and it needs `--all`, `-
 do that — on its own it is refused with exit 2 rather than quietly rewriting the default run. It is read
 under the rule `--filter` is read under, so `--exclude --load` is a mistake rather than a substring.
 
-There are 296 registered cases, of which four are load cases, so `--all` runs 292 of them. The rest is
+There are 298 registered cases, of which four are load cases, so `--all` runs 294 of them. The rest is
 what the volume decides, not what a flag selects: a run on a volume with no Recycle Bin skips the
 cases that recycle one and runs the cases that are about a volume with no bin. **271 pass and 15 skip**,
 with nothing failing, on a volume that has a bin, with `D:\` named as the second volume —
-measured by one `--all --scratch E:\ --link-scratch D:\` on 2026-11-16. That run predates the six cases
-this branch added, so the same command line is expected to print **277 pass and 15 skip** today by
+measured by one `--all --scratch E:\ --link-scratch D:\` on 2026-11-16. That run predates the eight cases
+this branch added, so the same command line is expected to print **279 pass and 15 skip** today by
 arithmetic — an expectation, not a measurement: that command line has not been re-run. Thirteen of the
 fifteen name a volume with no Recycle Bin, or one whose answer is a doubt rather than a refusal; two are
 the 8.3 cases.
 
-**A run without `--link-scratch` is 268 pass and 24 skip**, with nothing failing, on `E:\` on 2026-11-19.
+**A run without `--link-scratch` is 270 pass and 24 skip**, with nothing failing, on `E:\` on 2026-11-20.
 The nine extra skips are the eight `LinkSuite` cases that need a target on another volume and
 `ScratchSuite.ASecondRunRootIsAllowedOnAnotherVolume`; the ninth `LinkSuite` case builds its junction
 inside the one volume and runs either way. The two figures belong to their own command lines — quote
@@ -124,7 +124,7 @@ machine's partition layout and is green on that machine and red everywhere else,
 of what a portable suite owes its caller.
 
 **That second figure is stale and is not re-measured.** It was taken on a two-volume machine before this
-work and its case count predates the twelve cases added since, so read it as "how many skip on a volume
+work and its case count predates the cases added since, so read it as "how many skip on a volume
 with no second volume", not as a number to quote beside the first.
 
 A volume with no bin and a share are both unmeasured
@@ -238,8 +238,8 @@ bytes are unreachable and permanent unless the sweep takes them.
 
 - `NativeBinEntries.CountSweptEntries` counts the same three shapes, keyed on the name the two halves share, so
   a pair is one entry and the total a progress report divides by is the total the sweep takes.
-- A payload with no record has no recorded size, so its bytes come from the walk: a file's length, a directory
-  nothing — the convention every directory payload already carries.
+- A payload with no record has no recorded size, so its bytes come from the walk: a file's length, a directory's
+  from a recursive walk of the files beneath it.
 - Where such an entry cannot be removed, the failure names the payload; its record being gone, there is nothing
   else to name.
 - A legacy `INFO2` bin is the one case where these payloads are data rather than litter: a recovery tool could
@@ -409,6 +409,12 @@ one `FileSystemEnumerable` walk of a flat directory — the same walk however th
 listing is one flat walk, plus one recursive walk per directory payload while `MeasureDirectorySizes` is on,
 which is the default.
 
+**The directory walks inside a volume are spread over that same degree.** `MeasurePayloads` runs its
+recursive walks at `VolumeSeekPenalty.DegreeOfParallelism(volumeRoot)`, the figure the record reads use,
+because one directory's walk does not touch another's and both are reads of the same device. The degree is
+therefore consulted per volume, for the payload walks; the volume axis above is not its question and does not
+use it.
+
 **A directory's size is a second walk, and it is paid per directory.** Measured on the run volume over one
 recycled directory of 10,000 files of 1 KiB, warm, median of three. The absolute figures belong to the
 listing and the rest of the bin; the difference is the measurement:
@@ -471,8 +477,15 @@ something that was not measured, exactly as for the listing above.
 payload first and record second, sequentially, over one directory — the same directory that cannot take
 concurrent writers, which is why the recycle path is single-threaded. Parallelising it needs its own
 measurement, and the nesting the empty now sits inside (one thread per disk, with `DegreeOfParallelism` up
-to eight under it for the orphan-`$I` measuring pass) is the same unmeasured combination the listing and
-the restore already have.
+to eight under it for the measuring pass that reads orphan records and walks directory payloads) is the same
+unmeasured combination the listing and the restore already have.
+
+**A directory payload is measured before it is deleted, in the same pass as an orphan record.** `BytesFreed`
+would otherwise report a directory as nothing, because the record carries zero and the directory entry in the
+bin carries no content length. The pass sums the files beneath each directory with `DirectoryPayloadSizer`, on
+the same `DegreeOfParallelism` threads as the record reads, and the walk happens before anything is deleted.
+No timing figure was taken for the added walk: it is one recursive enumeration per directory payload, paid by
+a caller who asked for an empty's report either way.
 
 ### What a read actually costs, and what does not
 
@@ -697,6 +710,13 @@ own. Both pass in isolation and both passed in the other four runs, and the caus
 a few milliseconds after it appears, and a directory move is refused with `ERROR_ACCESS_DENIED` while
 somebody is standing in the tree. That is as far as this goes — the run that showed it was not reproduced
 afterwards, so it is an observation and not a finding.
+
+**A retry-budget case failed once on the attempt count and has not failed since.**
+`NativeBinSuite.NativeOverallTimeoutBoundsTheWholeRetryBudget` asserts that four attempts start inside a
+300 ms budget, and one `--all` run reported a different number. The case passed in isolation immediately
+afterwards and in every later run, and the cause was not measured. It is the one case that turns elapsed time
+into an assertion — the fourth attempt is allowed 48 ms after the three delays — so a loaded machine is the
+first thing to suspect, and that is a suspicion rather than a finding.
 
 ### A known limit
 

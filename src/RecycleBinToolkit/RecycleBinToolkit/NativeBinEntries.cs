@@ -12,7 +12,10 @@ namespace RecycleBinToolkit;
 /// <param name="PayloadPath">
 /// Path of the <c>$R</c> payload, or <see langword="null"/> when the record's payload is gone.
 /// </param>
-/// <param name="PayloadLength">Bytes the payload holds. A directory's own length is not what it occupies, so <c>Collect</c> answers <c>0</c> for one; a listing may replace that with the bytes beneath it.</param>
+/// <param name="PayloadLength">
+/// Bytes the payload holds. A directory's own length is not what it occupies, so <c>Collect</c> answers
+/// <c>0</c> for one; a listing may replace that with the bytes beneath it.
+/// </param>
 /// <param name="PayloadIsDirectory">Whether the payload is a directory.</param>
 internal sealed record NativeBinEntry(
     string? IndexPath,

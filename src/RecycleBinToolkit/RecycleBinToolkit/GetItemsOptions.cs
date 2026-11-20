@@ -28,8 +28,9 @@ public sealed class GetItemsOptions : RecycleBinOptions
     /// <see cref="RecycleBinItem.Size"/>. Defaults to <c>true</c>.
     /// </summary>
     /// <remarks>
-    /// Turned off, a directory's <see cref="RecycleBinItem.Size"/> is <c>0</c>, which is the figure its record
-    /// carries. Turned on, the listing walks the files beneath every directory entry, at every depth.
+    /// Turned off, a directory's <see cref="RecycleBinItem.Size"/> is <c>0</c>, the figure its record carries.
+    /// Turned on, the listing sums the files beneath every directory entry, at every depth. A directory that
+    /// is a link, or that cannot be read, still reports <c>0</c>.
     /// </remarks>
     public new bool MeasureDirectorySizes
     {
