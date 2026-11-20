@@ -6,8 +6,9 @@ namespace RecycleBinToolkit;
 /// Empties a volume's Recycle Bin by deleting the entries in it, and reports what that removed.
 /// </summary>
 /// <remarks>
-/// The counts come from the walk itself: it says what each entry is and how large its payload is, so an
-/// empty of ninety thousand entries measures them without reading a record.
+/// The counts come from the walk itself: it says what each entry is and how large a file's payload is, so an
+/// empty of ninety thousand files measures them without reading a record. A directory's size is not in the
+/// walk, so its payload is walked and the files beneath it summed before anything is deleted.
 /// <para>
 /// Everything the walk finds is taken — a pair, a record whose payload is gone, and a payload whose record is
 /// gone. The last of those three is what a bin holds when something outside the library removed a record: the
@@ -203,9 +204,10 @@ internal static class NativeBinEmptier
             return new VolumeOutcome(true, 0, 0, []);
         }
 
-        // Measured before anything is deleted, out of bytes that are about to stop existing. A whole pair
-        // already carries its size from the walk, so only the entries whose payload is gone have anything
-        // left to ask for — and a record is the only thing that can answer.
+        // Measured before anything is deleted, out of bytes that are about to stop existing. A file's size
+        // comes from the walk; a directory's does not, and its record carries zero, so the payload is walked
+        // and the files beneath it summed. A record with no payload is the third case, and a record is the
+        // only thing that can answer for it.
         var sizes = new long[entries.Count];
         var options = new ParallelOptions
         {
@@ -216,20 +218,26 @@ internal static class NativeBinEmptier
         var needy = new List<int>();
         for (var i = 0; i < entries.Count; i++)
         {
-            if (entries[i].PayloadPath is not null)
-            {
-                sizes[i] = entries[i].PayloadIsDirectory ? 0 : entries[i].PayloadLength;
-            }
-            else
+            if (entries[i].PayloadPath is null || entries[i].PayloadIsDirectory)
             {
                 sizes[i] = -1;
                 needy.Add(i);
             }
+            else
+            {
+                sizes[i] = entries[i].PayloadLength;
+            }
         }
 
-        // The token rides on the measuring pass as well as the sweep. A cancelled empty that still opened
+        // The token rides on the measuring pass as well as the sweep. A cancelled empty that still walked
         // and read every entry before noticing would take as long as the empty it was meant to abandon.
-        Parallel.ForEach(needy, options, index => sizes[index] = SizeOfRecord(entries[index].IndexPath!));
+        Parallel.ForEach(needy, options, index =>
+        {
+            var entry = entries[index];
+            sizes[index] = entry.PayloadPath is null
+                ? SizeOfRecord(entry.IndexPath!)
+                : DirectoryPayloadSizer.Measure(entry.PayloadPath, cancellationToken);
+        });
 
         var failures = new List<RecycleFailure<EmptyFailureStage>>();
         Remove(entries, sizes, failures, sink, cancellationToken);
